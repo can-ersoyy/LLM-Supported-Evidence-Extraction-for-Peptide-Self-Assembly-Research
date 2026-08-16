@@ -1,2 +1,5 @@
 src/paper-retrieval/pmc/pmc_papers/*
 .env
+.venv
+.vscode
+data

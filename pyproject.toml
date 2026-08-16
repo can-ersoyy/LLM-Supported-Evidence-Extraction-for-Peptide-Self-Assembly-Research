@@ -1,0 +1,21 @@
+[project]
+name = "peptide_extractor"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "Can Ersoy", email = "can.ersoy@tum.de" }
+]
+requires-python = ">=3.10"
+dependencies = [
+    "certifi==2026.7.22",
+    "charset-normalizer==3.5.0",
+    "idna==3.18",
+    "python-dotenv==1.2.2",
+    "requests==2.34.2",
+    "urllib3==2.7.0",
+]
+
+[build-system]
+requires = ["uv_build>=0.12.3,<0.13.0"]
+build-backend = "uv_build"
