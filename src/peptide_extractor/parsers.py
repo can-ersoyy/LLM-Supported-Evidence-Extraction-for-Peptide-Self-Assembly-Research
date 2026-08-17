@@ -16,12 +16,15 @@ def parse_raw_pmc(raw_record: RawProviderRecord):
 
     title = raw_json["title"]
     is_open_access = True # for now we just filter out non open access docs from ncbi
-
+    
     pass
 
 def parse_raw_europe_pmc(raw_record: RawProviderRecord):
     raw_json = raw_record.raw_data
 
-    #TODO
+    doi = raw_json["doi"]
+    pmid = raw_json["pmid"]
+    title = raw_json["title"]
+    is_open_access = True if raw_json["isOpenAccess"] == "Y" else False
 
     pass
