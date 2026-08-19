@@ -51,3 +51,16 @@ sequence	N-terminal	C-terminal	non-terminal	peptide/conjugate/mixture	conjugate 
 ```
 - Should these be expanded/compressed?
 
+### Development Notes
+
+#### Paper Retrieval
+
+In order to extend the extraction pipeline, following blueprint can be followed:
+
+- To add a new paper source:
+1) Create a provider (search method) that returns a list of paper ids given a search query.
+2) Create a parser to parse the metada response from the provider. This information can then be used to create a `PeptideMetadata` object.
+3) Create a fetch method to download full text papers from the provider.
+
+With this approach, new sources can be added and integrated into the curation pipeline in a clean way without effecting existing providers.
+

@@ -5,6 +5,6 @@ from pydantic import BaseModel, Field
 class RawProviderRecord(BaseModel):
     """Raw record representation straight from external provider APIs (e.g., NCBI PMC, Europe PMC)."""
     provider: str = Field(..., description="Provider source identifier (e.g. 'pmc', 'europe_pmc')")
-    provider_id: str = Field(..., description="Provider specific identifier (e.g. PMCID, PMID, UID)")
+    provider_id: str = Field(..., description="Provider specific identifier (e.g. PMCID, PMID, UID). Used to deduplicate across multiple queries for the same provider.")
     search_query: str = Field(..., description="The query term that matched this paper")
     raw_data: dict[str, Any] = Field(default_factory=dict, description="Complete unmodified JSON payload from provider, this will be used later for processing...")

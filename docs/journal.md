@@ -11,3 +11,8 @@ locations for paid papers later on
 
 Open Questions:
 - How to parse XMLs as full text? 
+
+
+# 18.08.2026
+
+- When using queries like "tetrapeptide AND self-assembly" we need to think about actually searching for papers that have these words in its own content and not as the title of a reference it uses

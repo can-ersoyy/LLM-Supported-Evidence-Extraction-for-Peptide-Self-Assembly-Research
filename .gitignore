@@ -3,3 +3,5 @@ src/paper-retrieval/pmc/pmc_papers/*
 .venv
 .vscode
 data
+*.pyc
+.obsidian
