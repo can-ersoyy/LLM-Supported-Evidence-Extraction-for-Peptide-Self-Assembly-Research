@@ -59,9 +59,15 @@ class NCBIProvider(BaseProvider):
         return obj["esearchresult"]["idlist"]
     
 
-    def search_by_query(self, query: str, db="pmc"):
+    def search_by_query(self, query: str, db="pmc", open_access: bool = True, not_review: bool = True) -> List[RawProviderRecord]:
 
         results: list[RawProviderRecord] = []
+
+        if open_access:
+            query = query + "AND \"open access\"[filter] "
+
+        if not_review:
+            query = query + "NOT review[publication type]"
 
         params = {
             "term":query,
@@ -132,7 +138,7 @@ class NCBIProvider(BaseProvider):
         id_list: List[str],
         db: str = "pubmed",
         search_query: str = "id_list_search",
-    ) -> list[RawProviderRecord]:
+    ) -> List[RawProviderRecord]:
         results: list[RawProviderRecord] = []
         num_records = len(id_list)
     
@@ -164,7 +170,7 @@ class NCBIProvider(BaseProvider):
     
         return results
 
-    def parse_raw_search_records(self, raw_records: List[RawProviderRecord]):
+    def parse_raw_search_records(self, raw_records: List[RawProviderRecord]) -> List[PaperMetadata]:
         paper_metadatas: List[PaperMetadata] = []
 
         for raw_record in raw_records:
@@ -200,6 +206,7 @@ class NCBIProvider(BaseProvider):
         return paper_metadatas
 
     def fetch(self, paper_metadatas: List[PaperMetadata], db = "pmc"):
+
         pass
 
 """
@@ -279,16 +286,22 @@ if __name__ == "__main__":
     #    print(ids)
 #
     #items = ncbi_provider.search_by_ids(ids)
-    #items2 = ncbi_provider.search_by_query("tetrapeptide AND self-assembly")
+    items2 = []
+    for value in peptide_lengths_dict.values():
+        query = f"({value}[tiab] AND self-assembly[tiab])"
+        l = ncbi_provider.search_by_query(query, open_access=False)
+        items2.extend(l)
+
+
     #
     #clean_records = ncbi_provider.parse_raw_search_records(items)
-    #clean_records2 = ncbi_provider.parse_raw_search_records(items2)
+    clean_records2 = ncbi_provider.parse_raw_search_records(items2)
 #
-    #init_db()
-    #with get_session_context() as session:
+    init_db()
+    with get_session_context() as session:
     #    session.add_all(clean_records)
-    #    session.add_all(clean_records2)
-    #    session.commit()
+        session.add_all(clean_records2)
+        session.commit()
 
     #europe_pmc_provider = EuropePMCProvider(api_key, batch_size=150)
     #items = europe_pmc_provider.search()
