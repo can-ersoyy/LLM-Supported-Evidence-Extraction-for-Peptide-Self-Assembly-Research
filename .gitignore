@@ -5,3 +5,4 @@ src/paper-retrieval/pmc/pmc_papers/*
 data
 *.pyc
 .obsidian
+draft
