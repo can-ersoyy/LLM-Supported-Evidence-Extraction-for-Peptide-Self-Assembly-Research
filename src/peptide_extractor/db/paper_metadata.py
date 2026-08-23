@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from enum import Enum
 from typing import TYPE_CHECKING, List, Optional
 from sqlmodel import DateTime, Field, Relationship, SQLModel
 
@@ -6,6 +7,11 @@ from peptide_extractor.utils import get_utc_now
 
 if TYPE_CHECKING:
     from peptide_extractor.db.paper_content import PaperContent
+
+
+class DatasetSubset(str, Enum):
+        GOLDEN_BENCHMARK = "golden_benchmark"  # Manually curated from databases
+        SCRAPED     = "scraped"       # Unlabeled papers from PMC queries
 
 
 class PaperMetadata(SQLModel, table=True):
@@ -19,6 +25,18 @@ class PaperMetadata(SQLModel, table=True):
 
     title: str
     is_open_access: bool
+
+    dataset_subset: DatasetSubset = Field(
+            default=DatasetSubset.SCRAPED, 
+            index=True,
+            sa_column_kwargs={"server_default": DatasetSubset.SCRAPED.value},
+            description="Role in the pipeline: golden_benchmark or scraped"
+        )
+    source_databases: Optional[str] = Field(
+            default=None, 
+            description="Comma/semicolon-separated origin: e.g. 'AmyPro; CPAD-2.0; WaltzDB' or 'NCBI_SEARCH'"
+        )
+
 
     search_query: Optional[str] = Field(default=None)
 

@@ -1,5 +1,6 @@
 from abc import ABC, abstractmethod
-from typing import List, Optional
+import readline
+from typing import List, Optional, Sequence, Tuple
 
 import requests
 import os
@@ -7,9 +8,10 @@ from dotenv import load_dotenv, find_dotenv
 import json
 import time
 
+from sqlmodel import select
 from peptide_extractor.db import get_session_context, init_db
 from peptide_extractor.db.paper_content import PaperContent
-from peptide_extractor.db.paper_metadata import PaperMetadata
+from peptide_extractor.db.paper_metadata import DatasetSubset, PaperMetadata
 from peptide_extractor.schemas import RawProviderRecord
 from peptide_extractor.utils import get_pmcid_from_pmid, peptide_lengths_dict, process_duplicates_by_field
 
@@ -205,9 +207,50 @@ class NCBIProvider(BaseProvider):
             
         return paper_metadatas
 
-    def fetch(self, paper_metadatas: List[PaperMetadata], db = "pmc"):
+    def fetch(self, paper_metadatas: Sequence[PaperMetadata], db = "pmc") -> List[Tuple[PaperMetadata, PaperContent]]:
+        num_records = len(paper_metadatas)
+        id_list = [paper.pmcid for paper in paper_metadatas]
+        paper_tuples = []
 
-        pass
+        for i in range(0, num_records, self.batch_size):
+            print("batch done")
+            batch = id_list[i : i + self.batch_size]
+            params = {
+                "db": db,
+                "retmode": "xml",
+                "api_key": self.api_key,
+                "id": ",".join(str(x).strip() for x in batch if x),
+            }
+
+            response = requests.get(f"{self.BASE_URL}efetch.fcgi", params=params)
+            response.raise_for_status()
+            time.sleep(0.2) 
+
+            root = ET.fromstring(response.content)
+            print("inside")
+
+            for article_elem in root.findall("article"):
+
+                body = article_elem.find("body")
+                if body != None:
+                    pmcid_node = article_elem.find(".//front/article-meta/article-id[@pub-id-type='pmcid']")
+                    pmcid_text = pmcid_node.text.strip() if pmcid_node is not None and pmcid_node.text else None
+                    if pmcid_text and not pmcid_text.upper().startswith("PMC"):
+                        pmcid_text = f"PMC{pmcid_text}"
+
+                    paper_metadata = next((p for p in paper_metadatas[i:i+self.batch_size] if p.pmcid == pmcid_text), None)
+                    if paper_metadata:
+                        xml_str = ET.tostring(article_elem, encoding="unicode")
+                        print("this is xml str")
+                        paper_content = PaperContent(
+                            paper_id=paper_metadata.id,
+                            paper=paper_metadata,
+                            raw_content=xml_str,
+                            format="xml"
+                        )
+                        paper_tuples.append((paper_metadata, paper_content))
+        
+        return paper_tuples
 
 """
 class EuropePMCProvider(BaseProvider):
@@ -276,33 +319,89 @@ if __name__ == "__main__":
 
     ncbi_provider = NCBIProvider(api_key, batch_size=150)
 
-    #ids = []
-    #with open("data/waltzdb/waltzdb_export.json", "r") as f:
-    #    obj = json.load(f)
-    #    for entry in obj:
-    #        resource = entry["Reference"]
-    #        ids.append(resource)
-#
-    #    print(ids)
-#
-    #items = ncbi_provider.search_by_ids(ids)
+    """
+    ids = []
+    with open("data/waltzdb/waltzdb_export.json", "r") as f:
+        obj = json.load(f)
+        for entry in obj:
+            resource = entry["Reference"]
+            ids.append(resource)
+
+        print(ids)
+
+    items = ncbi_provider.search_by_ids(ids)
+    """
+    """
     items2 = []
     for value in peptide_lengths_dict.values():
         query = f"({value}[tiab] AND self-assembly[tiab])"
         l = ncbi_provider.search_by_query(query, open_access=False)
         items2.extend(l)
+    """
+    #this is used for golden_benchmark papers (dataset from manually curated databases)
+
+    import csv
+
+    papers = []
+
+    with open("data/literature/output/pmids_with_sources.csv", mode='r', newline='', encoding='utf-8') as file:
+        reader = csv.DictReader(file)
+        
+        for row in reader:
+            papers.append({"pmid": row["pmid"], "databases": row["databases"]})
 
 
-    #
+    #items3 = ncbi_provider.search_by_ids([paper["pmid"] for paper in papers])
+    
+    
     #clean_records = ncbi_provider.parse_raw_search_records(items)
-    clean_records2 = ncbi_provider.parse_raw_search_records(items2)
-#
+    #clean_records2 = ncbi_provider.parse_raw_search_records(items2)
+    #clean_records3 =  ncbi_provider.parse_raw_search_records(items3) # for golden_subset
+    
+
     init_db()
     with get_session_context() as session:
-    #    session.add_all(clean_records)
-        session.add_all(clean_records2)
+        #session.add_all(clean_records)
+        #session.add_all(clean_records2)
+        #session.add_all(clean_records3)
         session.commit()
+
+    with get_session_context() as session:
+            # 1. Query papers that have a PMCID and don't already have PaperContent
+            papers_to_fetch = session.exec(
+                select(PaperMetadata).where(PaperMetadata.pmcid != None)
+            ).all()
+    
+            # 2. Fetch full-text XML
+            print(papers_to_fetch)
+            all_records = ncbi_provider.fetch(papers_to_fetch)
+            fetched_items = [content for (_, content) in all_records]
+    
+            # 3. Save paper content
+            session.add_all(fetched_items)
+            session.commit()
+
+
+
+#
+#    from sqlalchemy import text
+#
+#    with get_session_context() as session:
+#        for paper in papers:
+#            session.exec(
+#                text("""
+#                    UPDATE paper_metadata  # type: ignore
+#                    SET dataset_subset = 'golden_benchmark', # type: ignore 
+#                        source_databases = :databases # type: ignore
+#                    WHERE pmid = :pmid # type: ignore 
+#    """), # type: ignore
+#                params={"databases": paper["databases"], "pmid": paper["pmid"]}
+#            ) # type: ignore
+#        session.commit()
+#        print("Updated dataset_subset and source_databases successfully!")
+#
 
     #europe_pmc_provider = EuropePMCProvider(api_key, batch_size=150)
     #items = europe_pmc_provider.search()
     #print(len(items))
+    
