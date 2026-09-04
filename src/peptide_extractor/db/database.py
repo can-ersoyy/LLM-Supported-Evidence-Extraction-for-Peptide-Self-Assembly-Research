@@ -47,15 +47,19 @@ def init_db(db_engine: Optional[Engine] = None) -> None:
 
 
 @contextmanager
-def get_session_context(db_engine: Optional[Engine] = None) -> Generator[Session, None, None]:
+def get_session_context(
+    db_engine: Optional[Engine] = None, expire_on_commit: bool = False
+) -> Generator[Session, None, None]:
     """Context manager for database sessions."""
     target_engine = db_engine or engine
-    with Session(target_engine) as session:
+    with Session(target_engine, expire_on_commit=expire_on_commit) as session:
         yield session
 
 
-def get_session(db_engine: Optional[Engine] = None) -> Generator[Session, None, None]:
+def get_session(
+    db_engine: Optional[Engine] = None, expire_on_commit: bool = False
+) -> Generator[Session, None, None]:
     """Generator for database sessions (useful for dependency injection or manual loops)."""
     target_engine = db_engine or engine
-    with Session(target_engine) as session:
+    with Session(target_engine, expire_on_commit=expire_on_commit) as session:
         yield session

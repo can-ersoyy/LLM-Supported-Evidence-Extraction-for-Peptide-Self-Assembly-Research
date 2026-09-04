@@ -11,7 +11,7 @@ import time
 from sqlmodel import select
 from peptide_extractor.db import get_session_context, init_db
 from peptide_extractor.db.paper_content import PaperContent
-from peptide_extractor.db.paper_metadata import DatasetSubset, PaperMetadata
+from peptide_extractor.db.paper_metadata import DatasetSubset, PaperMetadata, PaperStatus
 from peptide_extractor.schemas import RawProviderRecord
 from peptide_extractor.utils import get_pmcid_from_pmid, peptide_lengths_dict, process_duplicates_by_field
 
@@ -61,15 +61,18 @@ class NCBIProvider(BaseProvider):
         return obj["esearchresult"]["idlist"]
     
 
-    def search_by_query(self, query: str, db="pmc", open_access: bool = True, not_review: bool = True) -> List[RawProviderRecord]:
+    def search_by_query(self, query: str, db="pubmed", open_access: bool = False, not_review: bool = False) -> List[RawProviderRecord]:
+
+        print("executing search_by_query")
 
         results: list[RawProviderRecord] = []
 
         if open_access:
-            query = query + "AND \"open access\"[filter] "
+            oa_filter = '"free full text"[filter]' if db == "pubmed" else '"open access"[filter]'
+            query = f"{query.strip()} AND {oa_filter} "
 
         if not_review:
-            query = query + "NOT review[publication type]"
+            query = f"{query.strip()} NOT review[publication type] "
 
         params = {
             "term":query,
@@ -81,6 +84,7 @@ class NCBIProvider(BaseProvider):
         
         # initial request to retrieve query match count
         response = requests.get(f"{self.BASE_URL}esearch.fcgi", params=params) 
+        print(response.content)
         response.raise_for_status()
         
         matches = int(self.extract_match_count(response.content))
@@ -106,31 +110,29 @@ class NCBIProvider(BaseProvider):
             print(id_list)
 
     
+            if not id_list:
+                continue
+
             params = {
-                "db":db,
-                "retmode": "json",
+                "db": db,
+                "retmode": "xml",
                 "api_key": self.api_key,
                 "id": ",".join(id_list)
             }
 
-            sum_res = requests.get(f"{self.BASE_URL}esummary.fcgi", params=params)
-            sum_res.raise_for_status()
+            fetch_res = requests.get(f"{self.BASE_URL}efetch.fcgi", params=params)
+            fetch_res.raise_for_status()
 
             time.sleep(0.2)
-            result_dict = sum_res.json().get("result", {})
-            uids = result_dict["uids"]
+            root = ET.fromstring(fetch_res.content)
 
-            for uid in uids:
-
-                paper_metadata = result_dict[f"{uid}"]
-
+            for article_elem in root:
+                xml_str = ET.tostring(article_elem, encoding="unicode")
                 record = RawProviderRecord(
-                    provider="pmc",
-                    provider_id=uid,
+                    provider="ncbi",
                     search_query=query,
-                    raw_data=paper_metadata
+                    raw_data={"xml": xml_str}
                 )
-                
                 results.append(record)
 
         return results
@@ -146,65 +148,137 @@ class NCBIProvider(BaseProvider):
     
         for i in range(0, num_records, self.batch_size):
             batch = id_list[i : i + self.batch_size]
+            cleaned_batch = [str(x).strip() for x in batch if str(x).strip()]
+            if not cleaned_batch:
+                continue
+
             params = {
                 "db": db,
-                "retmode": "json",
+                "retmode": "xml",
                 "api_key": self.api_key,
-                "id": ",".join(str(x).strip() for x in batch if x),
+                "id": ",".join(cleaned_batch),
             }
     
-            sum_res = requests.get(f"{self.BASE_URL}esummary.fcgi", params=params)
-            sum_res.raise_for_status()
+            fetch_res = requests.get(f"{self.BASE_URL}efetch.fcgi", params=params)
+            fetch_res.raise_for_status()
             time.sleep(0.2)
     
-            result_dict = sum_res.json().get("result", {})
-            uids = result_dict.get("uids", [])
-    
-            for uid in uids:
-                paper_metadata = result_dict.get(str(uid), {})
+            root = ET.fromstring(fetch_res.content)
+            for article_elem in root:
+                xml_str = ET.tostring(article_elem, encoding="unicode")
                 record = RawProviderRecord(
                     provider=db,
-                    provider_id=str(uid),
                     search_query=search_query,
-                    raw_data=paper_metadata,
+                    raw_data={"xml": xml_str},
                 )
                 results.append(record)
     
         return results
 
+    def parse_xml(self, xml_content: str | ET.Element) -> dict:
+        """Parse an article XML element or XML string to extract metadata, abstract, and IDs."""
+        if isinstance(xml_content, str):
+            elem = ET.fromstring(xml_content)
+        else:
+            elem = xml_content
+
+        # 1. Title
+        title_node = elem.find(".//MedlineCitation/Article/ArticleTitle")
+        if title_node is None:
+            title_node = elem.find(".//ArticleTitle") or elem.find(".//title-group/article-title")
+        title = "".join(title_node.itertext()).strip() if title_node is not None else ""
+        title = " ".join(title.split())
+
+        # 2. Abstract (supports structured abstracts with Label attributes and handles nested tags)
+        abstract_nodes = elem.findall(".//AbstractText") or elem.findall(".//abstract/p") or elem.findall(".//abstract/sec")
+        abstract_parts = []
+        for node in abstract_nodes:
+            label = node.get("Label")
+            text = "".join(node.itertext()).strip()
+            if label and text:
+                abstract_parts.append(f"{label}: {text}")
+            elif text:
+                abstract_parts.append(text)
+        abstract = "\n\n".join(abstract_parts)
+
+        # 3. Identifiers
+        id_map = {}
+        for aid in elem.findall(".//PubmedData/ArticleIdList/ArticleId"):
+            id_type = aid.get("IdType")
+            if id_type and aid.text:
+                id_map[id_type.lower()] = aid.text.strip()
+
+        # PMC XML article-id fallback
+        for aid in elem.findall(".//article-id"):
+            id_type = aid.get("pub-id-type")
+            if id_type and aid.text:
+                id_map[id_type.lower()] = aid.text.strip()
+
+        pmid = elem.findtext(".//MedlineCitation/PMID") or id_map.get("pubmed") or id_map.get("pmid")
+        doi = id_map.get("doi")
+        pmcid = id_map.get("pmc") or id_map.get("pmcid")
+        if pmcid:
+            pmcid = pmcid.replace("pmc-id:", "").replace(";", "").strip()
+            if not pmcid.upper().startswith("PMC"):
+                pmcid = f"PMC{pmcid}"
+
+        return {
+            "title": title,
+            "abstract": abstract,
+            "pmid": pmid.strip() if pmid else None,
+            "doi": doi.strip() if doi else None,
+            "pmcid": pmcid,
+        }
+
     def parse_raw_search_records(self, raw_records: List[RawProviderRecord]) -> List[PaperMetadata]:
         paper_metadatas: List[PaperMetadata] = []
 
         for raw_record in raw_records:
-            raw_json = raw_record.raw_data
+            if "xml" in raw_record.raw_data:
+                parsed = self.parse_xml(raw_record.raw_data["xml"])
+                doi = parsed.get("doi")
+                pmid = parsed.get("pmid")
+                pmcid = parsed.get("pmcid")
+                title = parsed.get("title", "")
+                abstract = parsed.get("abstract", "")
+            else:
+                raw_json = raw_record.raw_data
+                id_map = {
+                    item.get("idtype"): item.get("value")
+                    for item in raw_json.get("articleids", [])
+                    if "idtype" in item
+                }
+                doi = id_map.get("doi")
+                pmid = id_map.get("pmid") or id_map.get("pubmed")
+                pmcid = id_map.get("pmc") or id_map.get("pmcid")
+                if pmcid:
+                    pmcid = pmcid.replace("pmc-id:", "").replace(";", "").strip()
+                    if not pmcid.upper().startswith("PMC"):
+                        pmcid = f"PMC{pmcid}"
+                title = raw_json.get("title", "")
+                abstract = raw_json.get("abstract", "")
 
-            id_map = {
-                item.get("idtype"): item.get("value") 
-                for item in raw_json.get("articleids", [])
-                if "idtype" in item
-            }
-
-            doi = id_map.get("doi")
-            pmid = id_map.get("pmid") or id_map.get("pubmed") or (raw_record.provider_id if raw_record.provider == "pubmed" else None)
-            pmcid = id_map.get("pmc") or id_map.get("pmcid")
-            if pmcid:
-                # Cleans "pmc-id: PMC6632094;" -> "PMC6632094"
-                pmcid = pmcid.replace("pmc-id:", "").replace(";", "").strip()
-
-            title = raw_json["title"]
-            is_open_access = True # for now we just filter out non open access docs from ncbi
+            # Determine open access status:
+            # - If PMCID is present, full text is deposited in PMC and freely accessible.
+            # - Alternatively, check if the record originated from an explicit free/open access search query.
+            is_open_access = bool(pmcid) or any(
+                term in (raw_record.search_query or "").lower()
+                for term in ['"free full text"', '"open access"']
+            )
 
             paper_metadata = PaperMetadata(
                 doi=doi,
                 pmid=pmid,
                 pmcid=pmcid,
-                is_open_access=is_open_access,
                 title=title,
+                abstract=abstract,
+                status=PaperStatus.NOT_PROCESSED,
+                is_open_access=is_open_access,
                 search_query=raw_record.search_query,
             )
 
             paper_metadatas.append(paper_metadata)
-            
+
         return paper_metadatas
 
     def fetch(self, paper_metadatas: Sequence[PaperMetadata], db = "pmc") -> List[Tuple[PaperMetadata, PaperContent]]:
@@ -311,97 +385,18 @@ class EuropePMCProvider(BaseProvider):
 """
 
 if __name__ == "__main__":
-
-    find_dotenv("..")
-    load_dotenv()
-
+    load_dotenv(find_dotenv(usecwd=True))
     api_key = os.getenv("NCBI_API_KEY")
 
-    ncbi_provider = NCBIProvider(api_key, batch_size=150)
+    provider = NCBIProvider(api_key=api_key)
+    print("NCBIProvider initialized. Use `python -m peptide_extractor.pipeline` for CLI workflows.")
 
-    """
-    ids = []
-    with open("data/waltzdb/waltzdb_export.json", "r") as f:
-        obj = json.load(f)
-        for entry in obj:
-            resource = entry["Reference"]
-            ids.append(resource)
-
-        print(ids)
-
-    items = ncbi_provider.search_by_ids(ids)
-    """
-    """
-    items2 = []
-    for value in peptide_lengths_dict.values():
-        query = f"({value}[tiab] AND self-assembly[tiab])"
-        l = ncbi_provider.search_by_query(query, open_access=False)
-        items2.extend(l)
-    """
-    #this is used for golden_benchmark papers (dataset from manually curated databases)
-
-    import csv
-
-    papers = []
-
-    with open("data/literature/output/pmids_with_sources.csv", mode='r', newline='', encoding='utf-8') as file:
-        reader = csv.DictReader(file)
-        
-        for row in reader:
-            papers.append({"pmid": row["pmid"], "databases": row["databases"]})
-
-
-    #items3 = ncbi_provider.search_by_ids([paper["pmid"] for paper in papers])
-    
-    
-    #clean_records = ncbi_provider.parse_raw_search_records(items)
-    #clean_records2 = ncbi_provider.parse_raw_search_records(items2)
-    #clean_records3 =  ncbi_provider.parse_raw_search_records(items3) # for golden_subset
-    
-
-    init_db()
-    with get_session_context() as session:
-        #session.add_all(clean_records)
-        #session.add_all(clean_records2)
-        #session.add_all(clean_records3)
-        session.commit()
-
-    with get_session_context() as session:
-            # 1. Query papers that have a PMCID and don't already have PaperContent
-            papers_to_fetch = session.exec(
-                select(PaperMetadata).where(PaperMetadata.pmcid != None)
-            ).all()
-    
-            # 2. Fetch full-text XML
-            print(papers_to_fetch)
-            all_records = ncbi_provider.fetch(papers_to_fetch)
-            fetched_items = [content for (_, content) in all_records]
-    
-            # 3. Save paper content
-            session.add_all(fetched_items)
-            session.commit()
-
-
-
-#
-#    from sqlalchemy import text
-#
-#    with get_session_context() as session:
-#        for paper in papers:
-#            session.exec(
-#                text("""
-#                    UPDATE paper_metadata  # type: ignore
-#                    SET dataset_subset = 'golden_benchmark', # type: ignore 
-#                        source_databases = :databases # type: ignore
-#                    WHERE pmid = :pmid # type: ignore 
-#    """), # type: ignore
-#                params={"databases": paper["databases"], "pmid": paper["pmid"]}
-#            ) # type: ignore
-#        session.commit()
-#        print("Updated dataset_subset and source_databases successfully!")
-#
-
-    #europe_pmc_provider = EuropePMCProvider(api_key, batch_size=150)
-    #items = europe_pmc_provider.search()
-    #print(len(items))
+    # Quick sanity check
+    sample_records = provider.search_by_ids(["33712586"], db="pubmed")
+    if sample_records:
+        metadatas = provider.parse_raw_search_records(sample_records)
+        print(f"Retrieved {len(metadatas)} record(s).")
+        print(f"Title: {metadatas[0].title}")
+        print(f"PMCID: {metadatas[0].pmcid}")
+        #print(f"Abstract snippet: {metadatas[0].abstract[:100]}...")
     
