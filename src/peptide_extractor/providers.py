@@ -383,20 +383,3 @@ class EuropePMCProvider(BaseProvider):
 
         return results
 """
-
-if __name__ == "__main__":
-    load_dotenv(find_dotenv(usecwd=True))
-    api_key = os.getenv("NCBI_API_KEY")
-
-    provider = NCBIProvider(api_key=api_key)
-    print("NCBIProvider initialized. Use `python -m peptide_extractor.pipeline` for CLI workflows.")
-
-    # Quick sanity check
-    sample_records = provider.search_by_ids(["33712586"], db="pubmed")
-    if sample_records:
-        metadatas = provider.parse_raw_search_records(sample_records)
-        print(f"Retrieved {len(metadatas)} record(s).")
-        print(f"Title: {metadatas[0].title}")
-        print(f"PMCID: {metadatas[0].pmcid}")
-        #print(f"Abstract snippet: {metadatas[0].abstract[:100]}...")
-    
