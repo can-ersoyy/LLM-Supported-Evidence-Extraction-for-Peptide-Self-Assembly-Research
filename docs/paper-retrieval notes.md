@@ -37,3 +37,5 @@
 
 Fulltext providers: pubmed pmc, europepmc
 DOI retrieval -> use another API like unpaywall to retrieve fulltext, xml if possible
+
+Maybe we can use the title/abstract before getting the full text to further filter out papers (e.g. papers that dont actually talk about experiment conditions and so on....) Here we could also use an LLM... Also look for special names of longer peptides (they are not always named in the original format for n length peptides -> they might have their own special name)
