@@ -5,3 +5,8 @@ src/paper-retrieval/pmc/pmc_papers/*
 *.pyc
 .obsidian
 draft
+.pytest_cache/
+.coverage
+htmlcov/
+docs/questions.md
+docs/todos.md
