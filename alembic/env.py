@@ -10,6 +10,7 @@ from sqlmodel import SQLModel
 # 1. Import all SQLModel models so Alembic can detect them
 from peptide_extractor.db.paper_metadata import PaperMetadata
 from peptide_extractor.db.paper_content import PaperContent
+from peptide_extractor.db.paper_relevance import PaperRelevance
 from peptide_extractor.db.database import DATABASE_URL
 
 

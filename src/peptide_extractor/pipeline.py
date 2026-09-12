@@ -4,6 +4,9 @@ from typing import List, Optional
 
 from dotenv import find_dotenv, load_dotenv
 
+# Load environment variables
+load_dotenv(find_dotenv(usecwd=True))
+
 from peptide_extractor.db import get_session_context, init_db
 from peptide_extractor.providers import NCBIProvider
 import os
@@ -55,14 +58,49 @@ def retrive_ncbi_by_query(ncbi_provider):
         session.commit()
 
 
+def run_relevance_screening(
+    provider: str = "google_genai",
+    model_name: Optional[str] = None,
+    batch_size: Optional[int] = None,
+    api_key: Optional[str] = None,
+    delay_seconds: float = 2.0,
+) -> int:
+    """Run abstract relevance screening on unprocessed paper metadata records in the database.
+
+    Evaluates papers with status NOT_PROCESSED using the relevance classifier,
+    persisting PaperRelevance records and updating paper status to USABLE or DISCARD.
+    If batch_size is None, processes ALL remaining unprocessed papers in the database.
+
+    Returns the total number of paper records screened in this execution.
+    """
+    from peptide_extractor.relevance import (
+        PaperRelevanceClassifier,
+        screen_unprocessed_papers,
+    )
+
+    init_db()
+    classifier = PaperRelevanceClassifier(
+        provider=provider,
+        model_name=model_name,
+        api_key=api_key,
+    )
+    screened_results = screen_unprocessed_papers(
+        batch_size=batch_size,
+        classifier=classifier,
+        delay_seconds=delay_seconds,
+    )
+    return len(screened_results)
+
+
 if __name__ == "__main__":
     find_dotenv("..")
     load_dotenv()
 
     api_key = os.getenv("NCBI_API_KEY")
 
-    ncbi_provider = NCBIProvider(api_key, batch_size=150)
+    #ncbi_provider = NCBIProvider(api_key, batch_size=150)
 
-    #retrieve_golden_dataset(ncbi_provider)
-    #retrieve_ncbi_by_query(ncbi_provider)
-    
+    # retrieve_golden_dataset(ncbi_provider)
+    # retrieve_ncbi_by_query(ncbi_provider)
+    run_relevance_screening(provider="google_genai", model_name="gemma-4-31b-it", delay_seconds=1)
+
