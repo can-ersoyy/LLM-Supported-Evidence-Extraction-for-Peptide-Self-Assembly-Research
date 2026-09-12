@@ -110,15 +110,6 @@ def get_chat_model(
         target_model = model_name or "gemma2:27b" # will be updated later
         return ChatOllama(model=target_model, temperature=temperature, **kwargs)
 
-    elif provider_clean in ("openai", "openai-compatible"):
-        try:
-            from langchain_openai import ChatOpenAI
-        except ImportError:
-            from langchain_community.chat_models import ChatOpenAI  # fallback
-
-        target_model = model_name or "gpt-4o-mini"
-        return ChatOpenAI(model=target_model, temperature=temperature, **kwargs)
-
     else:
         raise ValueError(
             f"Unsupported LLM provider '{provider}'. "
@@ -171,7 +162,7 @@ class PaperRelevanceClassifier:
         res = self.structured_llm.invoke(prompt_val)
         if isinstance(res, dict):
             return RelevanceResult(**res)
-        return res
+        return res # type: ignore
 
     def classify_metadata(self, paper: PaperMetadata) -> RelevanceResult:
         """Classify a PaperMetadata object from the database."""
