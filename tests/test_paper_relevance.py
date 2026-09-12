@@ -190,5 +190,79 @@ def test_screen_unprocessed_papers_skips_failed_api_call(mock_llm):
         assert refreshed_p2.status == PaperStatus.USABLE
 
 
+def test_screen_papers_with_all_papers_flag(mock_llm):
+    llm, structured_mock = mock_llm
+
+    engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False})
+    SQLModel.metadata.create_all(engine)
+
+    with Session(engine) as session:
+        paper1 = PaperMetadata(
+            title="Paper 1",
+            abstract="Not processed paper.",
+            status=PaperStatus.NOT_PROCESSED,
+            is_open_access=True,
+        )
+        paper2 = PaperMetadata(
+            title="Paper 2",
+            abstract="Previously discarded paper.",
+            status=PaperStatus.DISCARD,
+            is_open_access=True,
+        )
+        paper3 = PaperMetadata(
+            title="Paper 3",
+            abstract="Already usable paper.",
+            status=PaperStatus.USABLE,
+            is_open_access=True,
+        )
+        session.add_all([paper1, paper2, paper3])
+        session.commit()
+
+        res = RelevanceResult(
+            detected_clues=["nanotube"],
+            explanation="Nanotube assembly.",
+            is_relevant=True,
+            confidence=0.9,
+        )
+        structured_mock.invoke.return_value = res
+        classifier = PaperRelevanceClassifier(llm=llm)
+
+        # Default all_papers=False only processes paper1
+        screened_default = screen_unprocessed_papers(
+            classifier=classifier, session=session, delay_seconds=0, all_papers=False
+        )
+        assert len(screened_default) == 1
+        assert screened_default[0][0].id == paper1.id
+
+        # all_papers=True processes all 3 papers regardless of status
+        screened_all = screen_unprocessed_papers(
+            classifier=classifier, session=session, delay_seconds=0, all_papers=True
+        )
+        assert len(screened_all) == 3
+
+        # ignore_status=True also processes all 3 papers
+        screened_ignore = screen_unprocessed_papers(
+            classifier=classifier, session=session, delay_seconds=0, ignore_status=True
+        )
+        assert len(screened_ignore) == 3
+
+
+def test_run_relevance_screening_pipeline_function_all_papers(monkeypatch):
+    from peptide_extractor.pipeline import run_relevance_screening
+
+    mock_screen = MagicMock(return_value=[("p1", "r1"), ("p2", "r2"), ("p3", "r3")])
+    mock_classifier_cls = MagicMock()
+
+    monkeypatch.setattr("peptide_extractor.relevance.screen_unprocessed_papers", mock_screen)
+    monkeypatch.setattr("peptide_extractor.relevance.PaperRelevanceClassifier", mock_classifier_cls)
+    monkeypatch.setattr("peptide_extractor.pipeline.init_db", lambda: None)
+
+    count = run_relevance_screening(all_papers=True)
+    assert count == 3
+    mock_screen.assert_called_once()
+    _, kwargs = mock_screen.call_args
+    assert kwargs.get("all_papers") is True
+
+
 
 

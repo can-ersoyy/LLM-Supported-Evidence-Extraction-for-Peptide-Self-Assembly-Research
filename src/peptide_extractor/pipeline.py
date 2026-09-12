@@ -64,12 +64,16 @@ def run_relevance_screening(
     batch_size: Optional[int] = None,
     api_key: Optional[str] = None,
     delay_seconds: float = 2.0,
+    all_papers: bool = False,
+    ignore_status: bool = False,
 ) -> int:
-    """Run abstract relevance screening on unprocessed paper metadata records in the database.
+    """Run abstract relevance screening on paper metadata records in the database.
 
-    Evaluates papers with status NOT_PROCESSED using the relevance classifier,
-    persisting PaperRelevance records and updating paper status to USABLE or DISCARD.
-    If batch_size is None, processes ALL remaining unprocessed papers in the database.
+    Evaluates papers using the relevance classifier, persisting PaperRelevance records
+    and updating paper status to USABLE or DISCARD.
+    If all_papers is False and ignore_status is False (default), evaluates papers with status NOT_PROCESSED.
+    If all_papers is True or ignore_status is True, evaluates papers regardless of their status.
+    If batch_size is None, processes ALL eligible papers in the database.
 
     Returns the total number of paper records screened in this execution.
     """
@@ -88,6 +92,8 @@ def run_relevance_screening(
         batch_size=batch_size,
         classifier=classifier,
         delay_seconds=delay_seconds,
+        all_papers=all_papers,
+        ignore_status=ignore_status,
     )
     return len(screened_results)
 
@@ -102,5 +108,7 @@ if __name__ == "__main__":
 
     # retrieve_golden_dataset(ncbi_provider)
     # retrieve_ncbi_by_query(ncbi_provider)
-    run_relevance_screening(provider="google_genai", model_name="gemma-4-31b-it", delay_seconds=1)
-
+    #run_relevance_screening(provider="google_genai", model_name="gemma-4-31b-it", delay_seconds=1)
+    #run_relevance_screening(provider="ollama", model_name="gemma3:1b", delay_seconds=0.1)
+    run_relevance_screening(provider="google_genai", model_name="gemini-3.5-flash-lite", delay_seconds=3, all_papers=True)
+    #run_relevance_screening(provider="ollama", model_name="granite4.1:3b", delay_seconds=0.1)

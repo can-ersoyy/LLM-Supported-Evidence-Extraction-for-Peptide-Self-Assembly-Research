@@ -75,15 +75,19 @@ def get_paper_by_id(paper_id: int, session: Optional[Session] = None) -> Optiona
 
 
 def get_papers_by_status(
-    status: PaperStatus = PaperStatus.NOT_PROCESSED,
+    status: Optional[PaperStatus] = PaperStatus.NOT_PROCESSED,
     limit: Optional[int] = None,
     offset: int = 0,
     dataset_subset: Optional[DatasetSubset] = None,
     session: Optional[Session] = None,
 ) -> List[PaperMetadata]:
-    """Retrieve PaperMetadata records filtered by status and optional dataset_subset."""
+    """Retrieve PaperMetadata records filtered by status and optional dataset_subset.
+    If status is None, returns records regardless of status.
+    """
     def _query(s: Session) -> List[PaperMetadata]:
-        statement = select(PaperMetadata).where(PaperMetadata.status == status)
+        statement = select(PaperMetadata)
+        if status is not None:
+            statement = statement.where(PaperMetadata.status == status)
         if dataset_subset is not None:
             statement = statement.where(PaperMetadata.dataset_subset == dataset_subset)
         statement = statement.offset(offset)
@@ -95,6 +99,22 @@ def get_papers_by_status(
         return _query(session)
     with get_session_context() as s:
         return _query(s)
+
+
+def get_all_papers(
+    limit: Optional[int] = None,
+    offset: int = 0,
+    dataset_subset: Optional[DatasetSubset] = None,
+    session: Optional[Session] = None,
+) -> List[PaperMetadata]:
+    """Convenience function to fetch all papers regardless of status."""
+    return get_papers_by_status(
+        status=None,
+        limit=limit,
+        offset=offset,
+        dataset_subset=dataset_subset,
+        session=session,
+    )
 
 
 def get_unprocessed_papers(

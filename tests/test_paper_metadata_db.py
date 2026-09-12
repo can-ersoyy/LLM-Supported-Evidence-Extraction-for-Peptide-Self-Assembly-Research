@@ -6,6 +6,7 @@ from peptide_extractor.db.paper_metadata import (
     PaperMetadata,
     PaperStatus,
     count_papers_by_status,
+    get_all_papers,
     get_paper_by_id,
     get_papers_by_status,
     get_unprocessed_papers,
@@ -145,4 +146,16 @@ def test_count_papers_by_status(test_session):
 
     count_processed = count_papers_by_status(PaperStatus.PROCESSED, session=test_session)
     assert count_processed == 0
+
+
+def test_get_all_papers(test_session):
+    all_papers = get_all_papers(session=test_session)
+    assert len(all_papers) == 4
+
+    all_scraped = get_all_papers(dataset_subset=DatasetSubset.SCRAPED, session=test_session)
+    assert len(all_scraped) == 3
+
+    # Also test get_papers_by_status with status=None
+    all_papers_none = get_papers_by_status(status=None, session=test_session)
+    assert len(all_papers_none) == 4
 

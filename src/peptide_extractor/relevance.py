@@ -17,6 +17,7 @@ from langchain_core.prompts import ChatPromptTemplate
 from peptide_extractor.db.paper_metadata import (
     PaperMetadata,
     PaperStatus,
+    get_all_papers,
     get_unprocessed_papers,
     update_paper_status,
 )
@@ -187,6 +188,7 @@ def evaluate_paper_relevance(
     if paper.id is None:
         raise ValueError("PaperMetadata object must have a non-None primary key id.")
 
+    
     rel_result = classifier.classify_paper(paper)
 
     import json
@@ -217,19 +219,26 @@ def screen_unprocessed_papers(
     classifier: Optional[PaperRelevanceClassifier] = None,
     session: Optional[Session] = None,
     delay_seconds: float = 2.0,
+    all_papers: bool = False,
+    ignore_status: bool = False,
 ) -> List[tuple[PaperMetadata, RelevanceResult]]:
-    """Retrieve papers with status NOT_PROCESSED, evaluate relevance,
+    """Retrieve papers with status NOT_PROCESSED (or all papers regardless of status
+    if all_papers or ignore_status is True), evaluate relevance,
     insert PaperRelevance records into DB, and update paper status to USABLE or DISCARD.
 
-    If batch_size is None, processes ALL unprocessed papers in the database.
+    If batch_size is None, processes ALL eligible papers in the database.
     """
     if classifier is None:
         classifier = PaperRelevanceClassifier()
 
-    unprocessed = get_unprocessed_papers(limit=batch_size, session=session)
+    if all_papers or ignore_status:
+        papers_to_screen = get_all_papers(limit=batch_size, session=session)
+    else:
+        papers_to_screen = get_unprocessed_papers(limit=batch_size, session=session)
+
     results: List[tuple[PaperMetadata, RelevanceResult]] = []
 
-    for paper in unprocessed:
+    for paper in papers_to_screen:
         if paper.id is None:
             continue
         try:
@@ -240,6 +249,8 @@ def screen_unprocessed_papers(
                 update_status=True,
             )
             results.append((paper, rel_result))
+            print(f"Paper {paper.id} processed")
+            logger.info(f"Paper with id {paper.id} is processed")
         except Exception as e:
             logger.warning(
                 f"Skipping paper ID {paper.id} due to API evaluation error: {e}"
@@ -250,3 +261,6 @@ def screen_unprocessed_papers(
                 time.sleep(delay_seconds)
 
     return results
+
+
+screen_papers = screen_unprocessed_papers
