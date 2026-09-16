@@ -183,8 +183,11 @@ if __name__ == "__main__":
 
     #open_alex_api_key = os.getenv("OPEN_ALEX_API_KEY")
     #find_abstracts_by_doi(open_alex_api_key)
+
     
     run_relevance_screening(provider="google_genai", model_name="gemma-4-31b-it", delay_seconds=0.5, golden_dataset=True)
+    #missed_paper_ids = [36,39,54,67,74,77,89,96,107]
+    
     #run_relevance_screening(provider="google_genai", model_name="gemma-4-26b-a4b-it", delay_seconds=1, all_papers=True)
     
 
