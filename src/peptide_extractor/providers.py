@@ -326,6 +326,85 @@ class NCBIProvider(BaseProvider):
         
         return paper_tuples
 
+class ScopusProvider(BaseProvider):
+
+    BASE_URL = "https://api.elsevier.com/content/search/scopus"
+
+    def __init__(self, api_key: Optional[str] = None, batch_size: int = 25):
+            super().__init__(api_key, batch_size)
+
+    def search_by_query(self, query):
+        
+        results: List[RawProviderRecord] = []
+
+        params = {
+            "query" : query,
+            "apiKey" : self.api_key,
+            "contentType" : "json",
+            "start": 0,
+            "count": self.batch_size
+        }
+
+        response = requests.get(self.BASE_URL, params=params)
+        response.raise_for_status()
+        time.sleep(0.2)
+
+        data = response.json()
+        count = data.get("search-results", {}).get("opensearch:totalResults", 0)
+        
+        for page_number in range(0, int(count), self.batch_size):
+            print(f"receving the {page_number}th to {page_number+self.batch_size} results")
+            params["start"] = page_number
+            response = requests.get(self.BASE_URL, params=params)
+            response.raise_for_status()
+            time.sleep(0.2)
+            data = response.json()
+
+            items = data.get("search-results", {}).get("entry", [])
+
+            for item in items:
+                results.append(
+                    RawProviderRecord(
+                        provider="scopus",
+                        search_query=query,
+                        raw_data=item
+                    )
+                )
+        
+        return results
+
+    def search_by_ids():
+        pass
+
+    def parse_raw_search_records(self, raw_records: List[RawProviderRecord])-> List[PaperMetadata]:
+        paper_metadatas = []
+
+        for raw_record in raw_records:
+            data = raw_record.raw_data
+            
+            doi = data.get("prism:doi", "")
+            pmid = data.get("pubmed-id", "")
+            title = data.get("dc:title", "")
+
+            paper_metadata = PaperMetadata(
+                doi=doi,
+                pmid=pmid,
+                pmcid=None,
+                title=title,
+                abstract="",
+                status=PaperStatus.NOT_PROCESSED,
+                is_open_access=True,
+                search_query=raw_record.search_query,
+            )
+
+            paper_metadatas.append(paper_metadata)
+
+        return paper_metadatas
+
+    def fetch():
+        pass
+    
+
 """
 class EuropePMCProvider(BaseProvider):
 

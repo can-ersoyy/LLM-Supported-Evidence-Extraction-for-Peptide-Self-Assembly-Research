@@ -1,3 +1,4 @@
+from peptide_extractor.providers import ScopusProvider
 import csv
 from pathlib import Path
 from typing import List, Optional
@@ -102,13 +103,33 @@ if __name__ == "__main__":
     find_dotenv("..")
     load_dotenv()
 
-    api_key = os.getenv("NCBI_API_KEY")
+    ncbi_api_key = os.getenv("NCBI_API_KEY")
+    scopus_api_key = os.getenv("SCOPUS_API_KEY")
 
-    #ncbi_provider = NCBIProvider(api_key, batch_size=150)
+    #ncbi_provider = NCBIProvider(ncbi_api_key, batch_size=150)
+    scopus_provider = ScopusProvider(scopus_api_key)
+
+    query = """TITLE-ABS-KEY(tetrapeptide OR pentapeptide OR hexapeptide OR heptapeptide OR octapeptide OR nonapeptide OR decapeptide OR undecapeptide OR dodecapeptide OR tridecapeptide OR tetradecapeptide OR pentadecapeptide OR hexadecapeptide OR heptadecapeptide OR octadecapeptide OR nonadecapeptide OR eicosapeptide OR icosapeptide) AND TITLE-ABS-KEY(nanostructure OR nanotube OR nanofiber OR nanofibre OR nanorod OR hydrogel OR nanosphere OR nanoparticle OR "self-assembly") AND LANGUAGE(english) AND DOCTYPE(ar) AND OA(all)"""
+
+    raw_records = scopus_provider.search_by_query(query)
+    paper_metadatas = scopus_provider.parse_raw_search_records(raw_records)
+    
+    with get_session_context() as session:
+        session.add_all(paper_metadatas)
+        session.commit()
 
     # retrieve_golden_dataset(ncbi_provider)
     # retrieve_ncbi_by_query(ncbi_provider)
-    #run_relevance_screening(provider="google_genai", model_name="gemma-4-31b-it", delay_seconds=1)
+    
+    
+    
+    #run_relevance_screening(provider="google_genai", model_name="gemma-4-31b-it", delay_seconds=2, all_papers=True)
+    #run_relevance_screening(provider="google_genai", model_name="gemma-4-26b-a4b-it", delay_seconds=1, all_papers=True)
+    #run_relevance_screening(provider="open_router", model_name="nvidia/nemotron-3-super-120b-a12b:free", delay_seconds=1, all_papers=True)
     #run_relevance_screening(provider="ollama", model_name="gemma3:1b", delay_seconds=0.1)
-    run_relevance_screening(provider="google_genai", model_name="gemini-3.5-flash-lite", delay_seconds=3, all_papers=True)
+    #run_relevance_screening(provider="google_genai", model_name="gemini-3.5-flash-lite", delay_seconds=2, all_papers=True)
     #run_relevance_screening(provider="ollama", model_name="granite4.1:3b", delay_seconds=0.1)
+
+    #run_relevance_screening(provider="ollama", model_name="gemma3:1b", delay_seconds=0.1, all_papers=True)
+    #run_relevance_screening(provider="ollama", model_name="deepseek-r1:1.5b", delay_seconds=0.5, all_papers=True)
+        
