@@ -1,3 +1,8 @@
+from peptide_extractor.db import PaperMetadata
+from peptide_extractor.providers import OpenAlexProvider
+import time
+from peptide_extractor.providers import SemanticScholarProvider
+from peptide_extractor.db import get_paper_metadatas
 import csv
 from pathlib import Path
 from typing import List, Optional
@@ -62,6 +67,57 @@ def retrieve_scopus_by_query(scopus_provider):
         session.add_all(scopus_metadatas)
         session.commit()
 
+def find_abstracts_by_doi(open_alex_api_key):
+    init_db()
+    non_abstract_metadas = get_paper_metadatas(abstract="")
+    abstract_found: list[PaperMetadata] = []
+    
+    semantic_scholar = SemanticScholarProvider()
+    open_alex = OpenAlexProvider(api_key=open_alex_api_key)
+
+    
+    
+    with get_session_context() as session:
+        for metadata in non_abstract_metadas:
+            try:
+                abstract = semantic_scholar.get_abstract_by_doi(metadata.doi)
+
+                print(abstract)
+
+                if abstract is not None:
+                    metadata.abstract = abstract
+                    session.add(metadata)
+                    session.commit()
+                else:
+                    try:
+                        abstract = open_alex.get_abstract_by_doi(metadata.doi)
+                        time.sleep(0.5)
+                        if abstract is not None:
+                            metadata.abstract = abstract
+                            session.add(metadata)
+                            session.commit()
+                    except Exception as e:
+                        print(f"Failed to retrieve abstract for {metadata.doi}: {e}")
+                print(f"Retrieved abstract for {metadata.doi}: {abstract}")
+            except Exception as e:
+                if "429" in str(e):
+                    try:
+                        abstract = open_alex.get_abstract_by_doi(metadata.doi)
+                        time.sleep(0.5)
+                        if abstract is not None:
+                            metadata.abstract = abstract
+                            session.add(metadata)
+                            session.commit()
+                        print(f"Retrieved abstract for {metadata.doi}: {abstract}")
+                    except Exception as e:
+                        print(f"Failed to retrieve abstract for {metadata.doi}: {e}")
+                print(f"Failed to retrieve abstract for {metadata.doi}: {e}")
+                
+            time.sleep(1)
+
+        print(f"Retrieved {len(abstract_found)} abstracts out of {len(non_abstract_metadas)}")
+
+
 
 def run_relevance_screening(
     provider: str = "google_genai",
@@ -110,6 +166,11 @@ if __name__ == "__main__":
     ncbi_api_key = os.getenv("NCBI_API_KEY")
     scopus_api_key = os.getenv("SCOPUS_API_KEY")
 
+    # 1. Search in different providers
+    # 2. Complete abstracts and deduplicate by doi
+    # 2.5 Do relevance check on deduplicated dois
+    # 3. Fetch full texts for relevant papers
+
     #ncbi_provider = NCBIProvider(ncbi_api_key, batch_size=150)
     #scopus_provider = ScopusProvider(scopus_api_key)
 
@@ -118,15 +179,14 @@ if __name__ == "__main__":
     # retrieve_golden_dataset(ncbi_provider)
     # retrieve_ncbi_by_query(ncbi_provider)
     # retrieve_scopus_by_query(scopus_provider)
-    
-    
-    #run_relevance_screening(provider="google_genai", model_name="gemma-4-31b-it", delay_seconds=1, golden_dataset=True)
-    #run_relevance_screening(provider="google_genai", model_name="gemma-4-26b-a4b-it", delay_seconds=1, all_papers=True)
-    #run_relevance_screening(provider="open_router", model_name="nvidia/nemotron-3-super-120b-a12b:free", delay_seconds=1, all_papers=True)
-    #run_relevance_screening(provider="ollama", model_name="gemma3:1b", delay_seconds=0.1)
-    run_relevance_screening(provider="google_genai", model_name="gemini-3.5-flash-lite", delay_seconds=2, golden_dataset=True)
-    #run_relevance_screening(provider="ollama", model_name="granite4.1:3b", delay_seconds=0.1)
 
-    #run_relevance_screening(provider="ollama", model_name="gemma3:1b", delay_seconds=0.1, all_papers=True)
-    #run_relevance_screening(provider="ollama", model_name="deepseek-r1:1.5b", delay_seconds=0.5, all_papers=True)
-        
+
+    #open_alex_api_key = os.getenv("OPEN_ALEX_API_KEY")
+    #find_abstracts_by_doi(open_alex_api_key)
+    
+    run_relevance_screening(provider="google_genai", model_name="gemma-4-31b-it", delay_seconds=0.5, golden_dataset=True)
+    #run_relevance_screening(provider="google_genai", model_name="gemma-4-26b-a4b-it", delay_seconds=1, all_papers=True)
+    
+
+
+    

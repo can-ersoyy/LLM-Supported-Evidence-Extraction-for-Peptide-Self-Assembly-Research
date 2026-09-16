@@ -397,7 +397,59 @@ class ScopusProvider(BaseProvider):
 
     def fetch():
         pass
+
+class SemanticScholarProvider():
+    """This is not a proper provider and is intended to be used for utility functions like finding abstracts of papers."""
+
+    def __init__(self):
+        pass
+
+    def get_abstract_by_doi(self, doi: str) -> str | None:
+        BASE_URL="https://api.semanticscholar.org/graph/v1/paper/DOI:"
+
+        url = f"{BASE_URL}{doi}?fields=abstract"
+        response = requests.get(url)
+        response.raise_for_status()
+        
+        data = response.json()
+        abstract = data.get("abstract", None)
+        return None if abstract == "None" or abstract == "" else abstract
     
+class OpenAlexProvider():
+    """This is not a proper provider and is intended to be used for utility functions like finding abstracts of papers."""
+
+    BASE_URL="https://api.openalex.org/works/"
+
+    def __init__(self, api_key):
+        self.api_key = api_key
+
+    def reconstruct_abstract(self, inverted_index: dict[str, list[int]] | None) -> str:
+        if inverted_index is None:
+            return ""
+        tokens = [
+            (pos, word)
+            for word, positions in inverted_index.items()
+            for pos in positions
+        ]
+
+        tokens.sort(key=lambda item: item[0])
+        return " ".join(word for _, word in tokens)
+
+    def get_abstract_by_doi(self, doi:str) -> str | None:
+        url = f"{self.BASE_URL}https://doi.org/{doi}?select=abstract_inverted_index"
+
+        params = {
+            "api_key": self.api_key
+        }
+        response = requests.get(url, params)
+        response.raise_for_status()
+        data = response.json()
+        abstract_list = data.get("abstract_inverted_index", {})
+        
+        abstract = self.reconstruct_abstract(abstract_list)
+        return None if abstract == "None" or abstract == "" else abstract
+
+        
 
 """
 class EuropePMCProvider(BaseProvider):
