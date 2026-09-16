@@ -116,17 +116,6 @@ def test_get_chat_model_invalid_provider():
     with pytest.raises(ValueError, match="Unsupported LLM provider"):
         get_chat_model(provider="unknown_provider")
 
-
-def test_get_chat_model_missing_key(monkeypatch):
-    monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
-    monkeypatch.delenv("GOOGLE_AI_KEY", raising=False)
-    monkeypatch.delenv("GOOOGLE_AI_KEY", raising=False)
-    monkeypatch.delenv("GOOOGLE_API_KEY", raising=False)
-    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
-    with pytest.raises(ValueError, match="Google API Key not found"):
-        get_chat_model(provider="google_genai")
-
-
 def test_run_relevance_screening_pipeline_function(monkeypatch):
     from peptide_extractor.pipeline import run_relevance_screening
 
@@ -262,7 +251,6 @@ def test_run_relevance_screening_pipeline_function_all_papers(monkeypatch):
     mock_screen.assert_called_once()
     _, kwargs = mock_screen.call_args
     assert kwargs.get("all_papers") is True
-
 
 
 

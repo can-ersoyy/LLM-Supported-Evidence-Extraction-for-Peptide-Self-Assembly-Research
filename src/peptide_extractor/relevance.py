@@ -75,6 +75,7 @@ def get_chat_model(
     Supported providers:
     - 'google_genai' / 'google': Google AI Studio models (e.g. 'gemma-4-31b-it', 'gemini-3.5-flash', etc.)
     - 'ollama': Ollama local models (e.g. 'gemma2:27b', 'llama3.1:8b')
+    - 'open_router' / 'openrouter': OpenRouter models (e.g. 'google/gemma-4-31b-it', 'nvidia/nemotron-3.5-lightning:free')
     """
     provider_clean = provider.lower().strip()
 
@@ -111,10 +112,33 @@ def get_chat_model(
         target_model = model_name or "gemma2:27b" # will be updated later
         return ChatOllama(model=target_model, temperature=temperature, **kwargs)
 
+    elif provider_clean in ("open_router", "openrouter", "open-router"):
+        try:
+            from langchain_openrouter import ChatOpenRouter
+        except ImportError:
+            raise ImportError(
+                "OpenRouter LangChain package not installed"
+            )
+
+        resolved_api_key = (
+            api_key
+            or os.getenv("OPENROUTER_API_KEY")
+            or os.getenv("OPEN_ROUTER_API_KEY")
+        )
+        if resolved_api_key and resolved_api_key.strip():
+            clean_key = resolved_api_key.strip()
+            os.environ["OPENROUTER_API_KEY"] = clean_key
+            kwargs["openrouter_api_key"] = clean_key
+        else: 
+            raise ValueError("OpenRouter API key not found! Set OPENROUTER_API_KEY or pass api_key.")
+
+        target_model = model_name or "google/gemma-4-31b-it"
+        return ChatOpenRouter(model=target_model, temperature=temperature, **kwargs)
+
     else:
         raise ValueError(
             f"Unsupported LLM provider '{provider}'. "
-            "Supported options are 'google_genai', 'ollama'"
+            "Supported options are 'google_genai', 'ollama', 'open_router'"
         )
 
 
@@ -128,20 +152,37 @@ class PaperRelevanceClassifier:
         model_name: Optional[str] = None,
         **kwargs: Any,
     ):
-        self.provider = provider
-        self.model_name = model_name or "gemma-4-31b-it"
+        self.provider = provider if isinstance(provider, str) else "google_genai"
+        if isinstance(model_name, str) and model_name.strip():
+            self.model_name = model_name.strip()
+        elif llm is not None and isinstance(getattr(llm, "model_name", None), str):
+            self.model_name = getattr(llm, "model_name")
+        elif llm is not None and isinstance(getattr(llm, "model", None), str):
+            self.model_name = getattr(llm, "model")
+        elif llm is not None:
+            self.model_name = "mock-model"
+        else:
+            if self.provider.lower().strip() in ("ollama", "langchain_ollama"):
+                self.model_name = "gemma2:27b"
+            elif self.provider.lower().strip() in ("open_router", "openrouter", "open-router"):
+                self.model_name = "google/gemma-4-31b-it"
+            else:
+                self.model_name = "gemma-4-31b-it"
 
         if llm is not None:
             self.llm = llm
         else:
-            self.llm = get_chat_model(provider=provider, model_name=model_name, **kwargs)
+            self.llm = get_chat_model(provider=provider, model_name=self.model_name, **kwargs)
 
         self.prompt = ChatPromptTemplate.from_messages([
             ("system", SYSTEM_PROMPT),
             ("user", USER_PROMPT),
         ])
         try:
-            self.structured_llm = self.llm.with_structured_output(RelevanceResult, method="json_mode")
+            if provider.lower().strip() in ("open_router", "openrouter", "open-router"): # seems like open router langchain doesn't support json_mode 
+                self.structured_llm = self.llm.with_structured_output(RelevanceResult)
+            else:
+                self.structured_llm = self.llm.with_structured_output(RelevanceResult, method="json_mode")
         except Exception:
             self.structured_llm = self.llm.with_structured_output(RelevanceResult)
 
@@ -193,8 +234,10 @@ def evaluate_paper_relevance(
 
     import json
     clues_str = json.dumps(rel_result.detected_clues) if isinstance(rel_result.detected_clues, list) else str(rel_result.detected_clues)
-    provider_name = getattr(classifier, "provider", "google_genai")
-    model_name_val = getattr(classifier, "model_name", "gemma-4-31b-it")
+    raw_provider = getattr(classifier, "provider", None)
+    provider_name = raw_provider if isinstance(raw_provider, str) and raw_provider.strip() else "google_genai"
+    raw_model = getattr(classifier, "model_name", None)
+    model_name_val = raw_model if isinstance(raw_model, str) and raw_model.strip() else "gemma-4-31b-it"
 
     relevance_record = save_paper_relevance(
         paper_id=paper.id,
@@ -212,7 +255,6 @@ def evaluate_paper_relevance(
         update_paper_status(paper.id, new_status, session=session)
 
     return relevance_record, rel_result
-
 
 def screen_unprocessed_papers(
     batch_size: Optional[int] = None,
@@ -241,6 +283,7 @@ def screen_unprocessed_papers(
     for paper in papers_to_screen:
         if paper.id is None:
             continue
+        paper_id = paper.id
         try:
             relevance_rec, rel_result = evaluate_paper_relevance(
                 paper=paper,
@@ -249,12 +292,12 @@ def screen_unprocessed_papers(
                 update_status=True,
             )
             results.append((paper, rel_result))
-            print(f"Paper {paper.id} processed")
-            logger.info(f"Paper with id {paper.id} is processed")
+            print(f"Paper {paper_id} processed")
+            logger.info(f"Paper with id {paper_id} is processed")
         except Exception as e:
-            logger.warning(
-                f"Skipping paper ID {paper.id} due to API evaluation error: {e}"
-            )
+            if session is not None:
+                session.rollback()
+            print(f"Skipping paper ID {paper_id} due to API evaluation error: {e}")
             continue
         finally:
             if delay_seconds > 0:
