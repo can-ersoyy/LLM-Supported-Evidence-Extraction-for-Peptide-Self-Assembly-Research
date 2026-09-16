@@ -5,11 +5,8 @@ from peptide_extractor.db.paper_metadata import (
     DatasetSubset,
     PaperMetadata,
     PaperStatus,
-    count_papers_by_status,
-    get_all_papers,
     get_paper_by_id,
-    get_papers_by_status,
-    get_unprocessed_papers,
+    get_paper_metadatas,
     update_paper_status,
 )
 
@@ -56,7 +53,7 @@ def test_session(in_memory_engine):
         paper4 = PaperMetadata(
             title="Paper 4: Usable Fibril Study",
             abstract="Abstract 4 describing TEM and ThT assays.",
-            doi="10.1000/4",
+            doi=None,
             pmid="10004",
             status=PaperStatus.USABLE,
             is_open_access=True,
@@ -79,29 +76,29 @@ def test_get_paper_by_id(test_session):
     assert non_existent is None
 
 
-def test_get_papers_by_status(test_session):
-    not_processed = get_papers_by_status(PaperStatus.NOT_PROCESSED, session=test_session)
+def test_get_paper_metadatas_by_status(test_session):
+    not_processed = get_paper_metadatas(status=PaperStatus.NOT_PROCESSED, session=test_session)
     assert len(not_processed) == 2
     titles = [p.title for p in not_processed]
     assert "Paper 1: Tetrapeptide Assembly" in titles
     assert "Paper 2: Hexapeptide Hydrogel" in titles
 
-    discarded = get_papers_by_status(PaperStatus.DISCARD, session=test_session)
+    discarded = get_paper_metadatas(status=PaperStatus.DISCARD, session=test_session)
     assert len(discarded) == 1
     assert discarded[0].pmid == "10003"
 
 
-def test_get_papers_by_status_with_subset(test_session):
-    scraped_unprocessed = get_papers_by_status(
-        PaperStatus.NOT_PROCESSED,
+def test_get_paper_metadatas_with_subset(test_session):
+    scraped_unprocessed = get_paper_metadatas(
+        status=PaperStatus.NOT_PROCESSED,
         dataset_subset=DatasetSubset.SCRAPED,
         session=test_session,
     )
     assert len(scraped_unprocessed) == 1
     assert scraped_unprocessed[0].pmid == "10001"
 
-    golden_unprocessed = get_papers_by_status(
-        PaperStatus.NOT_PROCESSED,
+    golden_unprocessed = get_paper_metadatas(
+        status=PaperStatus.NOT_PROCESSED,
         dataset_subset=DatasetSubset.GOLDEN_BENCHMARK,
         session=test_session,
     )
@@ -109,19 +106,42 @@ def test_get_papers_by_status_with_subset(test_session):
     assert golden_unprocessed[0].pmid == "10002"
 
 
-def test_get_papers_by_status_pagination(test_session):
-    papers_page1 = get_papers_by_status(PaperStatus.NOT_PROCESSED, limit=1, offset=0, session=test_session)
+def test_get_paper_metadatas_pagination(test_session):
+    papers_page1 = get_paper_metadatas(status=PaperStatus.NOT_PROCESSED, limit=1, offset=0, session=test_session)
     assert len(papers_page1) == 1
 
-    papers_page2 = get_papers_by_status(PaperStatus.NOT_PROCESSED, limit=1, offset=1, session=test_session)
+    papers_page2 = get_paper_metadatas(status=PaperStatus.NOT_PROCESSED, limit=1, offset=1, session=test_session)
     assert len(papers_page2) == 1
     assert papers_page1[0].id != papers_page2[0].id
 
 
-def test_get_unprocessed_papers(test_session):
-    unprocessed = get_unprocessed_papers(session=test_session)
-    assert len(unprocessed) == 2
-    assert all(p.status == PaperStatus.NOT_PROCESSED for p in unprocessed)
+def test_get_paper_metadatas_all(test_session):
+    all_papers = get_paper_metadatas(session=test_session)
+    assert len(all_papers) == 4
+
+    all_scraped = get_paper_metadatas(dataset_subset=DatasetSubset.SCRAPED, session=test_session)
+    assert len(all_scraped) == 3
+
+
+def test_get_paper_metadatas_in_list(test_session):
+    results = get_paper_metadatas(
+        status=[PaperStatus.USABLE, PaperStatus.DISCARD],
+        session=test_session,
+    )
+    assert len(results) == 2
+    statuses = {p.status for p in results}
+    assert statuses == {PaperStatus.USABLE, PaperStatus.DISCARD}
+
+
+def test_get_paper_metadatas_none_value(test_session):
+    no_doi_papers = get_paper_metadatas(doi=None, session=test_session)
+    assert len(no_doi_papers) == 1
+    assert no_doi_papers[0].pmid == "10004"
+
+
+def test_get_paper_metadatas_invalid_column(test_session):
+    with pytest.raises(ValueError, match="has no attribute or column 'non_existent_column'"):
+        get_paper_metadatas(non_existent_column="test", session=test_session)
 
 
 def test_update_paper_status(test_session):
@@ -135,27 +155,4 @@ def test_update_paper_status(test_session):
     # Verify state in DB
     refreshed = get_paper_by_id(1, session=test_session)
     assert refreshed.status == PaperStatus.USABLE
-
-
-def test_count_papers_by_status(test_session):
-    count_not_proc = count_papers_by_status(PaperStatus.NOT_PROCESSED, session=test_session)
-    assert count_not_proc == 2
-
-    count_usable = count_papers_by_status(PaperStatus.USABLE, session=test_session)
-    assert count_usable == 1
-
-    count_processed = count_papers_by_status(PaperStatus.PROCESSED, session=test_session)
-    assert count_processed == 0
-
-
-def test_get_all_papers(test_session):
-    all_papers = get_all_papers(session=test_session)
-    assert len(all_papers) == 4
-
-    all_scraped = get_all_papers(dataset_subset=DatasetSubset.SCRAPED, session=test_session)
-    assert len(all_scraped) == 3
-
-    # Also test get_papers_by_status with status=None
-    all_papers_none = get_papers_by_status(status=None, session=test_session)
-    assert len(all_papers_none) == 4
 

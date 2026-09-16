@@ -5,13 +5,18 @@ from sqlmodel import SQLModel, create_engine, Session
 from peptide_extractor.db.paper_metadata import (
     PaperMetadata,
     PaperStatus,
+    DatasetSubset,
     get_paper_by_id,
+)
+from peptide_extractor.db.paper_relevance import (
+    get_paper_relevances,
+    save_paper_relevance,
 )
 from peptide_extractor.relevance import (
     PaperRelevanceClassifier,
     RelevanceResult,
     get_chat_model,
-    screen_unprocessed_papers,
+    screen_papers,
 )
 
 
@@ -60,7 +65,7 @@ def test_paper_relevance_classifier_mock(mock_llm):
     structured_mock.invoke.assert_called_once()
 
 
-def test_screen_unprocessed_papers_workflow(mock_llm):
+def test_screen_papers_workflow(mock_llm):
     llm, structured_mock = mock_llm
 
     # Create in-memory DB session
@@ -101,7 +106,7 @@ def test_screen_unprocessed_papers_workflow(mock_llm):
         structured_mock.invoke.side_effect = [res1, res2]
 
         classifier = PaperRelevanceClassifier(llm=llm)
-        screened = screen_unprocessed_papers(batch_size=10, classifier=classifier, session=session, delay_seconds=0)
+        screened = screen_papers(batch_size=10, classifier=classifier, session=session, delay_seconds=0)
 
         assert len(screened) == 2
 
@@ -122,7 +127,7 @@ def test_run_relevance_screening_pipeline_function(monkeypatch):
     mock_screen = MagicMock(return_value=[("paper1", "res1"), ("paper2", "res2")])
     mock_classifier_cls = MagicMock()
 
-    monkeypatch.setattr("peptide_extractor.relevance.screen_unprocessed_papers", mock_screen)
+    monkeypatch.setattr("peptide_extractor.relevance.screen_papers", mock_screen)
     monkeypatch.setattr("peptide_extractor.relevance.PaperRelevanceClassifier", mock_classifier_cls)
     monkeypatch.setattr("peptide_extractor.pipeline.init_db", lambda: None)
 
@@ -130,9 +135,9 @@ def test_run_relevance_screening_pipeline_function(monkeypatch):
     assert count == 2
     mock_screen.assert_called_once()
 
-def test_screen_unprocessed_papers_skips_failed_api_call(mock_llm):
+def test_screen_papers_skips_failed_api_call(mock_llm):
     llm, structured_mock = mock_llm
-    from peptide_extractor.relevance import screen_unprocessed_papers
+    from peptide_extractor.relevance import screen_papers
 
     engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False})
     SQLModel.metadata.create_all(engine)
@@ -165,7 +170,7 @@ def test_screen_unprocessed_papers_skips_failed_api_call(mock_llm):
         structured_mock.invoke.side_effect = [RuntimeError("API Rate Limit Exceeded"), res2]
 
         classifier = PaperRelevanceClassifier(llm=llm)
-        screened = screen_unprocessed_papers(batch_size=10, classifier=classifier, session=session, delay_seconds=0)
+        screened = screen_papers(batch_size=10, classifier=classifier, session=session, delay_seconds=0)
 
         # Only paper2 should be in results
         assert len(screened) == 1
@@ -179,7 +184,7 @@ def test_screen_unprocessed_papers_skips_failed_api_call(mock_llm):
         assert refreshed_p2.status == PaperStatus.USABLE
 
 
-def test_screen_papers_with_all_papers_flag(mock_llm):
+def test_screen_papers(mock_llm):
     llm, structured_mock = mock_llm
 
     engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False})
@@ -204,7 +209,14 @@ def test_screen_papers_with_all_papers_flag(mock_llm):
             status=PaperStatus.USABLE,
             is_open_access=True,
         )
-        session.add_all([paper1, paper2, paper3])
+        paper4 = PaperMetadata(
+            title="Paper 4",
+            abstract="Abstract 4.",
+            is_open_access=True,
+            status=PaperStatus.USABLE,
+            dataset_subset=DatasetSubset.GOLDEN_BENCHMARK
+        )
+        session.add_all([paper1, paper2, paper3, paper4])
         session.commit()
 
         res = RelevanceResult(
@@ -216,24 +228,25 @@ def test_screen_papers_with_all_papers_flag(mock_llm):
         structured_mock.invoke.return_value = res
         classifier = PaperRelevanceClassifier(llm=llm)
 
-        # Default all_papers=False only processes paper1
-        screened_default = screen_unprocessed_papers(
+        # Default all_papers=False only processes paper1 -> unprocessed
+        screened_default = screen_papers(
             classifier=classifier, session=session, delay_seconds=0, all_papers=False
         )
         assert len(screened_default) == 1
         assert screened_default[0][0].id == paper1.id
 
-        # all_papers=True processes all 3 papers regardless of status
-        screened_all = screen_unprocessed_papers(
+        # all_papers=True processes all 4 papers
+        screened_all = screen_papers(
             classifier=classifier, session=session, delay_seconds=0, all_papers=True
         )
-        assert len(screened_all) == 3
+        assert len(screened_all) == 4
 
-        # ignore_status=True also processes all 3 papers
-        screened_ignore = screen_unprocessed_papers(
-            classifier=classifier, session=session, delay_seconds=0, ignore_status=True
+        screened_golden_dataset = screen_papers(
+            classifier=classifier, session=session, delay_seconds=0, golden_dataset=True
         )
-        assert len(screened_ignore) == 3
+        assert len(screened_golden_dataset) == 1
+        assert screened_golden_dataset[0][0].id == paper4.id
+        
 
 
 def test_run_relevance_screening_pipeline_function_all_papers(monkeypatch):
@@ -242,7 +255,7 @@ def test_run_relevance_screening_pipeline_function_all_papers(monkeypatch):
     mock_screen = MagicMock(return_value=[("p1", "r1"), ("p2", "r2"), ("p3", "r3")])
     mock_classifier_cls = MagicMock()
 
-    monkeypatch.setattr("peptide_extractor.relevance.screen_unprocessed_papers", mock_screen)
+    monkeypatch.setattr("peptide_extractor.relevance.screen_papers", mock_screen)
     monkeypatch.setattr("peptide_extractor.relevance.PaperRelevanceClassifier", mock_classifier_cls)
     monkeypatch.setattr("peptide_extractor.pipeline.init_db", lambda: None)
 
@@ -251,6 +264,54 @@ def test_run_relevance_screening_pipeline_function_all_papers(monkeypatch):
     mock_screen.assert_called_once()
     _, kwargs = mock_screen.call_args
     assert kwargs.get("all_papers") is True
+
+
+def test_get_paper_relevances_query():
+    engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False})
+    SQLModel.metadata.create_all(engine)
+
+    with Session(engine) as session:
+        rec1 = save_paper_relevance(
+            paper_id=1,
+            detected_clues="['fiber']",
+            explanation="Forms fibers",
+            is_relevant=True,
+            confidence=0.95,
+            provider="google_genai",
+            model_name="gemma-4-31b-it",
+            session=session,
+        )
+        rec2 = save_paper_relevance(
+            paper_id=1,
+            detected_clues="[]",
+            explanation="Not relevant",
+            is_relevant=False,
+            confidence=0.8,
+            provider="ollama",
+            model_name="llama3",
+            session=session,
+        )
+        rec3 = save_paper_relevance(
+            paper_id=2,
+            detected_clues="['hydrogel']",
+            explanation="Forms hydrogel",
+            is_relevant=True,
+            confidence=0.99,
+            provider="google_genai",
+            model_name="gemma-4-31b-it",
+            session=session,
+        )
+
+        all_for_p1 = get_paper_relevances(paper_id=1, session=session)
+        assert len(all_for_p1) == 2
+
+        relevant_p1 = get_paper_relevances(paper_id=1, is_relevant=True, session=session)
+        assert len(relevant_p1) == 1
+        assert relevant_p1[0].provider == "google_genai"
+
+        google_recs = get_paper_relevances(provider="google_genai", session=session)
+        assert len(google_recs) == 2
+
 
 
 

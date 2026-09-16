@@ -1,3 +1,4 @@
+from peptide_extractor.db import DatasetSubset
 import logging
 import os
 import time
@@ -17,8 +18,7 @@ from langchain_core.prompts import ChatPromptTemplate
 from peptide_extractor.db.paper_metadata import (
     PaperMetadata,
     PaperStatus,
-    get_all_papers,
-    get_unprocessed_papers,
+    get_paper_metadatas,
     update_paper_status,
 )
 from peptide_extractor.db.paper_relevance import PaperRelevance, save_paper_relevance
@@ -256,27 +256,27 @@ def evaluate_paper_relevance(
 
     return relevance_record, rel_result
 
-def screen_unprocessed_papers(
+def screen_papers(
     batch_size: Optional[int] = None,
     classifier: Optional[PaperRelevanceClassifier] = None,
     session: Optional[Session] = None,
     delay_seconds: float = 2.0,
     all_papers: bool = False,
-    ignore_status: bool = False,
+    golden_dataset: bool = False,
 ) -> List[tuple[PaperMetadata, RelevanceResult]]:
-    """Retrieve papers with status NOT_PROCESSED (or all papers regardless of status
-    if all_papers or ignore_status is True), evaluate relevance,
-    insert PaperRelevance records into DB, and update paper status to USABLE or DISCARD.
-
-    If batch_size is None, processes ALL eligible papers in the database.
+    """Screen papers given conditions for relevance
     """
     if classifier is None:
         classifier = PaperRelevanceClassifier()
 
-    if all_papers or ignore_status:
-        papers_to_screen = get_all_papers(limit=batch_size, session=session)
+    if golden_dataset:
+        papers_to_screen = get_paper_metadatas(limit=batch_size, session=session, dataset_subset=DatasetSubset.GOLDEN_BENCHMARK)
+    elif all_papers:
+        papers_to_screen = get_paper_metadatas(limit=batch_size, session=session)
     else:
-        papers_to_screen = get_unprocessed_papers(limit=batch_size, session=session)
+        papers_to_screen = get_paper_metadatas(
+            status=PaperStatus.NOT_PROCESSED, limit=batch_size, session=session
+        )
 
     results: List[tuple[PaperMetadata, RelevanceResult]] = []
 
@@ -304,6 +304,3 @@ def screen_unprocessed_papers(
                 time.sleep(delay_seconds)
 
     return results
-
-
-screen_papers = screen_unprocessed_papers

@@ -1,10 +1,10 @@
 from datetime import datetime, timezone
 from enum import Enum
-from typing import TYPE_CHECKING, List, Optional
+from typing import TYPE_CHECKING, Any, List, Optional
 from sqlmodel import DateTime, Field, Relationship, SQLModel, Session, select
 from sqlalchemy import func
 
-from peptide_extractor.db.database import get_session_context
+from peptide_extractor.db.database import get_records, get_session_context
 from peptide_extractor.utils import get_utc_now
 
 if TYPE_CHECKING:
@@ -74,62 +74,19 @@ def get_paper_by_id(paper_id: int, session: Optional[Session] = None) -> Optiona
         return s.get(PaperMetadata, paper_id)
 
 
-def get_papers_by_status(
-    status: Optional[PaperStatus] = PaperStatus.NOT_PROCESSED,
+def get_paper_metadatas(
+    session: Optional[Session] = None,
     limit: Optional[int] = None,
     offset: int = 0,
-    dataset_subset: Optional[DatasetSubset] = None,
-    session: Optional[Session] = None,
+    **filters: Any,
 ) -> List[PaperMetadata]:
-    """Retrieve PaperMetadata records filtered by status and optional dataset_subset.
-    If status is None, returns records regardless of status.
-    """
-    def _query(s: Session) -> List[PaperMetadata]:
-        statement = select(PaperMetadata)
-        if status is not None:
-            statement = statement.where(PaperMetadata.status == status)
-        if dataset_subset is not None:
-            statement = statement.where(PaperMetadata.dataset_subset == dataset_subset)
-        statement = statement.offset(offset)
-        if limit is not None:
-            statement = statement.limit(limit)
-        return list(s.exec(statement).all())
-
-    if session:
-        return _query(session)
-    with get_session_context() as s:
-        return _query(s)
-
-
-def get_all_papers(
-    limit: Optional[int] = None,
-    offset: int = 0,
-    dataset_subset: Optional[DatasetSubset] = None,
-    session: Optional[Session] = None,
-) -> List[PaperMetadata]:
-    """Convenience function to fetch all papers regardless of status."""
-    return get_papers_by_status(
-        status=None,
+    """Retrieve PaperMetadata records filtered by arbitrary column values."""
+    return get_records(
+        PaperMetadata,
+        session=session,
         limit=limit,
         offset=offset,
-        dataset_subset=dataset_subset,
-        session=session,
-    )
-
-
-def get_unprocessed_papers(
-    limit: Optional[int] = None,
-    offset: int = 0,
-    dataset_subset: Optional[DatasetSubset] = None,
-    session: Optional[Session] = None,
-) -> List[PaperMetadata]:
-    """Convenience function to fetch papers with status NOT_PROCESSED."""
-    return get_papers_by_status(
-        status=PaperStatus.NOT_PROCESSED,
-        limit=limit,
-        offset=offset,
-        dataset_subset=dataset_subset,
-        session=session,
+        **filters,
     )
 
 
@@ -153,22 +110,3 @@ def update_paper_status(
         return _update(session)
     with get_session_context() as s:
         return _update(s)
-
-
-def count_papers_by_status(
-    status: PaperStatus,
-    dataset_subset: Optional[DatasetSubset] = None,
-    session: Optional[Session] = None,
-) -> int:
-    """Count the total number of PaperMetadata records matching status and optional subset."""
-    def _count(s: Session) -> int:
-        statement = select(func.count(PaperMetadata.id)).where(PaperMetadata.status == status)
-        if dataset_subset is not None:
-            statement = statement.where(PaperMetadata.dataset_subset == dataset_subset)
-        res = s.exec(statement).first()
-        return res if res is not None else 0
-
-    if session:
-        return _count(session)
-    with get_session_context() as s:
-        return _count(s)

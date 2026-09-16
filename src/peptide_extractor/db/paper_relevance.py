@@ -1,8 +1,8 @@
 from datetime import datetime
-from typing import TYPE_CHECKING, List, Optional
+from typing import TYPE_CHECKING, Any, List, Optional
 from sqlmodel import Column, DateTime, Field, Relationship, SQLModel, Session, Text, select
 
-from peptide_extractor.db.database import get_session_context
+from peptide_extractor.db.database import get_records, get_session_context
 from peptide_extractor.utils import get_utc_now
 
 if TYPE_CHECKING:
@@ -68,17 +68,18 @@ def save_paper_relevance(
         return _save(s)
 
 
-def get_relevance_records_for_paper(
-    paper_id: int,
+def get_paper_relevances(
     session: Optional[Session] = None,
+    limit: Optional[int] = None,
+    offset: int = 0,
+    **filters: Any,
 ) -> List[PaperRelevance]:
-    """Retrieve all relevance evaluation records for a given paper ID."""
-    def _query(s: Session) -> List[PaperRelevance]:
-        statement = select(PaperRelevance).where(PaperRelevance.paper_id == paper_id)
-        return list(s.exec(statement).all())
-
-    if session:
-        return _query(session)
-    with get_session_context() as s:
-        return _query(s)
+    """Retrieve PaperRelevance records filtered by arbitrary column values."""
+    return get_records(
+        PaperRelevance,
+        session=session,
+        limit=limit,
+        offset=offset,
+        **filters,
+    )
 

@@ -70,7 +70,7 @@ def run_relevance_screening(
     api_key: Optional[str] = None,
     delay_seconds: float = 2.0,
     all_papers: bool = False,
-    ignore_status: bool = False,
+    golden_dataset: bool = False,
 ) -> int:
     """Run abstract relevance screening on paper metadata records in the database.
 
@@ -84,7 +84,7 @@ def run_relevance_screening(
     """
     from peptide_extractor.relevance import (
         PaperRelevanceClassifier,
-        screen_unprocessed_papers,
+        screen_papers,
     )
 
     init_db()
@@ -93,12 +93,12 @@ def run_relevance_screening(
         model_name=model_name,
         api_key=api_key,
     )
-    screened_results = screen_unprocessed_papers(
+    screened_results = screen_papers(
         batch_size=batch_size,
         classifier=classifier,
         delay_seconds=delay_seconds,
         all_papers=all_papers,
-        ignore_status=ignore_status,
+        golden_dataset=golden_dataset,
     )
     return len(screened_results)
 
@@ -120,11 +120,11 @@ if __name__ == "__main__":
     # retrieve_scopus_by_query(scopus_provider)
     
     
-    #run_relevance_screening(provider="google_genai", model_name="gemma-4-31b-it", delay_seconds=2, all_papers=True)
+    #run_relevance_screening(provider="google_genai", model_name="gemma-4-31b-it", delay_seconds=1, golden_dataset=True)
     #run_relevance_screening(provider="google_genai", model_name="gemma-4-26b-a4b-it", delay_seconds=1, all_papers=True)
     #run_relevance_screening(provider="open_router", model_name="nvidia/nemotron-3-super-120b-a12b:free", delay_seconds=1, all_papers=True)
     #run_relevance_screening(provider="ollama", model_name="gemma3:1b", delay_seconds=0.1)
-    #run_relevance_screening(provider="google_genai", model_name="gemini-3.5-flash-lite", delay_seconds=2, all_papers=True)
+    run_relevance_screening(provider="google_genai", model_name="gemini-3.5-flash-lite", delay_seconds=2, golden_dataset=True)
     #run_relevance_screening(provider="ollama", model_name="granite4.1:3b", delay_seconds=0.1)
 
     #run_relevance_screening(provider="ollama", model_name="gemma3:1b", delay_seconds=0.1, all_papers=True)
