@@ -1,15 +1,9 @@
-from peptide_extractor.providers import ScopusProvider
 import csv
 from pathlib import Path
 from typing import List, Optional
 
 from dotenv import find_dotenv, load_dotenv
-
-# Load environment variables
-load_dotenv(find_dotenv(usecwd=True))
-
 from peptide_extractor.db import get_session_context, init_db
-from peptide_extractor.providers import NCBIProvider
 import os
 
 GOLDEN_DATASET_CSV_PATH = (
@@ -56,6 +50,16 @@ def retrive_ncbi_by_query(ncbi_provider):
     init_db()
     with get_session_context() as session:
         session.add_all(ncbi_metadatas)
+        session.commit()
+
+def retrieve_scopus_by_query(scopus_provider):
+    query = """TITLE-ABS-KEY(tetrapeptide OR pentapeptide OR hexapeptide OR heptapeptide OR octapeptide OR nonapeptide OR decapeptide OR undecapeptide OR dodecapeptide OR tridecapeptide OR tetradecapeptide OR pentadecapeptide OR hexadecapeptide OR heptadecapeptide OR octadecapeptide OR nonadecapeptide OR eicosapeptide OR icosapeptide) AND TITLE-ABS-KEY(nanostructure OR nanotube OR nanofiber OR nanofibre OR nanorod OR hydrogel OR nanosphere OR nanoparticle OR "self-assembly") AND LANGUAGE(english) AND DOCTYPE(ar) AND OA(all)"""
+    raw_records = scopus_provider.search_by_query(query)
+    scopus_metadatas = scopus_provider.parse_raw_search_records(raw_records)
+
+    init_db()
+    with get_session_context() as session:
+        session.add_all(scopus_metadatas)
         session.commit()
 
 
@@ -107,20 +111,13 @@ if __name__ == "__main__":
     scopus_api_key = os.getenv("SCOPUS_API_KEY")
 
     #ncbi_provider = NCBIProvider(ncbi_api_key, batch_size=150)
-    scopus_provider = ScopusProvider(scopus_api_key)
+    #scopus_provider = ScopusProvider(scopus_api_key)
 
-    query = """TITLE-ABS-KEY(tetrapeptide OR pentapeptide OR hexapeptide OR heptapeptide OR octapeptide OR nonapeptide OR decapeptide OR undecapeptide OR dodecapeptide OR tridecapeptide OR tetradecapeptide OR pentadecapeptide OR hexadecapeptide OR heptadecapeptide OR octadecapeptide OR nonadecapeptide OR eicosapeptide OR icosapeptide) AND TITLE-ABS-KEY(nanostructure OR nanotube OR nanofiber OR nanofibre OR nanorod OR hydrogel OR nanosphere OR nanoparticle OR "self-assembly") AND LANGUAGE(english) AND DOCTYPE(ar) AND OA(all)"""
-
-    raw_records = scopus_provider.search_by_query(query)
-    paper_metadatas = scopus_provider.parse_raw_search_records(raw_records)
     
-    with get_session_context() as session:
-        session.add_all(paper_metadatas)
-        session.commit()
 
     # retrieve_golden_dataset(ncbi_provider)
     # retrieve_ncbi_by_query(ncbi_provider)
-    
+    # retrieve_scopus_by_query(scopus_provider)
     
     
     #run_relevance_screening(provider="google_genai", model_name="gemma-4-31b-it", delay_seconds=2, all_papers=True)

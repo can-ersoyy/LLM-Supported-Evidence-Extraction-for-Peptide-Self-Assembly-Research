@@ -1,19 +1,13 @@
 from abc import ABC, abstractmethod
-import readline
 from typing import List, Optional, Sequence, Tuple
 
 import requests
-import os
-from dotenv import load_dotenv, find_dotenv
 import json
 import time
 
-from sqlmodel import select
-from peptide_extractor.db import get_session_context, init_db
 from peptide_extractor.db.paper_content import PaperContent
-from peptide_extractor.db.paper_metadata import DatasetSubset, PaperMetadata, PaperStatus
+from peptide_extractor.db.paper_metadata import PaperMetadata, PaperStatus
 from peptide_extractor.schemas import RawProviderRecord
-from peptide_extractor.utils import get_pmcid_from_pmid, peptide_lengths_dict, process_duplicates_by_field
 
 import xml.etree.ElementTree as ET
 
