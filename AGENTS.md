@@ -189,17 +189,20 @@ The properties in `golden_dataset_initial.csv` form the direct fields of extract
 
 ### 5.1 Environment & Package Management
 
-The project uses [`uv`](https://github.com/astral-sh/uv) as the fast Python package manager.
+Development and execution MUST be performed inside the `idp-dev` Distrobox container where `uv`, Python, and system dependencies are configured.
 
 ```bash
-# Run pytest test suite
-uv run pytest
+# Enter the development container
+distrobox enter idp-dev
+
+# Or run commands directly via distrobox
+distrobox enter idp-dev -- uv run pytest
 
 # Run tests with coverage
-uv run pytest --cov=peptide_extractor
+distrobox enter idp-dev -- uv run pytest --cov=peptide_extractor
 
 # Run a script inside the environment
-uv run python src/peptide_extractor/pipeline.py
+distrobox enter idp-dev -- uv run python src/peptide_extractor/pipeline.py
 ```
 
 ### 5.2 Database Migrations (Alembic + SQLModel)
@@ -258,7 +261,7 @@ Based on the project tracker (`docs/todos.md`), the active milestones are:
 When contributing to this repository, AI agents must strictly adhere to the following guardrails:
 
 > [!IMPORTANT]
-> 1. **Do Not Break Tests**: Always execute `uv run pytest` before and after modifying code. All existing tests (currently 30/30) must pass.
+> 1. **Do Not Break Tests**: Always execute tests inside the container (`distrobox enter idp-dev -- uv run pytest`) before and after modifying code. All tests must pass.
 > 2. **Focus Production Code in `src/peptide_extractor/`**: All production parsers, providers, schemas, and models belong directly in `src/peptide_extractor/` accompanied by dedicated unit tests in `tests/`. Do not introduce ad-hoc scratch directories into the repository root.
 > 3. **Always Use Alembic for Database Changes**: Any modification to tables or fields in `src/peptide_extractor/db/` requires an Alembic revision (`alembic revision --autogenerate`) and upgrade (`alembic upgrade head`).
 > 4. **Respect External API Rate Limits**:
