@@ -10,3 +10,4 @@ draft
 htmlcov/
 docs/questions.md
 docs/todos.md
+data/*.db
