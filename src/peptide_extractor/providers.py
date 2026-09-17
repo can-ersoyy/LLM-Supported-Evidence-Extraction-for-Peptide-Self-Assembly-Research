@@ -269,6 +269,7 @@ class NCBIProvider(BaseProvider):
                 status=PaperStatus.NOT_PROCESSED,
                 is_open_access=is_open_access,
                 search_query=raw_record.search_query,
+                provider="ncbi"
             )
 
             paper_metadatas.append(paper_metadata)
@@ -389,6 +390,7 @@ class ScopusProvider(BaseProvider):
                 status=PaperStatus.NOT_PROCESSED,
                 is_open_access=True,
                 search_query=raw_record.search_query,
+                provider="scopus"
             )
 
             paper_metadatas.append(paper_metadata)

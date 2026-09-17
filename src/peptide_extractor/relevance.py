@@ -37,6 +37,21 @@ Provide structured output containing:
 - confidence: Floating-point confidence score between 0.0 and 1.0.
 """
 
+SYSTEM_PROMPT_V2= """You are an expert in scientific paper reading and computational biology.
+Your task is to determine whether a given scientific paper is relevant for an information extraction pipeline on peptide self-assembly/amyloid research based only on its title and abstract.
+
+You must determine if the paper reports experimental self-assembly or nanostructure formation of short peptides (e.g., nanofibers, hydrogels, nanotubes, vesicles, organogels, nanospheres, amyloid fibrils) along with experimental conditions (e.g., pH, solvent, concentration, temperature, detection methods).
+
+Be careful not to discard papers that do not explicitly state full experimental details in the abstract but hint at experimental work. It is better to include a borderline paper (marking as relevant with lower confidence) than to mistakenly discard a paper containing experimental data.
+
+Provide structured output containing:
+- detected_clues: List of specific techniques, peptide identities, nanostructures, or experimental conditions mentioned.
+- explanation: Clear justification for the relevance assessment.
+- is_relevant: True if the paper likely contains experimental peptide self-assembly data in its full text, False otherwise.
+- confidence: Floating-point confidence score between 0.0 and 1.0.
+"""
+
+
 USER_PROMPT = """Here is the title and abstract of a paper:
 
 Title: {title}
@@ -175,7 +190,8 @@ class PaperRelevanceClassifier:
             self.llm = get_chat_model(provider=provider, model_name=self.model_name, **kwargs)
 
         self.prompt = ChatPromptTemplate.from_messages([
-            ("system", SYSTEM_PROMPT),
+            #("system", SYSTEM_PROMPT),
+            ("system", SYSTEM_PROMPT_V2),
             ("user", USER_PROMPT),
         ])
         try:
@@ -261,8 +277,8 @@ def screen_papers(
     classifier: Optional[PaperRelevanceClassifier] = None,
     session: Optional[Session] = None,
     delay_seconds: float = 2.0,
-    all_papers: bool = False,
     golden_dataset: bool = False,
+    **kwargs
 ) -> List[tuple[PaperMetadata, RelevanceResult]]:
     """Screen papers given conditions for relevance
     """
@@ -271,12 +287,8 @@ def screen_papers(
 
     if golden_dataset:
         papers_to_screen = get_paper_metadatas(limit=batch_size, session=session, dataset_subset=DatasetSubset.GOLDEN_BENCHMARK)
-    elif all_papers:
-        papers_to_screen = get_paper_metadatas(limit=batch_size, session=session)
     else:
-        papers_to_screen = get_paper_metadatas(
-            status=PaperStatus.NOT_PROCESSED, limit=batch_size, session=session
-        )
+        papers_to_screen = get_paper_metadatas(limit=batch_size, session=session, **kwargs)
 
     results: List[tuple[PaperMetadata, RelevanceResult]] = []
 

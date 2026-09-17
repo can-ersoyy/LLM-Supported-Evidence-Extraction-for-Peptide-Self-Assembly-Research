@@ -125,16 +125,14 @@ def run_relevance_screening(
     batch_size: Optional[int] = None,
     api_key: Optional[str] = None,
     delay_seconds: float = 2.0,
-    all_papers: bool = False,
     golden_dataset: bool = False,
+    **kwargs
 ) -> int:
     """Run abstract relevance screening on paper metadata records in the database.
 
     Evaluates papers using the relevance classifier, persisting PaperRelevance records
     and updating paper status to USABLE or DISCARD.
-    If all_papers is False and ignore_status is False (default), evaluates papers with status NOT_PROCESSED.
-    If all_papers is True or ignore_status is True, evaluates papers regardless of their status.
-    If batch_size is None, processes ALL eligible papers in the database.
+     If batch_size is None, processes ALL eligible papers in the database.
 
     Returns the total number of paper records screened in this execution.
     """
@@ -153,8 +151,8 @@ def run_relevance_screening(
         batch_size=batch_size,
         classifier=classifier,
         delay_seconds=delay_seconds,
-        all_papers=all_papers,
         golden_dataset=golden_dataset,
+        **kwargs
     )
     return len(screened_results)
 
@@ -184,11 +182,12 @@ if __name__ == "__main__":
     #open_alex_api_key = os.getenv("OPEN_ALEX_API_KEY")
     #find_abstracts_by_doi(open_alex_api_key)
 
+    #missed_paper_ids = [74]
+    #run_relevance_screening(provider="google_genai", model_name="gemma-4-31b-it", delay_seconds=0.5, id=missed_paper_ids)
+    #missed_paper_ids = [87]
+    run_relevance_screening(provider="google_genai", model_name="gemini-3.5-flash-lite", delay_seconds=2,golden_dataset=True)
+    #run_relevance_screening(provider="google_genai", model_name="gemma-4-31b-it", delay_seconds=0.5, id=missed_paper_ids)
     
-    run_relevance_screening(provider="google_genai", model_name="gemma-4-31b-it", delay_seconds=0.5, golden_dataset=True)
-    #missed_paper_ids = [36,39,54,67,74,77,89,96,107]
-    
-    #run_relevance_screening(provider="google_genai", model_name="gemma-4-26b-a4b-it", delay_seconds=1, all_papers=True)
     
 
 

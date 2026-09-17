@@ -228,18 +228,12 @@ def test_screen_papers(mock_llm):
         structured_mock.invoke.return_value = res
         classifier = PaperRelevanceClassifier(llm=llm)
 
-        # Default all_papers=False only processes paper1 -> unprocessed
+        # By default screen all papers
         screened_default = screen_papers(
-            classifier=classifier, session=session, delay_seconds=0, all_papers=False
+            classifier=classifier, session=session, delay_seconds=0
         )
-        assert len(screened_default) == 1
+        assert len(screened_default) == 4
         assert screened_default[0][0].id == paper1.id
-
-        # all_papers=True processes all 4 papers
-        screened_all = screen_papers(
-            classifier=classifier, session=session, delay_seconds=0, all_papers=True
-        )
-        assert len(screened_all) == 4
 
         screened_golden_dataset = screen_papers(
             classifier=classifier, session=session, delay_seconds=0, golden_dataset=True
@@ -247,25 +241,6 @@ def test_screen_papers(mock_llm):
         assert len(screened_golden_dataset) == 1
         assert screened_golden_dataset[0][0].id == paper4.id
         
-
-
-def test_run_relevance_screening_pipeline_function_all_papers(monkeypatch):
-    from peptide_extractor.pipeline import run_relevance_screening
-
-    mock_screen = MagicMock(return_value=[("p1", "r1"), ("p2", "r2"), ("p3", "r3")])
-    mock_classifier_cls = MagicMock()
-
-    monkeypatch.setattr("peptide_extractor.relevance.screen_papers", mock_screen)
-    monkeypatch.setattr("peptide_extractor.relevance.PaperRelevanceClassifier", mock_classifier_cls)
-    monkeypatch.setattr("peptide_extractor.pipeline.init_db", lambda: None)
-
-    count = run_relevance_screening(all_papers=True)
-    assert count == 3
-    mock_screen.assert_called_once()
-    _, kwargs = mock_screen.call_args
-    assert kwargs.get("all_papers") is True
-
-
 def test_get_paper_relevances_query():
     engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False})
     SQLModel.metadata.create_all(engine)
