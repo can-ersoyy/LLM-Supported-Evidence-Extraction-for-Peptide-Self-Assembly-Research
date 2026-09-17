@@ -51,7 +51,8 @@ class PaperMetadata(SQLModel, table=True):
         )
 
     search_query: Optional[str] = Field(default=None)
-
+    provider: Optional[str] = Field(default=None, description="Provider for the search query")
+    
     created_at: datetime = Field(
         sa_type=DateTime(timezone=True),  # type: ignore
         default_factory=get_utc_now

@@ -52,11 +52,13 @@ def test_scopus_parse_raw_search_records(scopus_provider):
     assert m1.status == PaperStatus.NOT_PROCESSED
     assert m1.is_open_access is True
     assert m1.search_query == "peptide self-assembly"
+    assert m1.provider == "scopus"
 
     m2 = metadatas[1]
     assert m2.title == "Diphenylalanine hydrogels"
     assert m2.doi == "10.1039/c3tb21234a"
     assert m2.pmid == "36789013"
+    assert m2.provider == "scopus"
 
 
 def test_scopus_parse_raw_search_records_empty_and_missing_fields(scopus_provider):

@@ -13,6 +13,8 @@ class PaperContent(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     paper_id: Optional[int] = Field(default=None, foreign_key="paper_metadata.id", index=True)
 
+    source: Optional[str] = Field(default=None, description="Source of the content.")
+
     format: str
     raw_content: str = Field(sa_column=Column(Text, nullable=False))
 

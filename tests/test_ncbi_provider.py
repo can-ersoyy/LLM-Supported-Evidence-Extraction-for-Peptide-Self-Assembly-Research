@@ -144,10 +144,12 @@ class TestNCBIProviderParseRawSearchRecords:
         assert meta1.dataset_subset == DatasetSubset.SCRAPED
         assert meta1.is_open_access is True
         assert meta1.search_query == "peptide self-assembly"
+        assert meta1.provider == "ncbi"
 
         meta2 = metadatas[1]
         assert meta2.pmid == "31000002"
         assert meta2.is_open_access is True
+        assert meta2.provider == "ncbi"
 
     def test_parse_raw_search_records_json_fallback(self, ncbi_provider):
         record = RawProviderRecord(
