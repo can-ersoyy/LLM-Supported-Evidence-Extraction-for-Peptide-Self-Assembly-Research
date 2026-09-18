@@ -1,3 +1,7 @@
+from sqlmodel import select
+from peptide_extractor.utils import normalize_doi
+from collections import defaultdict
+from peptide_extractor.db import get_records
 from peptide_extractor.db import DatasetSubset
 from peptide_extractor.db import PaperMetadata
 from peptide_extractor.providers import OpenAlexProvider
@@ -9,6 +13,7 @@ from pathlib import Path
 from typing import List, Optional
 
 from dotenv import find_dotenv, load_dotenv
+from sqlmodel import Session
 from peptide_extractor.db import get_session_context, init_db
 import os
 
@@ -118,8 +123,73 @@ def find_abstracts_by_doi(open_alex_api_key):
 
         print(f"Retrieved {len(abstract_found)} abstracts out of {len(non_abstract_metadas)}")
 
-#def deduplicate_by_doi():
-#    """This method removes paper metadatas with duplicate DOIs that are not golden dataset entries."""
+def deduplicate_by_doi(session: Optional[Session] = None) -> int:
+    """Removes scraped PaperMetadata records with duplicate DOIs according to priority rules:
+    1. Has non-empty abstract over missing abstract
+    2. Has non-empty PMCID over missing PMCID
+    3. Provider 'ncbi' over other providers
+    4. Lower database ID over higher database ID (keeps the older record, deletes the higher ID)
+
+    Returns the number of deleted duplicate records.
+    """
+    def _deduplicate(s: Session) -> int:
+        metadatas = get_records(PaperMetadata, dataset_subset=DatasetSubset.SCRAPED, session=s)
+        
+        # Group records by DOI (normalized/lowercased, ignoring records with no DOI)
+        doi_groups = defaultdict(list)
+        for m in metadatas:
+            if m.doi and m.doi.strip():
+                doi_groups[m.doi.strip().lower()].append(m)
+
+        deleted_count = 0
+        for doi, group in doi_groups.items():
+            if len(group) <= 1:
+                continue
+            # Priority scoring tuple: higher values are kept
+            # (has_abstract, has_pmcid, is_ncbi, -db_id)
+            def candidate_score(paper: PaperMetadata):
+                return (
+                    1 if bool(paper.abstract and paper.abstract.strip()) else 0,
+                    1 if bool(paper.pmcid and paper.pmcid.strip()) else 0,
+                    1 if paper.provider == "ncbi" else 0,
+                    -(paper.id or 0),  # Keep lower ID, delete higher ID
+                )
+            # Sort best candidate to the end
+            sorted_candidates = sorted(group, key=candidate_score)
+            winner = sorted_candidates[-1]
+            duplicates_to_delete = sorted_candidates[:-1]
+            for dup in duplicates_to_delete:
+                s.delete(dup)
+                deleted_count += 1
+        s.commit()
+        return deleted_count
+
+    if session is not None:
+        return _deduplicate(session)
+
+    init_db()
+    with get_session_context() as s:
+        return _deduplicate(s)
+
+def normalize_database_dois(session: Optional[Session] = None) -> int:
+    """Normalizes all existing DOIs in the database to lowercase, prefix-free format."""
+    def _normalize(s: Session) -> int:
+        papers = s.exec(select(PaperMetadata).where(PaperMetadata.doi.is_not(None))).all()
+        updated_count = 0
+        for paper in papers:
+            norm = normalize_doi(paper.doi)
+            if norm != paper.doi:
+                paper.doi = norm
+                s.add(paper)
+                updated_count += 1
+        s.commit()
+        return updated_count
+
+    if session is not None:
+        return _normalize(session)
+    with get_session_context() as s:
+        return _normalize(s)
+
     
 
 def run_relevance_screening(
@@ -198,7 +268,9 @@ if __name__ == "__main__":
     #missing_ids = [73]
     #run_relevance_screening(provider="google_genai", model_name="gemma-4-31b-it", delay_seconds=0.5, id=missing_ids)
     
-    
+    #normalized = normalize_database_dois()
+    #print(f"Normalized {normalized} DOIs.")
+    #deleted = deduplicate_by_doi()
+    #print(f"Deleted {deleted} duplicate records.")
 
-
-    
+    # last screened paper id: 369 by gemini3.5 flash lite

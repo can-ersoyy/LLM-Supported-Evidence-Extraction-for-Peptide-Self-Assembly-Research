@@ -2,6 +2,23 @@ from datetime import datetime, timezone
 
 import requests
 
+import re
+from typing import Optional
+
+def normalize_doi(doi: Optional[str]) -> Optional[str]:
+    """Clean and normalize a DOI string according to ISO 26324 standards.
+    
+    - Strips whitespace
+    - Converts to lowercase
+    - Removes 'https://doi.org/', 'http://dx.doi.org/', and 'doi:' prefixes
+    """
+    if not doi:
+        return None
+    cleaned = doi.strip().lower()
+    cleaned = re.sub(r"^(https?://(dx\.)?doi\.org/|doi:)", "", cleaned).strip()
+    return cleaned if cleaned else None
+
+
 def get_utc_now():
     return datetime.now(timezone.utc)
 
