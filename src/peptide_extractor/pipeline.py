@@ -1,3 +1,4 @@
+from peptide_extractor.db import DatasetSubset
 from peptide_extractor.db import PaperMetadata
 from peptide_extractor.providers import OpenAlexProvider
 import time
@@ -117,7 +118,9 @@ def find_abstracts_by_doi(open_alex_api_key):
 
         print(f"Retrieved {len(abstract_found)} abstracts out of {len(non_abstract_metadas)}")
 
-
+#def deduplicate_by_doi():
+#    """This method removes paper metadatas with duplicate DOIs that are not golden dataset entries."""
+    
 
 def run_relevance_screening(
     provider: str = "google_genai",
@@ -147,14 +150,14 @@ def run_relevance_screening(
         model_name=model_name,
         api_key=api_key,
     )
-    screened_results = screen_papers(
+    screened_results, failed_paper_ids, run_identifier = screen_papers(
         batch_size=batch_size,
         classifier=classifier,
         delay_seconds=delay_seconds,
         golden_dataset=golden_dataset,
         **kwargs
     )
-    return len(screened_results)
+    return len(screened_results), failed_paper_ids, run_identifier
 
 
 if __name__ == "__main__":
@@ -182,11 +185,18 @@ if __name__ == "__main__":
     #open_alex_api_key = os.getenv("OPEN_ALEX_API_KEY")
     #find_abstracts_by_doi(open_alex_api_key)
 
-    #missed_paper_ids = [74]
     #run_relevance_screening(provider="google_genai", model_name="gemma-4-31b-it", delay_seconds=0.5, id=missed_paper_ids)
-    #missed_paper_ids = [87]
-    run_relevance_screening(provider="google_genai", model_name="gemini-3.5-flash-lite", delay_seconds=2,golden_dataset=True)
-    #run_relevance_screening(provider="google_genai", model_name="gemma-4-31b-it", delay_seconds=0.5, id=missed_paper_ids)
+    #total_screened, failed_paper_ids, run_identifier = run_relevance_screening(provider="google_genai", model_name="gemini-3.1-flash-lite", delay_seconds=2, dataset_subset=DatasetSubset.SCRAPED, batch_size=50)
+    
+    #missed_ids = [110,111,112,113,114,115,116,117,118,119]
+    #total_screened, failed_paper_ids, run_identifier = run_relevance_screening(provider="ollama", model_name="llama3.2:latest", delay_seconds=0.5, id=missed_ids)
+   
+    #print(f"Run identifier: {run_identifier}")
+    #print(f"Total succesfully screened papers: {total_screened}")
+    #print(f"Following papers failed to be screened: {failed_paper_ids}")
+
+    #missing_ids = [73]
+    #run_relevance_screening(provider="google_genai", model_name="gemma-4-31b-it", delay_seconds=0.5, id=missing_ids)
     
     
 

@@ -106,9 +106,9 @@ def test_screen_papers_workflow(mock_llm):
         structured_mock.invoke.side_effect = [res1, res2]
 
         classifier = PaperRelevanceClassifier(llm=llm)
-        screened = screen_papers(batch_size=10, classifier=classifier, session=session, delay_seconds=0)
+        (succesful_screens, _, _) = screen_papers(batch_size=10, classifier=classifier, session=session, delay_seconds=0)
 
-        assert len(screened) == 2
+        assert len(succesful_screens) == 2
 
         updated_p1 = get_paper_by_id(paper1.id, session=session)
         updated_p2 = get_paper_by_id(paper2.id, session=session)
@@ -124,15 +124,15 @@ def test_get_chat_model_invalid_provider():
 def test_run_relevance_screening_pipeline_function(monkeypatch):
     from peptide_extractor.pipeline import run_relevance_screening
 
-    mock_screen = MagicMock(return_value=[("paper1", "res1"), ("paper2", "res2")])
+    mock_screen = MagicMock(return_value=([("paper1", "res1"), ("paper2", "res2")], [], 1234567890))
     mock_classifier_cls = MagicMock()
 
     monkeypatch.setattr("peptide_extractor.relevance.screen_papers", mock_screen)
     monkeypatch.setattr("peptide_extractor.relevance.PaperRelevanceClassifier", mock_classifier_cls)
     monkeypatch.setattr("peptide_extractor.pipeline.init_db", lambda: None)
 
-    count = run_relevance_screening(provider="google_genai", model_name="gemma-4-31b-it", batch_size=5)
-    assert count == 2
+    (succesful_screens, _, _) = run_relevance_screening(provider="google_genai", model_name="gemma-4-31b-it", batch_size=5)
+    assert succesful_screens == 2
     mock_screen.assert_called_once()
 
 def test_screen_papers_skips_failed_api_call(mock_llm):
@@ -170,11 +170,11 @@ def test_screen_papers_skips_failed_api_call(mock_llm):
         structured_mock.invoke.side_effect = [RuntimeError("API Rate Limit Exceeded"), res2]
 
         classifier = PaperRelevanceClassifier(llm=llm)
-        screened = screen_papers(batch_size=10, classifier=classifier, session=session, delay_seconds=0)
+        (succesful_screens, _, _) = screen_papers(batch_size=10, classifier=classifier, session=session, delay_seconds=0)
 
         # Only paper2 should be in results
-        assert len(screened) == 1
-        assert screened[0][0].id == paper2.id
+        assert len(succesful_screens) == 1
+        assert succesful_screens[0][0].id == paper2.id
 
         # Paper 1 should remain NOT_PROCESSED for retry
         refreshed_p1 = session.get(PaperMetadata, paper1.id)
@@ -229,13 +229,13 @@ def test_screen_papers(mock_llm):
         classifier = PaperRelevanceClassifier(llm=llm)
 
         # By default screen all papers
-        screened_default = screen_papers(
+        (succesful_screens, _, _) = screen_papers(
             classifier=classifier, session=session, delay_seconds=0
         )
-        assert len(screened_default) == 4
-        assert screened_default[0][0].id == paper1.id
+        assert len(succesful_screens) == 4
+        assert succesful_screens[0][0].id == paper1.id
 
-        screened_golden_dataset = screen_papers(
+        (screened_golden_dataset, _, _) = screen_papers(
             classifier=classifier, session=session, delay_seconds=0, golden_dataset=True
         )
         assert len(screened_golden_dataset) == 1
@@ -253,6 +253,7 @@ def test_get_paper_relevances_query():
             is_relevant=True,
             confidence=0.95,
             provider="google_genai",
+            run_identifier=1234567890,
             model_name="gemma-4-31b-it",
             session=session,
         )
@@ -263,6 +264,7 @@ def test_get_paper_relevances_query():
             is_relevant=False,
             confidence=0.8,
             provider="ollama",
+            run_identifier=1234567890,
             model_name="llama3",
             session=session,
         )
@@ -273,6 +275,7 @@ def test_get_paper_relevances_query():
             is_relevant=True,
             confidence=0.99,
             provider="google_genai",
+            run_identifier=1234567890,
             model_name="gemma-4-31b-it",
             session=session,
         )

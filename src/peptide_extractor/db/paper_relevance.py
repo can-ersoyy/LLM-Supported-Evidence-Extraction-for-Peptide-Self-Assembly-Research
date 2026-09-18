@@ -23,6 +23,8 @@ class PaperRelevance(SQLModel, table=True):
     provider: str = Field(index=True, description="LLM provider name: 'google_genai', 'ollama', etc.")
     model_name: str = Field(index=True, description="LLM model name: e.g. 'gemma-4-31b-it', 'gemini-3.5-flash'")
 
+    run_identifier: Optional[int] = Field(default=None, index=True, description="Identifier for the run. Generated when run starts from the current time in seconds since epoch.")
+
     created_at: datetime = Field(
         sa_type=DateTime(timezone=True),  # type: ignore
         default_factory=get_utc_now,
@@ -42,6 +44,7 @@ def save_paper_relevance(
     explanation: str,
     is_relevant: bool,
     confidence: float,
+    run_identifier: int,
     provider: str = "google_genai",
     model_name: str = "gemma-4-31b-it",
     session: Optional[Session] = None,
@@ -56,6 +59,7 @@ def save_paper_relevance(
             confidence=confidence,
             provider=provider if isinstance(provider, str) and provider.strip() else "google_genai",
             model_name=model_name if isinstance(model_name, str) and model_name.strip() else "gemma-4-31b-it",
+            run_identifier=run_identifier,
         )
         s.add(record)
         s.commit()
