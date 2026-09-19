@@ -1,3 +1,4 @@
+from peptide_extractor.providers import NCBIProvider
 from sqlmodel import select
 from peptide_extractor.utils import normalize_doi
 from collections import defaultdict
@@ -242,7 +243,7 @@ if __name__ == "__main__":
     # 2.5 Do relevance check on deduplicated dois
     # 3. Fetch full texts for relevant papers
 
-    #ncbi_provider = NCBIProvider(ncbi_api_key, batch_size=150)
+    ncbi_provider = NCBIProvider(ncbi_api_key, batch_size=150)
     #scopus_provider = ScopusProvider(scopus_api_key)
 
     
@@ -274,3 +275,20 @@ if __name__ == "__main__":
     #print(f"Deleted {deleted} duplicate records.")
 
     # last screened paper id: 369 by gemini3.5 flash lite
+
+    # GOLDEN_DATASET paper fulltext retrieval - 1.via pmcid from ncbi
+
+    #golden_papers = get_records(PaperMetadata, dataset_subset=DatasetSubset.GOLDEN_BENCHMARK)
+    #fetched_papers, succesful_ids, failed_ids =  ncbi_provider.fetch(golden_papers)
+#
+    #print(f"Failed to fetch content for {len(failed_ids)} papers: {failed_ids}")
+    #print(f"Succesfully fetched content for {len(succesful_ids)} papers: {succesful_ids}")
+#
+    #init_db()
+    #with get_session_context() as s:
+    #    s.add_all(fetched_papers)
+    #    s.commit()
+
+    """
+    Failed to fetch content for 79 papers: [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 22, 23, 25, 26, 27, 28, 30, 31, 32, 33, 36, 37, 38, 40, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 66, 72, 75, 77, 79, 82, 85, 87, 88, 89, 90, 96, 97, 98, 99, 104, 109, 110, 112, 114, 115, 116, 117, 118, 119]
+    """

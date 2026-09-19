@@ -276,19 +276,23 @@ class NCBIProvider(BaseProvider):
 
         return paper_metadatas
 
-    def fetch(self, paper_metadatas: Sequence[PaperMetadata], db = "pmc") -> List[Tuple[PaperMetadata, PaperContent]]:
+    def fetch(self, paper_metadatas: Sequence[PaperMetadata], db = "pmc", batch_size=10) -> List[Tuple[PaperMetadata, PaperContent]]:
         num_records = len(paper_metadatas)
-        id_list = [paper.pmcid for paper in paper_metadatas]
-        paper_tuples = []
+        pmcid_list = [paper.pmcid for paper in paper_metadatas]
+        
+        succesful_paper_ids: list[int] = []
+        failed_paper_ids: list[int] = []
+        paper_contents: List[PaperContent] = []
 
-        for i in range(0, num_records, self.batch_size):
+        for i in range(0, num_records, batch_size):
             print("batch done")
-            batch = id_list[i : i + self.batch_size]
+            batch_pmcids = pmcid_list[i : i + batch_size]
+            
             params = {
                 "db": db,
                 "retmode": "xml",
                 "api_key": self.api_key,
-                "id": ",".join(str(x).strip() for x in batch if x),
+                "id": ",".join(str(x).strip() for x in batch_pmcids if x),
             }
 
             response = requests.get(f"{self.BASE_URL}efetch.fcgi", params=params)
@@ -307,7 +311,7 @@ class NCBIProvider(BaseProvider):
                     if pmcid_text and not pmcid_text.upper().startswith("PMC"):
                         pmcid_text = f"PMC{pmcid_text}"
 
-                    paper_metadata = next((p for p in paper_metadatas[i:i+self.batch_size] if p.pmcid == pmcid_text), None)
+                    paper_metadata = next((p for p in paper_metadatas[i:i+batch_size] if p.pmcid == pmcid_text), None)
                     if paper_metadata:
                         xml_str = ET.tostring(article_elem, encoding="unicode")
                         print("this is xml str")
@@ -315,11 +319,15 @@ class NCBIProvider(BaseProvider):
                             paper_id=paper_metadata.id,
                             paper=paper_metadata,
                             raw_content=xml_str,
-                            format="xml"
+                            format="xml",
+                            source="ncbi"
                         )
-                        paper_tuples.append((paper_metadata, paper_content))
+                        paper_contents.append(paper_content)
+                        succesful_paper_ids.append(paper_metadata.id)
+
+        failed_paper_ids = [paper.id for paper in paper_metadatas if paper.id not in succesful_paper_ids]
         
-        return paper_tuples
+        return paper_contents, succesful_paper_ids, failed_paper_ids
 
 class ScopusProvider(BaseProvider):
 

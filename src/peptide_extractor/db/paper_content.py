@@ -17,6 +17,8 @@ class PaperContent(SQLModel, table=True):
 
     format: str
     raw_content: str = Field(sa_column=Column(Text, nullable=False))
+    pdf_url: Optional[str] = Field(default=None, description="PDF URL of the content. Should be thought of as a backup in case xml doesn't exist")
+    
 
     paper: Optional["PaperMetadata"] = Relationship(back_populates="contents")
 
