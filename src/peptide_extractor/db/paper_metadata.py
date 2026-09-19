@@ -111,3 +111,24 @@ def update_paper_status(
         return _update(session)
     with get_session_context() as s:
         return _update(s)
+
+def update_paper_pmcid(
+    paper_id: int,
+    pmcid: str,
+    session: Optional[Session] = None,
+) -> Optional[PaperMetadata]:
+    """Update the pmcid of a PaperMetadata record by ID."""
+    def _update(s: Session) -> Optional[PaperMetadata]:
+        paper = s.get(PaperMetadata, paper_id)
+        if paper is None:
+            return None
+        paper.pmcid = pmcid
+        s.add(paper)
+        s.commit()
+        s.refresh(paper)
+        return paper
+
+    if session:
+        return _update(session)
+    with get_session_context() as s:
+        return _update(s)

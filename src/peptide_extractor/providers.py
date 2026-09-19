@@ -320,7 +320,7 @@ class NCBIProvider(BaseProvider):
                             paper=paper_metadata,
                             raw_content=xml_str,
                             format="xml",
-                            source="ncbi"
+                            source=db
                         )
                         paper_contents.append(paper_content)
                         succesful_paper_ids.append(paper_metadata.id)
