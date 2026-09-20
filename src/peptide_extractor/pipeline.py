@@ -25,7 +25,7 @@ GOLDEN_DATASET_CSV_PATH = (
     Path(__file__).resolve().parent.parent.parent
     / "data"
     / "literature"
-    / "golden_dataset_initial.csv"
+    / "golden_dataset_combined_cleaned.csv"
 )
 
 
@@ -45,11 +45,12 @@ def get_golden_dataset_pmids(csv_path: Optional[Path | str] = None) -> List[str]
 
 
 # Pre-parsed list of golden dataset PubMed IDs
-golden_dataset_pmids: List[str] = get_golden_dataset_pmids()
+#golden_dataset_pmids: List[str] = get_golden_dataset_pmids()
 
-def retrieve_golden_dataset(ncbi_provider):
+def retrieve_golden_dataset(ncbi_provider, golden_dataset_pmids: List[str]):
     raw_records = ncbi_provider.search_by_ids(golden_dataset_pmids)
     golden_dataset_metadatas = ncbi_provider.parse_raw_search_records(raw_records)
+    print(f"Retrieved {golden_dataset_metadatas}")
 
     init_db()
     with get_session_context() as session:
@@ -247,6 +248,17 @@ if __name__ == "__main__":
     # 3. Fetch full texts for relevant papers
 
     ncbi_provider = NCBIProvider(ncbi_api_key, batch_size=150)
+    #pmids = get_golden_dataset_pmids(GOLDEN_DATASET_CSV_PATH)
+    #print(f"List of {len(pmids)} PMIDS: {pmids}")
+#
+    #existing_golden_papers = get_records(PaperMetadata, dataset_subset=DatasetSubset.GOLDEN_BENCHMARK)
+    #existing_golden_pmids = {p.pmid for p in existing_golden_papers}
+    #new_pmids = [p for p in pmids if p not in existing_golden_pmids]
+    #print(f"List of {len(new_pmids)} new PMIDS: {new_pmids}")
+    
+
+    #remaining_golden_dataset_papers = ['26631316', '23884374', '20461244', '29303206', '30104564', '30452865', '30920525', '27508285', '28045258', '28140492', '28589640', '28767108', '28805225', '28825801', '34741031', '30894526', '30894521', '33558536', '30846696', '31676763', '33790016', '30158706', '30276465', '32032505', '34128081', '34588692', '29681455', '31295458', '33548114', '31664019', '33431654', '23764838', '28211492', '29734798', '36302762', '35344985', '35831275', '35377792', '34880495', '38199491', '38879609']
+    #retrieve_golden_dataset(ncbi_provider, remaining_golden_dataset_papers)
     #scopus_provider = ScopusProvider(scopus_api_key)
 
     
@@ -293,7 +305,7 @@ if __name__ == "__main__":
     #    s.commit()
 
     """
-    Failed to fetch content for 79 (golden dataset) papers: [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 22, 23, 25, 26, 27, 28, 30, 31, 32, 33, 36, 37, 38, 40, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 66, 72, 75, 77, 79, 82, 85, 87, 88, 89, 90, 96, 97, 98, 99, 104, 109, 110, 112, 114, 115, 116, 117, 118, 119]
+    Failed to fetch content for 95 (golden dataset) papers: [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 22, 23, 25, 26, 27, 28, 30, 31, 32, 33, 36, 37, 38, 40, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 66, 72, 75, 77, 79, 82, 85, 87, 88, 89, 90, 96, 97, 98, 99, 104, 109, 110, 112, 114, 115, 116, 117, 118, 119, 870, 899, 869, 868, 875, 876, 877, 878, 879, 880, 881, 871, 873, 898, 888, 907]
     
     """
 
@@ -324,3 +336,13 @@ if __name__ == "__main__":
     
 
     # Missing fulltext scraped paper ids (from pmc) = [121, 127, 132, 133, 139, 149, 150, 184, 206, 217, 230, 231, 241, 247, 262, 269, 276, 277, 282, 283, 284, 288, 289, 290, 291, 292, 293, 295, 296, 297, 298, 299, 300, 301, 302, 303, 304, 305, 306, 307, 311, 312, 316, 317, 318, 320, 322, 323, 325, 329, 330, 334, 335, 337, 338, 339, 346, 350, 357, 359, 368, 369, 371, 375, 377, 381, 384, 385, 386, 387, 391, 395, 399, 410, 411, 418, 419, 420, 421, 426, 427, 430, 431, 438, 440, 441, 450, 451, 457, 458, 461, 475, 477, 479, 480, 481, 482, 484, 486, 491, 498, 499, 502, 503, 505, 506, 507, 512, 514, 517, 519, 521, 523, 524, 526, 528, 529, 530, 531, 534, 540, 544, 554, 557, 564, 567, 569, 570, 571, 575, 578, 579, 586, 588, 590, 592, 593, 594, 595, 598, 605, 607, 608, 609, 615, 622, 627, 628, 633, 635, 644, 646, 656, 661, 670, 674, 683, 706, 716, 720, 722, 739, 769, 774, 782, 783, 787, 792, 793, 795, 796, 797, 802, 804, 808, 811, 814, 815, 816, 819, 822, 824, 838, 854, 856, 858, 863, 865, 866]
+    #golden_dataset_remaining_papers = get_records(PaperMetadata, pmid=['26631316', '23884374', '20461244', '29303206', '30104564', '30452865', '30920525', '27508285', '28045258', '28140492', '28589640', '28767108', '28805225', '28825801', '34741031', '30894526', '30894521', '33558536', '30846696', '31676763', '33790016', '30158706', '30276465', '32032505', '34128081', '34588692', '29681455', '31295458', '33548114', '31664019', '33431654', '23764838', '28211492', '29734798', '36302762', '35344985', '35831275', '35377792', '34880495', '38199491', '38879609'])
+    #fetched_papers, succesful_ids, failed_ids =  ncbi_provider.fetch(golden_dataset_remaining_papers)
+#
+    #print(f"Failed to fetch content for {len(failed_ids)} papers: {failed_ids}")
+    #print(f"Succesfully fetched content for {len(succesful_ids)} papers: {succesful_ids}")
+#
+    #init_db()
+    #with get_session_context() as s:
+    #    s.add_all(fetched_papers)
+    #    s.commit()
