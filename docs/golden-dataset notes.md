@@ -1,5 +1,4 @@
-
-
+	
 Example Entries:
 
 | sequence                                 | length | peptide_name                         | is_aggregated | type    | n_terminal | c_terminal | temperature | ph   | peptide_concentration | solution_system | solvent_ratio | solvent_env                                                                | detection_method    | preparation_protocol                                                                                                     | pmid     | databases           |
