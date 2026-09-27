@@ -24,10 +24,15 @@ import os
 GOLDEN_DATASET_CSV_PATH = (
     Path(__file__).resolve().parent.parent.parent
     / "data"
-    / "literature"
-    / "golden_dataset_combined_cleaned.csv"
+    / "golden_dataset_final.csv"
 )
 
+# maps peptide length to structure name or self-assembly keyword, includes open-access, english and non review article filters, only title and abstract
+NCBI_SEARCH_QUERY_V1 = """((tetrapeptide[tiab] OR pentapeptide[tiab] OR hexapeptide[tiab] OR heptapeptide[tiab] OR octapeptide[tiab] OR nonapeptide[tiab] OR decapeptide[tiab] OR undecapeptide[tiab] OR dodecapeptide[tiab] OR tridecapeptide[tiab] OR tetradecapeptide[tiab] OR pentadecapeptide[tiab] OR hexadecapeptide[tiab] OR heptadecapeptide[tiab] OR octadecapeptide[tiab] OR nonadecapeptide[tiab] OR eicosapeptide[tiab] OR icosapeptide[tiab]) AND (nanostructure[tiab] OR nanotube[tiab] OR nanofiber[tiab] OR nanofibre[tiab] OR nanorod[tiab] OR hydrogel[tiab] OR nanosphere[tiab] OR nanoparticle[tiab] OR "self-assembly"[tiab])) AND (english[la]) AND ("free full text"[filter]) NOT (review[pt])"""
+
+NCBI_SEARCH_QUERY_V2 = """peptide self-assembly"""
+
+SCOPUS_SEARCH_QUERY_V1 = """TITLE-ABS-KEY(tetrapeptide OR pentapeptide OR hexapeptide OR heptapeptide OR octapeptide OR nonapeptide OR decapeptide OR undecapeptide OR dodecapeptide OR tridecapeptide OR tetradecapeptide OR pentadecapeptide OR hexadecapeptide OR heptadecapeptide OR octadecapeptide OR nonadecapeptide OR eicosapeptide OR icosapeptide) AND TITLE-ABS-KEY(nanostructure OR nanotube OR nanofiber OR nanofibre OR nanorod OR hydrogel OR nanosphere OR nanoparticle OR "self-assembly") AND LANGUAGE(english) AND DOCTYPE(ar) AND OA(all)"""
 
 def get_golden_dataset_pmids(csv_path: Optional[Path | str] = None) -> List[str]:
     """Parse golden_dataset_initial.csv and return unique PubMed IDs."""
@@ -58,25 +63,29 @@ def retrieve_golden_dataset(ncbi_provider, golden_dataset_pmids: List[str]):
         session.commit()
 
 
-def retrive_ncbi_by_query(ncbi_provider):
-    query = """((tetrapeptide[tiab] OR pentapeptide[tiab] OR hexapeptide[tiab] OR heptapeptide[tiab] OR octapeptide[tiab] OR nonapeptide[tiab] OR decapeptide[tiab] OR undecapeptide[tiab] OR dodecapeptide[tiab] OR tridecapeptide[tiab] OR tetradecapeptide[tiab] OR pentadecapeptide[tiab] OR hexadecapeptide[tiab] OR heptadecapeptide[tiab] OR octadecapeptide[tiab] OR nonadecapeptide[tiab] OR eicosapeptide[tiab] OR icosapeptide[tiab]) AND (nanostructure[tiab] OR nanotube[tiab] OR nanofiber[tiab] OR nanofibre[tiab] OR nanorod[tiab] OR hydrogel[tiab] OR nanosphere[tiab] OR nanoparticle[tiab] OR "self-assembly"[tiab])) AND (english[la]) AND ("free full text"[filter]) NOT (review[pt])"""
+def retrive_ncbi_by_query(ncbi_provider, query=NCBI_SEARCH_QUERY_V1, save=True):
     raw_records = ncbi_provider.search_by_query(query)
     ncbi_metadatas = ncbi_provider.parse_raw_search_records(raw_records)
 
-    init_db()
-    with get_session_context() as session:
-        session.add_all(ncbi_metadatas)
-        session.commit()
+    if save:
+        init_db()
+        with get_session_context() as session:
+            session.add_all(ncbi_metadatas)
+            session.commit()
+    else:
+        return ncbi_metadatas
 
-def retrieve_scopus_by_query(scopus_provider):
-    query = """TITLE-ABS-KEY(tetrapeptide OR pentapeptide OR hexapeptide OR heptapeptide OR octapeptide OR nonapeptide OR decapeptide OR undecapeptide OR dodecapeptide OR tridecapeptide OR tetradecapeptide OR pentadecapeptide OR hexadecapeptide OR heptadecapeptide OR octadecapeptide OR nonadecapeptide OR eicosapeptide OR icosapeptide) AND TITLE-ABS-KEY(nanostructure OR nanotube OR nanofiber OR nanofibre OR nanorod OR hydrogel OR nanosphere OR nanoparticle OR "self-assembly") AND LANGUAGE(english) AND DOCTYPE(ar) AND OA(all)"""
+def retrieve_scopus_by_query(scopus_provider, query=SCOPUS_SEARCH_QUERY_V1, save=True):
     raw_records = scopus_provider.search_by_query(query)
     scopus_metadatas = scopus_provider.parse_raw_search_records(raw_records)
 
-    init_db()
-    with get_session_context() as session:
-        session.add_all(scopus_metadatas)
-        session.commit()
+    if save:
+        init_db()
+        with get_session_context() as session:
+            session.add_all(scopus_metadatas)
+            session.commit()
+    else:
+        return scopus_metadatas
 
 def find_abstracts_by_doi(open_alex_api_key):
     init_db()
@@ -90,6 +99,9 @@ def find_abstracts_by_doi(open_alex_api_key):
     
     with get_session_context() as session:
         for metadata in non_abstract_metadas:
+            if metadata.doi is None:
+                print(f"Skipping paper {metadata.id}: no DOI")
+                continue
             try:
                 abstract = semantic_scholar.get_abstract_by_doi(metadata.doi)
 
@@ -195,7 +207,6 @@ def normalize_database_dois(session: Optional[Session] = None) -> int:
     with get_session_context() as s:
         return _normalize(s)
 
-    
 
 def run_relevance_screening(
     provider: str = "google_genai",
@@ -212,7 +223,7 @@ def run_relevance_screening(
     and updating paper status to USABLE or DISCARD.
      If batch_size is None, processes ALL eligible papers in the database.
 
-    Returns the total number of paper records screened in this execution.
+    Returns the total number of paper records screened, failed_paper_ids and run_identifier
     """
     from peptide_extractor.relevance import (
         PaperRelevanceClassifier,
@@ -241,108 +252,18 @@ if __name__ == "__main__":
 
     ncbi_api_key = os.getenv("NCBI_API_KEY")
     scopus_api_key = os.getenv("SCOPUS_API_KEY")
+    open_alex_api_key = os.getenv("OPEN_ALEX_API_KEY")
 
     # 1. Search in different providers
     # 2. Complete abstracts and deduplicate by doi
     # 2.5 Do relevance check on deduplicated dois
     # 3. Fetch full texts for relevant papers
 
-    ncbi_provider = NCBIProvider(ncbi_api_key, batch_size=150)
-    #pmids = get_golden_dataset_pmids(GOLDEN_DATASET_CSV_PATH)
-    #print(f"List of {len(pmids)} PMIDS: {pmids}")
-#
-    #existing_golden_papers = get_records(PaperMetadata, dataset_subset=DatasetSubset.GOLDEN_BENCHMARK)
-    #existing_golden_pmids = {p.pmid for p in existing_golden_papers}
-    #new_pmids = [p for p in pmids if p not in existing_golden_pmids]
-    #print(f"List of {len(new_pmids)} new PMIDS: {new_pmids}")
-    
+    ncbi_provider = NCBIProvider(ncbi_api_key, batch_size=200)
 
-    #remaining_golden_dataset_papers = ['26631316', '23884374', '20461244', '29303206', '30104564', '30452865', '30920525', '27508285', '28045258', '28140492', '28589640', '28767108', '28805225', '28825801', '34741031', '30894526', '30894521', '33558536', '30846696', '31676763', '33790016', '30158706', '30276465', '32032505', '34128081', '34588692', '29681455', '31295458', '33548114', '31664019', '33431654', '23764838', '28211492', '29734798', '36302762', '35344985', '35831275', '35377792', '34880495', '38199491', '38879609']
-    #retrieve_golden_dataset(ncbi_provider, remaining_golden_dataset_papers)
-    #scopus_provider = ScopusProvider(scopus_api_key)
-
-    
-
-    # retrieve_golden_dataset(ncbi_provider)
-    # retrieve_ncbi_by_query(ncbi_provider)
-    # retrieve_scopus_by_query(scopus_provider)
-
-
-    #open_alex_api_key = os.getenv("OPEN_ALEX_API_KEY")
+    #found_papers = retrive_ncbi_by_query(ncbi_provider, NCBI_SEARCH_QUERY_V2)
     #find_abstracts_by_doi(open_alex_api_key)
 
-    #run_relevance_screening(provider="google_genai", model_name="gemma-4-31b-it", delay_seconds=0.5, id=missed_paper_ids)
-    #total_screened, failed_paper_ids, run_identifier = run_relevance_screening(provider="google_genai", model_name="gemini-3.1-flash-lite", delay_seconds=2, dataset_subset=DatasetSubset.SCRAPED, batch_size=50)
-    
-    #missed_ids = [110,111,112,113,114,115,116,117,118,119]
-    #total_screened, failed_paper_ids, run_identifier = run_relevance_screening(provider="ollama", model_name="llama3.2:latest", delay_seconds=0.5, id=missed_ids)
-   
-    #print(f"Run identifier: {run_identifier}")
-    #print(f"Total succesfully screened papers: {total_screened}")
-    #print(f"Following papers failed to be screened: {failed_paper_ids}")
-
-    #missing_ids = [73]
-    #run_relevance_screening(provider="google_genai", model_name="gemma-4-31b-it", delay_seconds=0.5, id=missing_ids)
-    
-    #normalized = normalize_database_dois()
-    #print(f"Normalized {normalized} DOIs.")
-    #deleted = deduplicate_by_doi()
-    #print(f"Deleted {deleted} duplicate records.")
-
-    # last screened paper id: 369 by gemini3.5 flash lite
-
-    # GOLDEN_DATASET paper fulltext retrieval - 1.via pmcid from ncbi
-
-    #golden_papers = get_records(PaperMetadata, dataset_subset=DatasetSubset.GOLDEN_BENCHMARK)
-    #fetched_papers, succesful_ids, failed_ids =  ncbi_provider.fetch(golden_papers)
-#
-    #print(f"Failed to fetch content for {len(failed_ids)} papers: {failed_ids}")
-    #print(f"Succesfully fetched content for {len(succesful_ids)} papers: {succesful_ids}")
-#
-    #init_db()
-    #with get_session_context() as s:
-    #    s.add_all(fetched_papers)
-    #    s.commit()
-
-    """
-    Failed to fetch content for 95 (golden dataset) papers: [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 22, 23, 25, 26, 27, 28, 30, 31, 32, 33, 36, 37, 38, 40, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 66, 72, 75, 77, 79, 82, 85, 87, 88, 89, 90, 96, 97, 98, 99, 104, 109, 110, 112, 114, 115, 116, 117, 118, 119, 870, 899, 869, 868, 875, 876, 877, 878, 879, 880, 881, 871, 873, 898, 888, 907]
-    
-    """
-
-    #scraped_papers = get_records(PaperMetadata, dataset_subset=DatasetSubset.SCRAPED)
-    #scopus_papers_v2 = get_records(PaperMetadata, id=[121, 127, 132, 133, 139, 149, 150, 184, 206, 217, 230, 231, 241, 247, 262, 269, 276, 277, 282, 283, 284, 288, 289, 290, 291, 292, 293, 295, 296, 297, 298, 299, 300, 301, 302, 303, 304, 305, 306, 307, 308, 309, 310, 311, 312, 315, 316, 317, 318, 320, 322, 323, 325, 329, 330, 334, 335, 336, 337, 338, 339, 342, 343, 344, 346, 347, 348, 350, 351, 352, 353, 356, 357, 359, 360, 361, 366, 368, 369, 371, 372, 374, 375, 376, 377, 380, 381, 383, 384, 385, 386, 387, 388, 390, 391, 392, 395, 397, 399, 400, 401, 402, 403, 404, 405, 406, 407, 408, 409, 410, 411, 412, 413, 414, 415, 416, 418, 419, 420, 421, 423, 424, 426, 427, 429, 430, 431, 432, 433, 435, 436, 437, 438, 439, 440, 441, 442, 445, 446, 448, 449, 450, 451, 452, 453, 454, 455, 456, 457, 458, 459, 460, 461, 464, 465, 466, 467, 469, 472, 473, 475, 476, 477, 479, 480, 481, 482, 483, 484, 485, 486, 487, 488, 489, 491, 492, 493, 494, 496, 498, 499, 500, 501, 502, 503, 505, 506, 507, 508, 509, 510, 512, 513, 514, 515, 517, 518, 519, 521, 522, 523, 524, 526, 527, 528, 529, 530, 531, 532, 534, 536, 538, 540, 541, 544, 553, 554, 555, 556, 557, 558, 559, 560, 561, 562, 563, 564, 566, 567, 569, 570, 571, 572, 575, 577, 578, 579, 581, 584, 585, 586, 587, 588, 589, 590, 592, 593, 594, 595, 596, 598, 600, 603, 604, 605, 606, 607, 608, 609, 610, 611, 615, 616, 618, 620, 621, 622, 623, 624, 627, 628, 631, 632, 633, 635, 636, 637, 641, 642, 644, 646, 648, 649, 650, 653, 655, 656, 657, 660, 661, 662, 665, 666, 670, 672, 673, 674, 675, 676, 677, 678, 682, 683, 685, 686, 687, 690, 691, 693, 695, 696, 700, 704, 706, 707, 708, 709, 710, 711, 714, 715, 716, 718, 719, 720, 722, 723, 724, 725, 726, 728, 729, 730, 731, 733, 734, 738, 739, 741, 742, 743, 744, 745, 746, 747, 748, 750, 752, 754, 755, 756, 757, 760, 762, 763, 764, 766, 767, 769, 774, 776, 777, 778, 779, 780, 781, 782, 783, 786, 787, 788, 789, 790, 791, 792, 793, 795, 796, 797, 798, 799, 801, 802, 804, 805, 806, 807, 808, 809, 811, 812, 813, 814, 815, 816, 817, 818, 819, 820, 821, 822, 823, 824, 825, 826, 827, 830, 831, 835, 836, 838, 840, 841, 846, 848, 851, 852, 853, 854, 856, 858, 859, 863, 865, 866, 867])
-    #fetched_papers, succesful_ids, failed_ids =  ncbi_provider.fetch(scopus_papers_v2)
-##
-    #print(f"Failed to fetch content for {len(failed_ids)} papers: {failed_ids}")
-    #print(f"Succesfully fetched content for {len(succesful_ids)} papers: {succesful_ids}")
-##
-    #init_db()
-    #with get_session_context() as s:
-    #    s.add_all(fetched_papers)
-    #    s.commit()
-
-    #init_db()
-    #scopus_papers = get_records(PaperMetadata, provider="scopus")
-    #scopus_papers_pmid_list = [paper.pmid for paper in scopus_papers]
-#
-    #for pmid in scopus_papers_pmid_list:
-    #    if pmid != '':
-    #        pmcid = get_pmcid_from_pmid(ncbi_api_key, pmid)
-    #        time.sleep(0.3)
-    #        print(f"PMCID for {pmid}: {pmcid}")
-    #        if pmcid != None or pmcid != "":
-    #            paper_to_update = [paper for paper in scopus_papers if paper.pmid == pmid][0].id
-    #            update_paper_pmcid(paper_to_update, pmcid)
-    
-
-    # Missing fulltext scraped paper ids (from pmc) = [121, 127, 132, 133, 139, 149, 150, 184, 206, 217, 230, 231, 241, 247, 262, 269, 276, 277, 282, 283, 284, 288, 289, 290, 291, 292, 293, 295, 296, 297, 298, 299, 300, 301, 302, 303, 304, 305, 306, 307, 311, 312, 316, 317, 318, 320, 322, 323, 325, 329, 330, 334, 335, 337, 338, 339, 346, 350, 357, 359, 368, 369, 371, 375, 377, 381, 384, 385, 386, 387, 391, 395, 399, 410, 411, 418, 419, 420, 421, 426, 427, 430, 431, 438, 440, 441, 450, 451, 457, 458, 461, 475, 477, 479, 480, 481, 482, 484, 486, 491, 498, 499, 502, 503, 505, 506, 507, 512, 514, 517, 519, 521, 523, 524, 526, 528, 529, 530, 531, 534, 540, 544, 554, 557, 564, 567, 569, 570, 571, 575, 578, 579, 586, 588, 590, 592, 593, 594, 595, 598, 605, 607, 608, 609, 615, 622, 627, 628, 633, 635, 644, 646, 656, 661, 670, 674, 683, 706, 716, 720, 722, 739, 769, 774, 782, 783, 787, 792, 793, 795, 796, 797, 802, 804, 808, 811, 814, 815, 816, 819, 822, 824, 838, 854, 856, 858, 863, 865, 866]
-    #golden_dataset_remaining_papers = get_records(PaperMetadata, pmid=['26631316', '23884374', '20461244', '29303206', '30104564', '30452865', '30920525', '27508285', '28045258', '28140492', '28589640', '28767108', '28805225', '28825801', '34741031', '30894526', '30894521', '33558536', '30846696', '31676763', '33790016', '30158706', '30276465', '32032505', '34128081', '34588692', '29681455', '31295458', '33548114', '31664019', '33431654', '23764838', '28211492', '29734798', '36302762', '35344985', '35831275', '35377792', '34880495', '38199491', '38879609'])
-    #fetched_papers, succesful_ids, failed_ids =  ncbi_provider.fetch(golden_dataset_remaining_papers)
-#
-    #print(f"Failed to fetch content for {len(failed_ids)} papers: {failed_ids}")
-    #print(f"Succesfully fetched content for {len(succesful_ids)} papers: {succesful_ids}")
-#
-    #init_db()
-    #with get_session_context() as s:
-    #    s.add_all(fetched_papers)
-    #    s.commit()
+    pmid = 32338879
+    count, f, ident = run_relevance_screening(provider="ollama", model_name="llama3.2:latest", pmid=[pmid])
+    print(f"Screened {count} papers, {len(f)} failed, {ident}")

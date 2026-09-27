@@ -55,19 +55,13 @@ class NCBIProvider(BaseProvider):
         return obj["esearchresult"]["idlist"]
     
 
-    def search_by_query(self, query: str, db="pubmed", open_access: bool = False, not_review: bool = False) -> List[RawProviderRecord]:
-
-        print("executing search_by_query")
-
+    def search_by_query(self, query: str, db="pubmed") -> List[RawProviderRecord]:
+        """
+        The usage of efetch here is to retrieve the abstract and title of the 
+        papers for metadata object before retrieving the fulltext. Hence db=pubmed 
+        """    
+        
         results: list[RawProviderRecord] = []
-
-        if open_access:
-            oa_filter = '"free full text"[filter]' if db == "pubmed" else '"open access"[filter]'
-            query = f"{query.strip()} AND {oa_filter} "
-
-        if not_review:
-            query = f"{query.strip()} NOT review[publication type] "
-
         params = {
             "term":query,
             "retmax":1,
@@ -77,9 +71,12 @@ class NCBIProvider(BaseProvider):
         }
         
         # initial request to retrieve query match count
-        response = requests.get(f"{self.BASE_URL}esearch.fcgi", params=params) 
-        print(response.content)
-        response.raise_for_status()
+        try:
+            response = requests.get(f"{self.BASE_URL}esearch.fcgi", params=params)
+            response.raise_for_status()
+        except Exception as e:
+            print(f"Error: {e}")
+            return []
         
         matches = int(self.extract_match_count(response.content))
         time.sleep(0.1)
@@ -97,8 +94,13 @@ class NCBIProvider(BaseProvider):
             params["retstart"] = index_counter
             params["retmax"] = self.batch_size
 
-            response = requests.get(f"{self.BASE_URL}esearch.fcgi", params=params)
-            response.raise_for_status()
+            try: 
+                response = requests.get(f"{self.BASE_URL}esearch.fcgi", params=params)
+                response.raise_for_status()
+            except Exception as e:
+                print(f"Error: {e}")
+                continue
+
             time.sleep(0.2)
             id_list = self.extract_id_list(response.content)
             print(id_list)
@@ -114,8 +116,12 @@ class NCBIProvider(BaseProvider):
                 "id": ",".join(id_list)
             }
 
-            fetch_res = requests.get(f"{self.BASE_URL}efetch.fcgi", params=params)
-            fetch_res.raise_for_status()
+            try:
+                fetch_res = requests.get(f"{self.BASE_URL}efetch.fcgi", params=params)
+                fetch_res.raise_for_status()
+            except Exception as e:
+                print(f"Error: {e}")
+                continue
 
             time.sleep(0.2)
             root = ET.fromstring(fetch_res.content)
@@ -434,6 +440,10 @@ class OpenAlexProvider():
         self.api_key = api_key
 
     def reconstruct_abstract(self, inverted_index: dict[str, list[int]] | None) -> str:
+        """
+        Abstract is returned as an inverted index from open alex so we need this function
+        to build it as a proper text.
+        """
         if inverted_index is None:
             return ""
         tokens = [

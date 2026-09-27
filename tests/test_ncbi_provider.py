@@ -274,32 +274,6 @@ class TestNCBIProviderSearchByQuery:
 
     @patch("peptide_extractor.providers.time.sleep")
     @patch("peptide_extractor.providers.requests.get")
-    def test_search_by_query_open_access_and_not_review_filters(
-        self, mock_get, mock_sleep, ncbi_provider
-    ):
-        resp_count = MagicMock()
-        resp_count.content = b'{"esearchresult": {"count": "0"}}'
-        resp_count.raise_for_status = MagicMock()
-        mock_get.return_value = resp_count
-
-        # Case 1: db="pubmed" + open_access=True + not_review=True
-        ncbi_provider.search_by_query(
-            "tetrapeptide", db="pubmed", open_access=True, not_review=True
-        )
-        params_pubmed = mock_get.call_args_list[0].kwargs["params"]
-        assert '"free full text"[filter]' in params_pubmed["term"]
-        assert "NOT review[publication type]" in params_pubmed["term"]
-
-        # Case 2: db="pmc" + open_access=True
-        ncbi_provider.search_by_query(
-            "tetrapeptide", db="pmc", open_access=True, not_review=False
-        )
-        params_pmc = mock_get.call_args_list[1].kwargs["params"]
-        assert '"open access"[filter]' in params_pmc["term"]
-        assert "NOT review[publication type]" not in params_pmc["term"]
-
-    @patch("peptide_extractor.providers.time.sleep")
-    @patch("peptide_extractor.providers.requests.get")
     def test_search_by_query_pagination_multiple_batches(
         self, mock_get, mock_sleep, sample_pubmed_xml
     ):
@@ -362,16 +336,6 @@ class TestNCBIProviderSearchByQuery:
         assert results == []
         # Count check + ID search, but NO efetch call
         assert mock_get.call_count == 2
-
-    @patch("peptide_extractor.providers.requests.get")
-    def test_search_by_query_http_error(self, mock_get, ncbi_provider):
-        mock_resp = MagicMock()
-        mock_resp.raise_for_status.side_effect = requests.HTTPError("500 Server Error")
-        mock_get.return_value = mock_resp
-
-        with pytest.raises(requests.HTTPError):
-            ncbi_provider.search_by_query("query")
-
 
 class TestNCBIProviderSearchByIds:
     """Tests for search_by_ids method in NCBIProvider."""
