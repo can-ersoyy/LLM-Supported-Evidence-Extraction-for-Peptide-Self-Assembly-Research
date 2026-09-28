@@ -439,3 +439,72 @@ class TestNCBIProviderSearchByIds:
 
         with pytest.raises(requests.HTTPError):
             ncbi_provider.search_by_ids(["12345"])
+
+
+class TestNCBIProviderFetch:
+    """Tests for fetch method in NCBIProvider using Azure Blob Storage."""
+
+    @patch("peptide_extractor.providers.upload_xml")
+    @patch("peptide_extractor.providers.requests.get")
+    def test_fetch_success(self, mock_get, mock_upload, ncbi_provider):
+        pmc_xml_with_body = """<?xml version="1.0" ?>
+        <pmc-articleset>
+          <article>
+            <front>
+              <article-meta>
+                <article-id pub-id-type="pmcid">PMC70003</article-id>
+              </article-meta>
+            </front>
+            <body>
+              <p>Full text self-assembly results.</p>
+            </body>
+          </article>
+        </pmc-articleset>
+        """
+        mock_resp = MagicMock()
+        mock_resp.content = pmc_xml_with_body.encode("utf-8")
+        mock_resp.raise_for_status = MagicMock()
+        mock_get.return_value = mock_resp
+
+        mock_upload.return_value = "https://myaccount.blob.core.windows.net/paper-xmls/xml/ncbi/PMC70003.xml.gz"
+
+        paper = PaperMetadata(
+            id=42,
+            pmcid="PMC70003",
+            title="Designed self-assembling peptide hydrogels",
+            is_open_access=True,
+            status=PaperStatus.USABLE,
+            dataset_subset=DatasetSubset.SCRAPED,
+        )
+
+        contents, successful_ids, failed_ids = ncbi_provider.fetch([paper])
+
+        assert len(contents) == 1
+        assert contents[0].paper_id == 42
+        assert contents[0].blob_url == "https://myaccount.blob.core.windows.net/paper-xmls/xml/ncbi/PMC70003.xml.gz"
+        assert contents[0].format == "xml"
+        assert successful_ids == [42]
+        assert failed_ids == []
+
+        mock_upload.assert_called_once()
+        assert mock_upload.call_args.kwargs["pmcid"] == "PMC70003"
+        assert mock_upload.call_args.kwargs["provider"] == "ncbi"
+        assert mock_upload.call_args.kwargs["format"] == "xml"
+
+    @patch("peptide_extractor.providers.requests.get")
+    def test_fetch_no_pmcid_fails(self, mock_get, ncbi_provider):
+        paper_without_pmcid = PaperMetadata(
+            id=99,
+            pmcid=None,
+            title="No PMC ID Paper",
+            is_open_access=False,
+            status=PaperStatus.USABLE,
+            dataset_subset=DatasetSubset.SCRAPED,
+        )
+
+        contents, successful_ids, failed_ids = ncbi_provider.fetch([paper_without_pmcid])
+
+        assert contents == []
+        assert successful_ids == []
+        assert failed_ids == [99]
+        mock_get.assert_not_called()

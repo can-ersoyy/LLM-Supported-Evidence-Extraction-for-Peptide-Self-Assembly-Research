@@ -5,6 +5,7 @@ import requests
 import json
 import time
 
+from peptide_extractor.azure_storage import upload_xml
 from peptide_extractor.db.paper_content import PaperContent
 from peptide_extractor.db.paper_metadata import PaperMetadata, PaperStatus
 from peptide_extractor.schemas import RawProviderRecord
@@ -293,12 +294,15 @@ class NCBIProvider(BaseProvider):
         for i in range(0, num_records, batch_size):
             print("batch done")
             batch_pmcids = pmcid_list[i : i + batch_size]
-            
+            valid_pmcids = [str(x).strip() for x in batch_pmcids if x and str(x).strip()]
+            if not valid_pmcids:
+                continue
+
             params = {
                 "db": db,
                 "retmode": "xml",
                 "api_key": self.api_key,
-                "id": ",".join(str(x).strip() for x in batch_pmcids if x),
+                "id": ",".join(valid_pmcids),
             }
 
             response = requests.get(f"{self.BASE_URL}efetch.fcgi", params=params)
@@ -320,13 +324,18 @@ class NCBIProvider(BaseProvider):
                     paper_metadata = next((p for p in paper_metadatas[i:i+batch_size] if p.pmcid == pmcid_text), None)
                     if paper_metadata:
                         xml_str = ET.tostring(article_elem, encoding="unicode")
-                        print("this is xml str")
+                        blob_url = upload_xml(
+                            xml_content=xml_str,
+                            pmcid=paper_metadata.pmcid or pmcid_text,
+                            provider="ncbi",
+                            format="xml",
+                        )
                         paper_content = PaperContent(
                             paper_id=paper_metadata.id,
                             paper=paper_metadata,
-                            raw_content=xml_str,
+                            blob_url=blob_url,
                             format="xml",
-                            source=db
+                            source=db,
                         )
                         paper_contents.append(paper_content)
                         succesful_paper_ids.append(paper_metadata.id)

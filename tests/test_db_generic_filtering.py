@@ -59,19 +59,19 @@ def test_engine_and_session():
             id=1,
             paper_id=1,
             format="jats_xml",
-            raw_content="<article>Content 1</article>",
+            blob_url="https://azure.blob/paper-xmls/PMC1.xml.gz",
         )
         c2 = PaperContent(
             id=2,
             paper_id=1,
             format="pdf_text",
-            raw_content="PDF Text 1",
+            blob_url="https://azure.blob/paper-xmls/PMC1.pdf",
         )
         c3 = PaperContent(
             id=3,
             paper_id=2,
             format="jats_xml",
-            raw_content="<article>Content 2</article>",
+            blob_url="https://azure.blob/paper-xmls/PMC2.xml.gz",
         )
         session.add_all([c1, c2, c3])
 
@@ -161,7 +161,7 @@ def test_get_paper_contents_helper(test_engine_and_session):
 
     jats_xml_only = get_paper_contents(paper_id=1, format="jats_xml", session=session)
     assert len(jats_xml_only) == 1
-    assert jats_xml_only[0].raw_content == "<article>Content 1</article>"
+    assert jats_xml_only[0].blob_url == "https://azure.blob/paper-xmls/PMC1.xml.gz"
 
 
 def test_get_records_is_null_and_in_list(test_engine_and_session):

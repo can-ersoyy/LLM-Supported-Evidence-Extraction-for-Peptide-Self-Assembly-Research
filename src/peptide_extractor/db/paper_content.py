@@ -1,5 +1,5 @@
 from typing import TYPE_CHECKING, Any, List, Optional
-from sqlmodel import Column, Field, Relationship, SQLModel, Session, Text
+from sqlmodel import Column, Field, Relationship, SQLModel, Session, String
 
 from peptide_extractor.db.database import get_records
 
@@ -16,11 +16,22 @@ class PaperContent(SQLModel, table=True):
     source: Optional[str] = Field(default=None, description="Source of the content.")
 
     format: str
-    raw_content: str = Field(sa_column=Column(Text, nullable=False))
+    blob_url: Optional[str] = Field(
+        default=None,
+        sa_column=Column(String, nullable=True),
+        description="Azure Blob Storage URL or path to the full text content.",
+    )
     pdf_url: Optional[str] = Field(default=None, description="PDF URL of the content. Should be thought of as a backup in case xml doesn't exist")
-    
 
     paper: Optional["PaperMetadata"] = Relationship(back_populates="contents")
+
+    def get_content(self, use_cache: bool = True) -> str:
+        """Download and return the XML content from Azure Blob Storage or cache."""
+        if not self.blob_url:
+            raise ValueError(f"PaperContent {self.id} has no blob_url.")
+        from peptide_extractor.azure_storage import download_xml
+
+        return download_xml(self.blob_url, use_cache=use_cache)
 
 
 def get_paper_contents(
