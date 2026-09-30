@@ -260,10 +260,26 @@ if __name__ == "__main__":
     # 3. Fetch full texts for relevant papers
 
     ncbi_provider = NCBIProvider(ncbi_api_key, batch_size=200)
-
+    
     #found_papers = retrive_ncbi_by_query(ncbi_provider, NCBI_SEARCH_QUERY_V2)
-    #find_abstracts_by_doi(open_alex_api_key)
-
-    pmid = 32338879
-    count, f, ident = run_relevance_screening(provider="ollama", model_name="llama3.2:latest", pmid=[pmid])
-    print(f"Screened {count} papers, {len(f)} failed, {ident}")
+    ##find_abstracts_by_doi(open_alex_api_key)
+#
+    #papers_to_retrieve = []
+    #golden_papers = get_records(PaperMetadata, dataset_subset=DatasetSubset.GOLDEN_BENCHMARK)
+    #scraped_papers = get_records(PaperMetadata, dataset_subset=DatasetSubset.SCRAPED)
+#
+    #papers_to_retrieve.extend([paper for paper in golden_papers if paper.pmcid is not None and paper.pmcid != ''])
+    #papers_to_retrieve.extend([paper for paper in scraped_papers if paper.pmcid is not None and paper.pmcid != ''])
+#
+    #content, succesful_ids, failed_ids = ncbi_provider.fetch(papers_to_retrieve, batch_size=20)
+#
+    #print(f"Successfully retrieved {len(succesful_ids)} papers.")
+    #print(f"Failed to retrieve {len(failed_ids)} papers.")
+    #print(f"Failed to retrieve papers: {failed_ids}")
+#
+    #with get_session_context() as session:
+    #    session.add_all(content)
+    #    session.commit()
+#
+    
+    
