@@ -283,7 +283,7 @@ class NCBIProvider(BaseProvider):
 
         return paper_metadatas
 
-    def fetch(self, paper_metadatas: Sequence[PaperMetadata], db = "pmc", batch_size=10) -> List[Tuple[PaperMetadata, PaperContent]]:
+    def fetch(self, paper_metadatas: Sequence[PaperMetadata], db = "pmc", batch_size=10) -> Tuple[List[PaperContent], List[int], List[int]]:
         num_records = len(paper_metadatas)
         pmcid_list = [paper.pmcid for paper in paper_metadatas]
         

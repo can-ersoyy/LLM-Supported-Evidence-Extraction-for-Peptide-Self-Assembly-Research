@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Optional, Union
 from urllib.parse import urlparse
 
-from azure.core.exceptions import ResourceExistsError
+from azure.core.exceptions import ResourceExistsError, ResourceNotFoundError
 from azure.storage.blob import BlobServiceClient, ContentSettings
 from dotenv import find_dotenv, load_dotenv
 
@@ -50,6 +50,29 @@ def extract_blob_name(
     if target_container and cleaned.startswith(f"{target_container}/"):
         cleaned = cleaned[len(target_container) + 1 :]
     return cleaned
+
+
+def parse_blob_url_or_name(
+    blob_url_or_name: str, container_name: Optional[str] = None
+) -> tuple[str, str]:
+    """Parse container name and blob name from a URL or relative path.
+
+    Returns:
+        A tuple of (container_name, blob_name).
+    """
+    cleaned = blob_url_or_name.strip()
+    if cleaned.startswith("http://") or cleaned.startswith("https://"):
+        parsed = urlparse(cleaned)
+        path = parsed.path.lstrip("/")
+        parts = path.split("/", 1)
+        if len(parts) > 1:
+            detected_container = parts[0]
+            blob_name = parts[1]
+            return (container_name or detected_container), blob_name
+        return (container_name or DEFAULT_CONTAINER_NAME), parts[0]
+
+    blob_name = extract_blob_name(cleaned, container_name=container_name)
+    return (container_name or DEFAULT_CONTAINER_NAME), blob_name
 
 
 def build_blob_name(
@@ -262,6 +285,57 @@ def download_xml(
     return raw_data.decode("utf-8")
 
 
+def delete_blob(
+    blob_url_or_name: str,
+    container_name: Optional[str] = None,
+    client: Optional[BlobServiceClient] = None,
+    missing_ok: bool = True,
+    delete_cache: bool = True,
+    cache_dir: Optional[Path] = None,
+) -> bool:
+    """Delete a blob matching the given URL or blob path from Azure Blob Storage.
+
+    Works generically with any blob URL (e.g.
+    'https://paperstorage.blob.core.windows.net/papers/xml/ncbi/PMC2791716.xml.gz')
+    or relative blob name/path. Also removes the locally cached file if present.
+
+    Args:
+        blob_url_or_name: The full blob URL or the relative blob name/path.
+        container_name: Azure container name (default: extracted from URL or DEFAULT_CONTAINER_NAME).
+        client: Optional existing BlobServiceClient.
+        missing_ok: If True, do not raise ResourceNotFoundError if blob does not exist.
+        delete_cache: If True, delete matching locally cached file if it exists.
+        cache_dir: Local base directory for cache (default: data/).
+
+    Returns:
+        True if the blob was deleted from Azure, False if it was not found.
+    """
+    target_container, blob_name = parse_blob_url_or_name(
+        blob_url_or_name, container_name=container_name
+    )
+
+    blob_client_service = client or get_blob_service_client()
+    container_client = blob_client_service.get_container_client(target_container)
+    blob_client = container_client.get_blob_client(blob_name)
+
+    deleted = False
+    try:
+        blob_client.delete_blob(delete_snapshots="include")
+        deleted = True
+    except ResourceNotFoundError:
+        if not missing_ok:
+            raise
+        deleted = False
+
+    if delete_cache:
+        target_cache_dir = cache_dir or DEFAULT_CACHE_DIR
+        cached_file = target_cache_dir / blob_name
+        if cached_file.exists():
+            cached_file.unlink()
+
+    return deleted
+
+
 # This is not going to be used (seems like it) since we don't have a raw_content column anymore
 def backfill_paper_contents_to_azure(
     source_db: Optional[Union[str, Path]] = None,
@@ -336,23 +410,4 @@ def backfill_paper_contents_to_azure(
     print(f"Backfill complete! Updated {count} records in '{tgt}'.")
     return count
 
-
-if __name__ == "__main__":
-    import argparse
-
-    parser = argparse.ArgumentParser(description="Azure Blob Storage management for peptide_extractor")
-    parser.add_argument("--backfill", action="store_true", help="Backfill raw_content to Azure Blob Storage")
-    parser.add_argument("--source-db", type=str, default=None, help="Source database with raw_content")
-    parser.add_argument("--target-db", type=str, default=None, help="Target database to update blob_url")
-    parser.add_argument("--limit", type=int, default=None, help="Limit number of records to backfill")
-    args = parser.parse_args()
-
-    if args.backfill:
-        backfill_paper_contents_to_azure(
-            source_db=args.source_db,
-            target_db=args.target_db,
-            limit=args.limit,
-        )
-    else:
-        parser.print_help()
 

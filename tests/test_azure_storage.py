@@ -5,14 +5,16 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
-from azure.core.exceptions import ResourceExistsError
+from azure.core.exceptions import ResourceExistsError, ResourceNotFoundError
 
 from peptide_extractor.azure_storage import (
     build_blob_name,
+    delete_blob,
     download_file,
     download_xml,
     extract_blob_name,
     get_blob_service_client,
+    parse_blob_url_or_name,
     upload_file,
     upload_xml,
 )
@@ -312,3 +314,85 @@ class TestBackfillToAzure:
             cur.execute("SELECT blob_url FROM paper_content WHERE id = 10")
             row = cur.fetchone()
             assert row[0] == "https://myaccount.blob.core.windows.net/paper-xmls/xml/ncbi/PMC55555.xml.gz"
+
+
+class TestDeleteBlob:
+    """Tests for blob deletion functions."""
+
+    def test_parse_blob_url_or_name_with_url(self):
+        url = "https://paperstorage.blob.core.windows.net/papers/xml/ncbi/PMC2791716.xml.gz"
+        container, blob_name = parse_blob_url_or_name(url)
+        assert container == "papers"
+        assert blob_name == "xml/ncbi/PMC2791716.xml.gz"
+
+    def test_parse_blob_url_or_name_with_custom_container(self):
+        url = "https://myaccount.blob.core.windows.net/custom-bucket/pdfs/file.pdf"
+        container, blob_name = parse_blob_url_or_name(url)
+        assert container == "custom-bucket"
+        assert blob_name == "pdfs/file.pdf"
+
+    def test_parse_blob_url_or_name_with_relative_path(self):
+        container, blob_name = parse_blob_url_or_name("xml/ncbi/PMC12345.xml.gz")
+        assert container == "papers"
+        assert blob_name == "xml/ncbi/PMC12345.xml.gz"
+
+    def test_delete_blob_by_url_success(self, tmp_path):
+        mock_service = MagicMock()
+        mock_container = MagicMock()
+        mock_blob = MagicMock()
+
+        mock_service.get_container_client.return_value = mock_container
+        mock_container.get_blob_client.return_value = mock_blob
+
+        url = "https://paperstorage.blob.core.windows.net/papers/xml/ncbi/PMC2791716.xml.gz"
+
+        # Create a cached file to verify cache cleanup
+        cached_file = tmp_path / "xml" / "ncbi" / "PMC2791716.xml.gz"
+        cached_file.parent.mkdir(parents=True, exist_ok=True)
+        cached_file.write_bytes(b"dummy cached data")
+
+        result = delete_blob(
+            blob_url_or_name=url,
+            client=mock_service,
+            cache_dir=tmp_path,
+        )
+
+        assert result is True
+        mock_service.get_container_client.assert_called_once_with("papers")
+        mock_container.get_blob_client.assert_called_once_with("xml/ncbi/PMC2791716.xml.gz")
+        mock_blob.delete_blob.assert_called_once_with(delete_snapshots="include")
+        assert not cached_file.exists()
+
+    def test_delete_blob_not_found_missing_ok(self):
+        mock_service = MagicMock()
+        mock_container = MagicMock()
+        mock_blob = MagicMock()
+
+        mock_service.get_container_client.return_value = mock_container
+        mock_container.get_blob_client.return_value = mock_blob
+        mock_blob.delete_blob.side_effect = ResourceNotFoundError("Blob not found")
+
+        result = delete_blob(
+            blob_url_or_name="https://paperstorage.blob.core.windows.net/papers/xml/ncbi/PMC9999999.xml.gz",
+            client=mock_service,
+            missing_ok=True,
+        )
+
+        assert result is False
+
+    def test_delete_blob_not_found_raises(self):
+        mock_service = MagicMock()
+        mock_container = MagicMock()
+        mock_blob = MagicMock()
+
+        mock_service.get_container_client.return_value = mock_container
+        mock_container.get_blob_client.return_value = mock_blob
+        mock_blob.delete_blob.side_effect = ResourceNotFoundError("Blob not found")
+
+        with pytest.raises(ResourceNotFoundError):
+            delete_blob(
+                blob_url_or_name="https://paperstorage.blob.core.windows.net/papers/xml/ncbi/PMC9999999.xml.gz",
+                client=mock_service,
+                missing_ok=False,
+            )
+
