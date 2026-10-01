@@ -1,3 +1,4 @@
+from peptide_extractor.schemas import RelevanceResult
 from peptide_extractor.db import DatasetSubset
 import logging
 import os
@@ -94,178 +95,15 @@ Abstract: {abstract}
 """
 
 
-class RelevanceResult(BaseModel):
-    detected_clues: List[str] = Field(
-        default_factory=list,
-        description="Specific experimental techniques, peptide identities, or conditions mentioned in the abstract.",
-    )
-    explanation: str = Field(
-        description="Justification focusing on experimental conditions mentioned or hinted upon.",
-    )
-    is_relevant: bool = Field(
-        description="True if experimental data is potentially reported or hinted at in the fulltext.",
-    )
-    confidence: float = Field(
-        ge=0.0,
-        le=1.0,
-        description="Confidence score between 0.0 and 1.0.",
-    )
 
 
-def get_chat_model(
-    provider: str = "google_genai",
-    model_name: Optional[str] = None,
-    temperature: float = 0.0,
-    api_key: Optional[str] = None,
-    **kwargs: Any,
-) -> BaseChatModel:
-    """Instantiate a provider-agnostic LangChain BaseChatModel.
 
-    Supported providers:
-    - 'google_genai' / 'google': Google AI Studio models (e.g. 'gemma-4-31b-it', 'gemini-3.5-flash', etc.)
-    - 'ollama': Ollama local models (e.g. 'gemma2:27b', 'llama3.1:8b')
-    - 'open_router' / 'openrouter': OpenRouter models (e.g. 'google/gemma-4-31b-it', 'nvidia/nemotron-3.5-lightning:free')
-    """
-    provider_clean = provider.lower().strip()
-
-    if provider_clean in ("google_genai", "google", "google-genai"):
-        from langchain_google_genai import ChatGoogleGenerativeAI
-
-        target_model = model_name or "gemma-4-31b-it"
-        resolved_api_key = (
-            api_key
-            or os.getenv("GOOGLE_AI_KEY")
-            or os.getenv("GOOGLE_API_KEY")
-            or os.getenv("GEMINI_API_KEY")
-        )
-
-        if resolved_api_key and resolved_api_key.strip():
-            clean_key = resolved_api_key.strip()
-            os.environ["GOOGLE_API_KEY"] = clean_key
-            os.environ["GEMINI_API_KEY"] = clean_key
-            kwargs["google_api_key"] = clean_key
-        else:
-            raise ValueError(
-                "Google API Key not found!"
-            )
-
-        model_kwargs: Dict[str, Any] = {"model": target_model, "temperature": temperature, **kwargs}
-        return ChatGoogleGenerativeAI(**model_kwargs)
-
-    elif provider_clean in ("ollama", "langchain_ollama"):
-        try:
-            from langchain_ollama import ChatOllama
-        except ImportError:
-            from langchain_community.chat_models import ChatOllama  # fallback
-
-        target_model = model_name or "gemma2:27b" # will be updated later
-        return ChatOllama(model=target_model, temperature=temperature, **kwargs)
-
-    elif provider_clean in ("open_router", "openrouter", "open-router"):
-        try:
-            from langchain_openrouter import ChatOpenRouter
-        except ImportError:
-            raise ImportError(
-                "OpenRouter LangChain package not installed"
-            )
-
-        resolved_api_key = (
-            api_key
-            or os.getenv("OPENROUTER_API_KEY")
-            or os.getenv("OPEN_ROUTER_API_KEY")
-        )
-        if resolved_api_key and resolved_api_key.strip():
-            clean_key = resolved_api_key.strip()
-            os.environ["OPENROUTER_API_KEY"] = clean_key
-            kwargs["openrouter_api_key"] = clean_key
-        else: 
-            raise ValueError("OpenRouter API key not found! Set OPENROUTER_API_KEY or pass api_key.")
-
-        target_model = model_name or "google/gemma-4-31b-it"
-        return ChatOpenRouter(model=target_model, temperature=temperature, **kwargs)
-
-    else:
-        raise ValueError(
-            f"Unsupported LLM provider '{provider}'. "
-            "Supported options are 'google_genai', 'ollama', 'open_router'"
-        )
-
-
-class PaperRelevanceClassifier:
-    """Classifier for evaluating paper abstract relevance using LangChain chat models."""
-
-    def __init__(
-        self,
-        llm: Optional[BaseChatModel] = None,
-        provider: str = "google_genai",
-        model_name: Optional[str] = None,
-        **kwargs: Any,
-    ):
-        self.provider = provider if isinstance(provider, str) else "google_genai"
-        if isinstance(model_name, str) and model_name.strip():
-            self.model_name = model_name.strip()
-        elif llm is not None and isinstance(getattr(llm, "model_name", None), str):
-            self.model_name = getattr(llm, "model_name")
-        elif llm is not None and isinstance(getattr(llm, "model", None), str):
-            self.model_name = getattr(llm, "model")
-        elif llm is not None:
-            self.model_name = "mock-model"
-        else:
-            if self.provider.lower().strip() in ("ollama", "langchain_ollama"):
-                self.model_name = "gemma2:27b"
-            elif self.provider.lower().strip() in ("open_router", "openrouter", "open-router"):
-                self.model_name = "google/gemma-4-31b-it"
-            else:
-                self.model_name = "gemma-4-31b-it"
-
-        if llm is not None:
-            self.llm = llm
-        else:
-            self.llm = get_chat_model(provider=provider, model_name=self.model_name, **kwargs)
-
-        self.prompt = ChatPromptTemplate.from_messages([
-            ("system", SYSTEM_PROMPT_GOLDEN_BENCHMARK),
-            #("system", SYSTEM_PROMPT_V1),
-            #("system", SYSTEM_PROMPT_V2),
-            #("system", SYSTEM_PROMPT_V3),
-            ("user", USER_PROMPT),
-        ])
-        try:
-            if provider.lower().strip() in ("open_router", "openrouter", "open-router"): # seems like open router langchain doesn't support json_mode 
-                self.structured_llm = self.llm.with_structured_output(RelevanceResult)
-            else:
-                self.structured_llm = self.llm.with_structured_output(RelevanceResult, method="json_mode")
-        except Exception:
-            self.structured_llm = self.llm.with_structured_output(RelevanceResult)
-
-    def classify_paper(
-        self,
-        title: Union[str, PaperMetadata],
-        abstract: Optional[str] = None,
-    ) -> RelevanceResult:
-        """Classify paper relevance based on title and abstract text, or a PaperMetadata object."""
-        if isinstance(title, PaperMetadata):
-            paper_title = title.title
-            abstract_text = title.abstract
-        else:
-            paper_title = title
-            abstract_text = abstract
-
-        clean_abstract = abstract_text if abstract_text and abstract_text.strip() else "No abstract provided."
-        prompt_val = self.prompt.invoke({"title": paper_title, "abstract": clean_abstract})
-        res = self.structured_llm.invoke(prompt_val)
-        if isinstance(res, dict):
-            return RelevanceResult(**res)
-        return res # type: ignore
-
-    def classify_metadata(self, paper: PaperMetadata) -> RelevanceResult:
-        """Classify a PaperMetadata object from the database."""
-        return self.classify_paper(paper)
+from peptide_extractor.llm import LLMController, get_chat_model
 
 
 def evaluate_paper_relevance(
     paper: PaperMetadata,
-    classifier: Optional[PaperRelevanceClassifier] = None,
+    classifier: Optional[LLMController] = None,
     session: Optional[Session] = None,
     update_status: bool = True,
     run_identifier: int = 0,
@@ -277,13 +115,15 @@ def evaluate_paper_relevance(
     updates paper.status to USABLE or DISCARD.
     """
     if classifier is None:
-        classifier = PaperRelevanceClassifier()
+        classifier = LLMController(
+            structured_output=RelevanceResult,
+            system_prompt=SYSTEM_PROMPT_GOLDEN_BENCHMARK,
+        )
 
     if paper.id is None:
         raise ValueError("PaperMetadata object must have a non-None primary key id.")
 
-    
-    rel_result = classifier.classify_paper(paper)
+    rel_result: RelevanceResult = classifier.classify_paper(paper)
 
     import json
     clues_str = json.dumps(rel_result.detected_clues) if isinstance(rel_result.detected_clues, list) else str(rel_result.detected_clues)
@@ -310,18 +150,24 @@ def evaluate_paper_relevance(
 
     return relevance_record, rel_result
 
+
 def screen_papers(
     batch_size: Optional[int] = None,
-    classifier: Optional[PaperRelevanceClassifier] = None,
+    classifier: Optional[LLMController] = None,
     session: Optional[Session] = None,
     delay_seconds: float = 2.0,
     golden_dataset: bool = False,
-    **kwargs
-) -> List[tuple[PaperMetadata, RelevanceResult]]:
-    """Screen papers given conditions for relevance
+    **kwargs: Any,
+) -> tuple[List[tuple[PaperMetadata, RelevanceResult]], List[int], int]:
+    """Screen papers given conditions for relevance.
     """
     if classifier is None:
-        classifier = PaperRelevanceClassifier()
+        classifier = LLMController(
+            structured_output=RelevanceResult,
+            system_prompt=SYSTEM_PROMPT_GOLDEN_BENCHMARK,
+        )
+
+
 
     if golden_dataset:
         papers_to_screen = get_paper_metadatas(limit=batch_size, session=session, dataset_subset=DatasetSubset.GOLDEN_BENCHMARK)

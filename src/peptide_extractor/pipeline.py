@@ -225,15 +225,19 @@ def run_relevance_screening(
 
     Returns the total number of paper records screened, failed_paper_ids and run_identifier
     """
+    from peptide_extractor.llm import LLMController
     from peptide_extractor.relevance import (
-        PaperRelevanceClassifier,
+        SYSTEM_PROMPT_GOLDEN_BENCHMARK,
+        RelevanceResult,
         screen_papers,
     )
 
     init_db()
-    classifier = PaperRelevanceClassifier(
+    classifier = LLMController(
         provider=provider,
         model_name=model_name,
+        structured_output=RelevanceResult,
+        system_prompt=SYSTEM_PROMPT_GOLDEN_BENCHMARK,
         api_key=api_key,
     )
     screened_results, failed_paper_ids, run_identifier = screen_papers(
