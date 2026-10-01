@@ -206,6 +206,33 @@ def upload_xml(
         content_type="application/xml",
     )
 
+def upload_pdf(
+    pdf_content: bytes,
+    filename_or_id: str,
+    format: str = "pdf",
+    provider: str = "unknown",
+    container_name: Optional[str] = None,
+    client: Optional[BlobServiceClient] = None,
+    compress: bool = False,
+    content_type: str = "application/pdf",
+) -> str:
+    """
+    Uploads a PDF file to Azure Blob Storage.
+    """
+    if compress == True:
+        raise ValueError("PDFs should not be compressed")
+    
+    return upload_file(
+        content=pdf_content,
+        filename_or_id=filename_or_id,
+        provider=provider,
+        format=format,
+        container_name=container_name,
+        client=client,
+        compress=compress,
+        content_type=content_type,
+    )
+
 
 def download_file(
     blob_url_or_name: str,

@@ -110,5 +110,8 @@ sequence feature
 | **`pmid`**      | Extracted from `<td>` index 7 via regex `\b\d{4,9}\b`. | Inherited from SAPDB PMIDs linked by `sapdb_id`. | Extracted from PubMed URLs in `Reference link / DOI` or resolved from DOIs via Europe PMC/NCBI APIs. | Extracted from `PMID` or `Pubmed References` columns via regex `\b\d{4,9}\b`.           |
 | **`databases`** | `"SAPDB"`.                                             | `"SAPDB; PeptideMiner"`.                         | `"Cross-Beta"`.                                                                                      | Sourced from workbook annotations (`"CPAD-2.0"`, `"WaltzDB"`, `"AmyLoad"`, `"AmyPro"`). |
 
-### 27.08.2026
-
+### 30.09.2026
+It is currently possible to do search queries using ncbi and scopus api.. these return redundant papers for which we have doi normalization/deduplication methods.
+Scopus doesn't return abstract of papers to we use semanticscholar / open alex to get these remaining abstracts
+We can run a relevance check pipeline to decide if the paper is relevant (retrieve fulltext- currently this is not used as the paper amount we can receive is still low in comparison to found papers via queries)
+We can receive paper fulltexts via pmcid

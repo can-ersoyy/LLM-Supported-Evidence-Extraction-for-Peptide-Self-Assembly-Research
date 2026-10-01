@@ -1,3 +1,5 @@
+from azure.storage.blob._shared import base_client
+from peptide_extractor.azure_storage import DEFAULT_CONTAINER_NAME
 from abc import ABC, abstractmethod
 from typing import List, Optional, Sequence, Tuple
 
@@ -5,7 +7,7 @@ import requests
 import json
 import time
 
-from peptide_extractor.azure_storage import upload_xml
+from peptide_extractor.azure_storage import upload_xml, upload_pdf
 from peptide_extractor.db.paper_content import PaperContent
 from peptide_extractor.db.paper_metadata import PaperMetadata, PaperStatus
 from peptide_extractor.schemas import RawProviderRecord
@@ -478,6 +480,55 @@ class OpenAlexProvider():
         abstract = self.reconstruct_abstract(abstract_list)
         return None if abstract == "None" or abstract == "" else abstract
 
+    def fetch(self, paper_metadata: PaperMetadata, download_pdf: bool = True) -> PaperContent:
+
+        url = f"{self.BASE_URL}https://doi.org/{paper_metadata.doi}"
+
+        params = {
+            "api_key": self.api_key
+        }
+
+        data = None
+        try: 
+            response = requests.get(url, params)
+            response.raise_for_status()
+            data = response.json()
+        except Exception as e:
+            print(f"Failed to retrieve paper {paper_metadata.doi}: {e}")
+            return None
+
+        primary_location = data.get("primary_location", {})
+        pdf_url = primary_location.get("pdf_url", None)
+
+        if pdf_url == None:
+            return
+        
+        if download_pdf == True:
+            pdf_content = None
+            try: 
+                response = requests.get(pdf_url)
+                response.raise_for_status()
+                pdf_content = response.content
+            except Exception as e:
+                print(f"Failed to retrieve pdf {pdf_url}: {e}")
+                return None
+            
+            blob_url = upload_pdf(
+                pdf_content=pdf_content,
+                filename_or_id=paper_metadata.pmid,
+                provider="openalex"
+            )
+            paper_content = PaperContent(
+                pdf_url=pdf_url,
+                blob_url=blob_url,
+                paper=paper_metadata,
+                paper_id=paper_metadata.id,
+                format="pdf",
+                source="openalex"
+            )
+            return paper_content
+        
+        return None
         
 
 """
