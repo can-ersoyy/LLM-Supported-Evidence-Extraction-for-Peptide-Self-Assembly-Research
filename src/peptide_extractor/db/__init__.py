@@ -24,13 +24,19 @@ from peptide_extractor.db.paper_metadata import (
     get_paper_metadatas,
     update_paper_status,
 )
+from peptide_extractor.db.peptide_entry import (
+    ExtractionMode,
+    PeptideEntry,
+)
 
 __all__ = [
     "PaperMetadata",
     "PaperContent",
     "PaperRelevance",
+    "PeptideEntry",
     "DatasetSubset",
     "PaperStatus",
+    "ExtractionMode",
     "DATABASE_URL",
     "engine",
     "get_engine",

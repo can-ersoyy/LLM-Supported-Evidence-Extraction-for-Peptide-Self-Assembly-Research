@@ -1,3 +1,5 @@
+from peptide_extractor.db import PeptideEntry
+from typing import List
 import os
 from typing import Any, Dict, Optional, Type, Union
 
@@ -146,6 +148,19 @@ class LLMController:
         if self.system_prompt:
             messages.append(("system", self.system_prompt))
         messages.append(("user", user_content))
+
+        prompt = ChatPromptTemplate.from_messages(messages)
+        res = self.structured_llm.invoke(prompt.invoke({}))
+        if isinstance(res, dict) and self.structured_output:
+            return self.structured_output(**res)
+        return res
+
+    def extract_peptides(self, paper_content: str) -> List[PeptideEntry]:
+        """Run extraction on paper content."""
+        messages = []
+        if self.system_prompt:
+            messages.append(("system", self.system_prompt))
+        messages.append(("user", f"Fulltext:\n\n{paper_content}"))
 
         prompt = ChatPromptTemplate.from_messages(messages)
         res = self.structured_llm.invoke(prompt.invoke({}))

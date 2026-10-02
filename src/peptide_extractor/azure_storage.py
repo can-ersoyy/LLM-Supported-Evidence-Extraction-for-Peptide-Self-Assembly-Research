@@ -18,7 +18,7 @@ from dotenv import find_dotenv, load_dotenv
 load_dotenv(find_dotenv(usecwd=True))
 
 DEFAULT_CONTAINER_NAME = os.getenv("AZURE_STORAGE_CONTAINER", "papers")
-DEFAULT_CACHE_DIR = Path(__file__).resolve().parent.parent.parent / "data"
+DEFAULT_CACHE_DIR = Path(__file__).resolve().parent.parent.parent / "data" / "cache"
 
 
 def get_blob_service_client(
@@ -260,6 +260,7 @@ def download_file(
     if use_cache:
         cached_file = target_cache_dir / blob_name
         if cached_file.exists():
+            print("Reading file from cache!")
             return cached_file.read_bytes()
 
     # 2. Download from Azure Blob Storage
@@ -286,6 +287,7 @@ def download_xml(
     client: Optional[BlobServiceClient] = None,
     use_cache: bool = True,
     cache_dir: Optional[Path] = None,
+    decompress: bool = True,
 ) -> str:
     """Download and decompress a paper XML from Azure Blob Storage or local cache.
 
@@ -299,7 +301,6 @@ def download_xml(
     Returns:
         Decompressed XML string.
     """
-    blob_name = extract_blob_name(blob_url_or_name, container_name=container_name)
     raw_data = download_file(
         blob_url_or_name=blob_url_or_name,
         container_name=container_name,
@@ -307,7 +308,7 @@ def download_xml(
         use_cache=use_cache,
         cache_dir=cache_dir,
     )
-    if blob_name.endswith(".gz"):
+    if decompress:
         return gzip.decompress(raw_data).decode("utf-8")
     return raw_data.decode("utf-8")
 

@@ -1,6 +1,7 @@
 import pytest
 
 from peptide_extractor.utils import (
+    get_body_from_jats_xml,
     normalize_doi,
 )
 
@@ -32,3 +33,20 @@ from peptide_extractor.utils import (
 def test_normalize_doi(input_doi, expected):
     """Test DOI normalization across various prefixes, casings, and whitespace."""
     assert normalize_doi(input_doi) == expected
+
+
+# ============================================================================
+# Tests for get_body_from_jats_xml
+# ============================================================================
+
+def test_get_body_from_jats_xml_standard():
+    xml_text = (
+        '<article><front><abstract><p>Abstract text</p></abstract></front>'
+        '<body><sec sec-type="intro"><title>Introduction</title>'
+        '<p id="P1">Most self-assembled materials are disordered.</p></sec></body>'
+        '<back><ack><p>Ack text</p></ack></back></article>'
+    )
+    result = get_body_from_jats_xml(xml_text)
+    assert result == "Introduction Most self-assembled materials are disordered."
+    assert "Abstract text" not in result
+    assert "Ack text" not in result

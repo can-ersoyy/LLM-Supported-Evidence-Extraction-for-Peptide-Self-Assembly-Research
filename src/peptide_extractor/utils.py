@@ -1,10 +1,11 @@
+import html
+import re
 import time
+import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
+from typing import Optional
 
 import requests
-
-import re
-from typing import Optional
 
 def normalize_doi(doi: Optional[str]) -> Optional[str]:
     """Clean and normalize a DOI string according to ISO 26324 standards.
@@ -65,3 +66,20 @@ def get_pmcid_from_pmid(api_key: str, pmid: str) -> str | None:
         return None
     except (KeyError, IndexError):
         return None
+
+
+def get_body_from_jats_xml(xml_text: str) -> str:
+    """Extract and normalize the text content of the <body> tag from JATS XML text."""
+    if not xml_text:
+        return ""
+
+    try:
+        root = ET.fromstring(
+            xml_text.encode("utf-8") if isinstance(xml_text, str) else xml_text
+        )
+        body = root.find(".//body")
+        if body is not None:
+            return " ".join(" ".join(body.itertext()).split())
+    except (ET.ParseError, Exception):
+        print("There is an error with the format of this xml string.")
+        return ""
