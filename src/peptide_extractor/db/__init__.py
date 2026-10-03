@@ -27,6 +27,7 @@ from peptide_extractor.db.paper_metadata import (
 from peptide_extractor.db.peptide_entry import (
     ExtractionMode,
     PeptideEntry,
+    peptide_llm_entry_to_peptide_entry,
 )
 
 __all__ = [

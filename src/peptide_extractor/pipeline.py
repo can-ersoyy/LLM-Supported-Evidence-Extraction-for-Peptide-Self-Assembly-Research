@@ -1,3 +1,4 @@
+from peptide_extractor.db.peptide_entry import peptide_llm_entry_to_peptide_entry
 from peptide_extractor.azure_storage import download_xml
 from peptide_extractor.db import PaperContent
 from peptide_extractor.extraction import run_extraction
@@ -284,9 +285,9 @@ if __name__ == "__main__":
 
     # for testing purposes manually retrieve the paper content
 
-    paper_ids = [paper_metadata.id for paper_metadata in get_records(PaperMetadata, pmid=pmid_list[0])]
+    paper_ids = [paper_metadata.id for paper_metadata in get_records(PaperMetadata, pmid=pmid_list)]
 
-    for id in paper_ids:
+    for i,id in enumerate(paper_ids):
         paper_content = get_records(PaperContent, paper_id=id)[0]
 
         blob_url = paper_content.blob_url
@@ -294,9 +295,13 @@ if __name__ == "__main__":
         sample_body = get_body_from_jats_xml(raw_paper_content)
         print(sample_body)
         
-        peptide_entries = run_extraction(sample_body)
+        model_name = "gemini-3.5-flash-lite"
+        peptide_entries = run_extraction(sample_body, model_name=model_name)
+        time.sleep(10)
+        actual_peptide_entries = [peptide_llm_entry_to_peptide_entry(peptide_llm_entry=entry, paper_id=id, pmid=pmid_list[i], model=model_name) for entry in peptide_entries]
+
         with get_session_context() as session:
-            session.add_all(peptide_entries)
+            session.add_all(actual_peptide_entries)
             session.commit()
             
     

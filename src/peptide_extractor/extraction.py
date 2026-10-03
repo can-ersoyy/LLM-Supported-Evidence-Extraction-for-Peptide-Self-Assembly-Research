@@ -1,3 +1,5 @@
+from peptide_extractor.schemas import PeptideExtractionResult
+from pydantic import BaseModel
 from typing import List
 from peptide_extractor.llm import LLMController
 import csv
@@ -55,8 +57,7 @@ You will receive the fulltext of a scientific paper and your goal is to extract 
 There can be several entries in a single paper.
 """
 
-def run_extraction(paper_content: str) -> List[PeptideEntry]:
-    model = LLMController(provider="google_genai", model_name="gemma-4-31b-it", structured_output=PeptideEntry, system_prompt=EXTRACTION_SYSTEM_PROMPT)
+def run_extraction( paper_content: str, provider: str = "google_genai", model_name: str = "gemma-4-31b-it") -> PeptideExtractionResult:
+    model = LLMController(provider=provider, model_name=model_name, structured_output=PeptideExtractionResult, system_prompt=EXTRACTION_SYSTEM_PROMPT)
     res = model.extract_peptides(paper_content)
-    print(res)
-    return res
+    return res.entries

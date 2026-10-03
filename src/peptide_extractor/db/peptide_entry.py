@@ -1,3 +1,4 @@
+from peptide_extractor.schemas import PeptideLLMEntry
 from datetime import datetime
 from enum import Enum
 from typing import TYPE_CHECKING, Optional
@@ -78,3 +79,31 @@ class PeptideEntry(SQLModel, table=True):
     )
 
     paper: Optional["PaperMetadata"] = Relationship()
+
+
+def peptide_llm_entry_to_peptide_entry(peptide_llm_entry: PeptideLLMEntry, paper_id: int, pmid: str, database: Optional[str] = None, model: Optional[str] = None) -> PeptideEntry:
+    return PeptideEntry(
+        paper_id=paper_id,
+        pmid=pmid,
+        sequence=peptide_llm_entry.sequence,
+        length=peptide_llm_entry.length,
+        type=peptide_llm_entry.type,
+        n_terminal=peptide_llm_entry.n_terminal,
+        c_terminal=peptide_llm_entry.c_terminal,
+        temperature=peptide_llm_entry.temperature,
+        ph=peptide_llm_entry.ph,
+        peptide_concentration=peptide_llm_entry.peptide_concentration,
+        solution=peptide_llm_entry.solution,
+        solvent=peptide_llm_entry.solvent,
+        volume_ratio=peptide_llm_entry.volume_ratio,
+        incubation_period=peptide_llm_entry.incubation_period,
+        peptide_conjugate_mixture=peptide_llm_entry.peptide_conjugate_mixture,
+        conjugate_partner=peptide_llm_entry.conjugate_partner,
+        linear_cyclic=peptide_llm_entry.linear_cyclic,
+        detection_method=peptide_llm_entry.detection_method,
+        preparation_protocol=peptide_llm_entry.preparation_protocol,
+        evidence_span=peptide_llm_entry.evidence_span,
+        extraction_mode=ExtractionMode.LLM,
+        model=model,
+        database=database,
+    )
