@@ -3,7 +3,7 @@ import pytest
 
 from peptide_extractor.db.paper_metadata import PaperMetadata
 from peptide_extractor.llm import LLMController, get_chat_model
-from peptide_extractor.schemas import RelevanceResult
+from peptide_extractor.schemas import PeptideExtractionResult, RelevanceResult
 
 
 @pytest.fixture
@@ -113,3 +113,51 @@ def test_get_chat_model_ollama():
 def test_get_chat_model_invalid_provider():
     with pytest.raises(ValueError, match="Unsupported LLM provider"):
         get_chat_model(provider="invalid_provider")
+
+
+def test_extract_peptides_with_curly_braces(mock_chat_model):
+    """Ensure extract_peptides handles scientific text with LaTeX formulas and curly braces without template error."""
+    llm, structured = mock_chat_model
+    structured.invoke.return_value = {"entries": []}
+
+    controller = LLMController(
+        llm=llm,
+        structured_output=PeptideExtractionResult,
+        system_prompt="Extract peptides with {schema}",
+    )
+
+    paper_content_with_latex = (
+        r"Peptide was dissolved at 10 mg/mL. Equation: $$R\hskip 2pt{\mathrm{ = \pi }}r_{\mathrm{B}}^0\sqrt {\frac{{m_0/M}}{{\fra...$$ "
+        r"Using formula {C6H12O6} and ratio {1:1} with \documentclass[12pt]{minimal}."
+    )
+    result = controller.extract_peptides(paper_content_with_latex)
+    assert isinstance(result, PeptideExtractionResult)
+    assert result.entries == []
+    structured.invoke.assert_called_once()
+    called_messages = structured.invoke.call_args[0][0]
+    assert any("$$R\\hskip 2pt{\\mathrm{ = \\pi }}" in msg.content for msg in called_messages)
+
+
+def test_classify_paper_with_curly_braces(mock_chat_model):
+    """Ensure classify_paper handles abstracts with chemical notations or brackets containing curly braces."""
+    llm, structured = mock_chat_model
+    structured.invoke.return_value = RelevanceResult(
+        detected_clues=["nanotube"],
+        explanation="Valid",
+        is_relevant=True,
+        confidence=0.9,
+    )
+
+    controller = LLMController(
+        llm=llm,
+        structured_output=RelevanceResult,
+        system_prompt="Classify {relevance}",
+    )
+
+    res = controller.classify_paper(
+        title="Study of {FF} Nanostructures",
+        abstract=r"We observed aggregation with \Delta G^{\circ} = -2.5 {kJ/mol}.",
+    )
+    assert res.is_relevant is True
+    structured.invoke.assert_called_once()
+

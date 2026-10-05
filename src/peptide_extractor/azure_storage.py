@@ -287,7 +287,7 @@ def download_xml(
     client: Optional[BlobServiceClient] = None,
     use_cache: bool = True,
     cache_dir: Optional[Path] = None,
-    decompress: bool = True,
+    decompress: bool = False, # added this because of the decompress behaviour where gzip files automatically get decompressed so no need to do it again
 ) -> str:
     """Download and decompress a paper XML from Azure Blob Storage or local cache.
 

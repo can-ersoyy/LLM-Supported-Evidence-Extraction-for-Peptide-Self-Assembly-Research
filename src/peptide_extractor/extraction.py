@@ -53,8 +53,10 @@ pmid_lookup = {str(p): p for p in pmid_list}
 #########################################################
 
 EXTRACTION_SYSTEM_PROMPT = """
-You will receive the fulltext of a scientific paper and your goal is to extract experimental peptide self-assembly information according to the given schema.
-There can be several entries in a single paper.
+You will receive the full text of a scientific paper and your goal is to extract experimental peptide self-assembly information according to the given schema. 
+There can be several entries in a single paper be careful! 
+If a field is not provided give "NP" for that field and write nothing else. 
+Don't leave any fields empty.
 """
 
 def run_extraction( paper_content: str, provider: str = "google_genai", model_name: str = "gemma-4-31b-it") -> PeptideExtractionResult:

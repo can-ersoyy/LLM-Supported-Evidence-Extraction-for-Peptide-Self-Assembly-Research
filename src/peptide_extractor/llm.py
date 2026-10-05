@@ -5,6 +5,7 @@ from typing import Any, Dict, Optional, Type, Union
 
 from dotenv import find_dotenv, load_dotenv
 from langchain_core.language_models.chat_models import BaseChatModel
+from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel
 
@@ -144,26 +145,25 @@ class LLMController:
             f"Abstract: {abstract_text}"
         )
 
-        messages = []
+        messages: List[BaseMessage] = []
         if self.system_prompt:
-            messages.append(("system", self.system_prompt))
-        messages.append(("user", user_content))
+            messages.append(SystemMessage(content=self.system_prompt))
+        messages.append(HumanMessage(content=user_content))
 
-        prompt = ChatPromptTemplate.from_messages(messages)
-        res = self.structured_llm.invoke(prompt.invoke({}))
+        res = self.structured_llm.invoke(messages)
         if isinstance(res, dict) and self.structured_output:
             return self.structured_output(**res)
         return res
 
-    def extract_peptides(self, paper_content: str) -> List[PeptideEntry]:
+    def extract_peptides(self, paper_content: str) -> Any:
         """Run extraction on paper content."""
-        messages = []
+        messages: List[BaseMessage] = []
         if self.system_prompt:
-            messages.append(("system", self.system_prompt))
-        messages.append(("user", f"Fulltext:\n\n{paper_content}"))
+            messages.append(SystemMessage(content=self.system_prompt))
+        messages.append(HumanMessage(content=f"Fulltext:\n\n{paper_content}"))
 
-        prompt = ChatPromptTemplate.from_messages(messages)
-        res = self.structured_llm.invoke(prompt.invoke({}))
+        res = self.structured_llm.invoke(messages)
         if isinstance(res, dict) and self.structured_output:
             return self.structured_output(**res)
         return res
+

@@ -270,18 +270,8 @@ if __name__ == "__main__":
 
     #ncbi_provider = NCBIProvider(ncbi_api_key, batch_size=200)
 
-    pmid_list = [
-    18070345,
-    25010703,
-    22016623,
-    25621167,
-    22915849,
-    23020140,
-    23800286,
-    24786493,
-    33579941,
-    28942918,
-    ]
+    #pmid_list = [30104564]
+    pmid_list = [18070345]
 
     # for testing purposes manually retrieve the paper content
 

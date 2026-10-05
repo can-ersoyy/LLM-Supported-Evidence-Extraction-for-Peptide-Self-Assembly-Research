@@ -176,6 +176,7 @@ class TestDownloadXML:
             client=mock_service,
             use_cache=True,
             cache_dir=tmp_path,
+            decompress=True
         )
 
         assert result == sample_xml
@@ -202,6 +203,7 @@ class TestDownloadXML:
             client=mock_service,
             use_cache=True,
             cache_dir=tmp_path,
+            decompress=True
         )
 
         assert result == sample_xml

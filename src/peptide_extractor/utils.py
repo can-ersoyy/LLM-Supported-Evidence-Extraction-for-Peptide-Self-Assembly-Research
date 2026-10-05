@@ -80,6 +80,7 @@ def get_body_from_jats_xml(xml_text: str) -> str:
         body = root.find(".//body")
         if body is not None:
             return " ".join(" ".join(body.itertext()).split())
+        return ""
     except (ET.ParseError, Exception):
         print("There is an error with the format of this xml string.")
         return ""
