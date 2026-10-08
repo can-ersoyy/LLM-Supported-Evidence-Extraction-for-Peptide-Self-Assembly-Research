@@ -1,6 +1,4 @@
-from typing import Optional
 from pydantic import BaseModel, Field
-from sqlalchemy import Column, Text
 from typing_extensions import List
 from typing import Any
 
@@ -26,37 +24,3 @@ class RelevanceResult(BaseModel):
         le=1.0,
         description="Confidence score between 0.0 and 1.0.",
     )
-
-class PeptideLLMEntry(BaseModel):
-    """Peptide Entry for a single peptide, there can be several entries in a single paper. Give 'NP' if a field is not found."""
-    sequence: str
-    length: int
-    type: str = Field(default=None, description="Can be one of the following: [none, ribbon, nanosphere, organogel, tube, particle, vesicle, hydrogel, fiber, amyloid]")
-    n_terminal: str
-    c_terminal: str
-    temperature: str = Field(default=None, description="Give exact number in celcius, don't type unit." )
-    ph: str = Field(default=None, description="Give exact number (float or int) in pH, don't type unit.")
-    peptide_concentration: str = Field(description="Give in mg/ml")
-    solution: str
-    solvent: str
-    volume_ratio: str = Field(default=None, description="Example: 1:1 (v/v) or 20:1 (v/v)")
-    incubation_period: str = Field(default=None, description="Single value in minutes (don't type minutes), if not provided exactly you can use > or < of a value in minutes.")
-
-    peptide_conjugate_mixture: str = Field(
-        default=None, description="One of the following: [peptide, conjugate, mixture]"
-    )
-    conjugate_partner: Optional[str] = Field(default=None, description="Is empty if the entry is just a peptide.")
-    linear_cyclic: Optional[str] = Field(
-        default=None, description="Can be one of the following: [linear, cyclic]"
-    )
-
-    detection_method: str
-    preparation_protocol: str
-
-    evidence_span: str = Field(
-        description="Positions (paragraph) or summary of where you found the information for this peptide entry from the given paper content.",
-    )
-    
-
-class PeptideExtractionResult(BaseModel):
-    entries: list[PeptideLLMEntry]

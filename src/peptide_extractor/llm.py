@@ -163,6 +163,7 @@ class LLMController:
         messages.append(HumanMessage(content=f"Fulltext:\n\n{paper_content}"))
 
         res = self.structured_llm.invoke(messages)
+        print(f"LLM output: {res}")
         if isinstance(res, dict) and self.structured_output:
             return self.structured_output(**res)
         return res

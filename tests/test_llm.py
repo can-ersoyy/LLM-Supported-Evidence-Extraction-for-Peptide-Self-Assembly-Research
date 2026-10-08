@@ -1,9 +1,10 @@
+from peptide_extractor.db.peptide_entry import PeptideExtractionResult
+from peptide_extractor.schemas import RelevanceResult
 from unittest.mock import MagicMock
 import pytest
 
 from peptide_extractor.db.paper_metadata import PaperMetadata
 from peptide_extractor.llm import LLMController, get_chat_model
-from peptide_extractor.schemas import PeptideExtractionResult, RelevanceResult
 
 
 @pytest.fixture

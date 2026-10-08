@@ -84,3 +84,15 @@ def get_body_from_jats_xml(xml_text: str) -> str:
     except (ET.ParseError, Exception):
         print("There is an error with the format of this xml string.")
         return ""
+
+def to_uppercase(text: Optional[str]) -> Optional[str]:
+    """Convert text to uppercase, if text is empty string or 'NP' return None."""
+    if not text:
+        return None
+    return text.strip().upper()
+
+def to_lowercase(text: Optional[str]) -> Optional[str]:
+    """Convert text to lowercase, if text is empty string or 'NP' return None."""
+    if not text:
+        return None
+    return text.strip().lower()
