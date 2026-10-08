@@ -112,13 +112,13 @@ class PeptideLLMEntry(BaseModel):
     n_terminal: Optional[str] = Field(default=None)
     c_terminal: Optional[str] = Field(default=None)
 
-    temperature: Optional[float] = Field(default=None, description="In celcius (e.g. 25.0, 37.45 etc.)")
+    temperature: Optional[float] = Field(default=None, description="Reaction/assembly temperature in Celsius as a float (e.g. 25.0, 37.0). If reported as 'room temperature' or 'RT', convert to 25.0. Return null if not mentioned.")
     ph: Optional[float] = Field(default=None, description="pH value (e.g. 7.4, 4.8 etc.)")
 
-    peptide_concentration: Optional[float] = Field(default=None, description="In mg/ml (e.g 10.2, 5.6 etc.)")
+    peptide_concentration: Optional[float] = Field(default=None, description="Peptide concentration normalized to mg/ml as a float (e.g. 5.0, 10.2). Convert 1 wt% or 1% (w/v) to 10.0 mg/ml. Return null if only mM is given or not mentioned.")
     solution: Optional[str] = Field(default=None, description=f"some examples: {solution_examples}")
     solvent: Optional[str] = Field(default=None)
-    volume_ratio: Optional[tuple[int, int]] = Field(default=None, description="Example: (1, 1) for 1:1 (v/v) or (20, 1) for 20:1 (v/v)")
+    volume_ratio: Optional[list[int]] = Field(default=None, description="Examples: [50, 50] for 50% to 50% (v/v) or [30, 70] for 30% to 70% (v/v). The list should sum to 100 if there are multiple solvents. Return [1] if the solution is only made of a single solvent. Return null if not mentioned.")
     incubation_period: Optional[int] = Field(default=None, description="In minutes")
 
     peptide_conjugate_mixture: PeptideConjugateMixture = PeptideConjugateMixture.PEPTIDE
@@ -143,9 +143,15 @@ def peptide_conjugate_check(peptide_llm_entry: PeptideLLMEntry) -> Optional[Pept
         return None
     return peptide_llm_entry.conjugate_partner
 
-def peptide_volume_ratio_to_str(ratio: Optional[tuple[int, int]]) -> Optional[str]:
-    if ratio is not None and len(ratio) == 2:
+def peptide_volume_ratio_to_str(ratio: Optional[list[int]]) -> Optional[str]:
+    if ratio is None:
+        return None
+    if len(ratio) == 1:
+        return str(ratio[0])
+    if len(ratio) == 2:
         return f"{ratio[0]}/{ratio[1]}"
+    if len(ratio) > 2:
+        return ":".join([str(r) for r in ratio])
     return None
 
 
@@ -156,17 +162,17 @@ def peptide_llm_entry_to_peptide_entry(peptide_llm_entry: PeptideLLMEntry, paper
         sequence=to_uppercase(peptide_llm_entry.sequence),
         length=peptide_sequence_to_len(peptide_llm_entry.sequence),
         type=to_lowercase(peptide_llm_entry.type),
-        n_terminal=to_lowercase(peptide_llm_entry.n_terminal),
-        c_terminal=to_lowercase(peptide_llm_entry.c_terminal),
+        n_terminal=peptide_llm_entry.n_terminal,
+        c_terminal=peptide_llm_entry.c_terminal,
         temperature=peptide_llm_entry.temperature,
         ph=peptide_llm_entry.ph,
         peptide_concentration=peptide_llm_entry.peptide_concentration,
-        solution=to_lowercase(peptide_llm_entry.solution),
-        solvent=to_lowercase(peptide_llm_entry.solvent),
-        volume_ratio=to_lowercase(peptide_volume_ratio_to_str(peptide_llm_entry.volume_ratio)),
+        solution=peptide_llm_entry.solution,
+        solvent=peptide_llm_entry.solvent,
+        volume_ratio=peptide_volume_ratio_to_str(peptide_llm_entry.volume_ratio),
         incubation_period=peptide_llm_entry.incubation_period,
         peptide_conjugate_mixture=peptide_llm_entry.peptide_conjugate_mixture,
-        conjugate_partner=to_lowercase(peptide_conjugate_check(peptide_llm_entry)),
+        conjugate_partner=peptide_conjugate_check(peptide_llm_entry),
         linear_cyclic=peptide_llm_entry.linear_cyclic,
         detection_method=peptide_llm_entry.detection_method,
         preparation_protocol=peptide_llm_entry.preparation_protocol,

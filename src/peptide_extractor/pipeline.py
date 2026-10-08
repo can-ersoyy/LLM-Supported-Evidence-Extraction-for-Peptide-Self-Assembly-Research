@@ -279,64 +279,11 @@ if __name__ == "__main__":
 '23020140',
 '23800286',
 '24786493',
-'33579941',
-'28942918',
-'33184287',
-'31235914',
-'33712624',
-'34518699',
-'32929282',
-'33311513',
-'32541896',
-'33712586',
-'31434882',
-'30720432',
-'30190461',
-'29969391',
-'32457390',
-'31815671',
-'34716315',
-'36646699',
-'25395337',
-'37248338',
-'38134875',
-'39511224',
-'40753073',
-'39475611',
-'39874287',
-'40495649',
-'35715417',
-'39116134',
-'38501920',
-'39143113',
-'24333014',
-'18350169',
 '30104564',
-'30920525',
-'34741031',
-'30894526',
-'30894521',
-'33558536',
-'30846696',
-'31676763',
-'30158706',
-'30276465',
-'32032505',
-'34128081',
-'34588692',
-'29681455',
-'31295458',
-'33548114',
-'31664019',
-'28211492',
-'29734798',
-'36302762',
-'35344985',
-'35831275',
-'35377792',
-'34880495',
-'38879609'
+'30920525'
 ]
+
+    errored_pmids = []
 
     # for testing purposes manually retrieve the paper content
     
@@ -351,13 +298,17 @@ if __name__ == "__main__":
         print(sample_body)
         
         model_name = "gemini-3.5-flash-lite"
-        peptide_entries = run_extraction(sample_body, model_name=model_name)
-        time.sleep(10)
-        actual_peptide_entries = [peptide_llm_entry_to_peptide_entry(peptide_llm_entry=entry, paper_id=id, pmid=pmid_list[i], model=model_name) for entry in peptide_entries]
+        try:
+            peptide_entries = run_extraction(sample_body, model_name=model_name)
+            time.sleep(5)
+            actual_peptide_entries = [peptide_llm_entry_to_peptide_entry(peptide_llm_entry=entry, paper_id=id, pmid=pmid_list[i], model=model_name) for entry in peptide_entries]
 
-        with get_session_context() as session:
-            session.add_all(actual_peptide_entries)
-            session.commit()
-            
+            with get_session_context() as session:
+                session.add_all(actual_peptide_entries)
+                session.commit()
+        except:
+            errored_pmids.append(pmid_list[i])        
+    
+    print("These PMIDs errored out:", errored_pmids)
     
     
