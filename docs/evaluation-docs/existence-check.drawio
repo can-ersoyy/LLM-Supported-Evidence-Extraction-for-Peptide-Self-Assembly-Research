@@ -1,0 +1,136 @@
+<mxfile host="app.diagrams.net" pages="2">
+  <diagram id="rcHpNISWq1SoK4DxTlYk" name="Page-1">
+    <mxGraphModel grid="1" page="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" pageScale="1" pageWidth="850" pageHeight="1100" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="80Jggt2Mc_pwBkLTj8M0-3" edge="1" parent="1" source="80Jggt2Mc_pwBkLTj8M0-1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" target="80Jggt2Mc_pwBkLTj8M0-7">
+          <mxGeometry relative="1" x="-0.6148" as="geometry">
+            <Array as="points">
+              <mxPoint x="110" y="170" />
+            </Array>
+            <mxPoint x="110" y="270" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="80Jggt2Mc_pwBkLTj8M0-8" edge="1" parent="1" source="80Jggt2Mc_pwBkLTj8M0-1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0;exitY=1;exitDx=0;exitDy=0;">
+          <mxGeometry relative="1" x="-0.2281" as="geometry">
+            <mxPoint x="270" y="320" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="80Jggt2Mc_pwBkLTj8M0-12" edge="1" parent="1" source="80Jggt2Mc_pwBkLTj8M0-1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" target="80Jggt2Mc_pwBkLTj8M0-14">
+          <mxGeometry relative="1" x="0.1355" as="geometry">
+            <mxPoint x="600" y="230" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="80Jggt2Mc_pwBkLTj8M0-1" parent="1" style="rounded=1;whiteSpace=wrap;html=1;roundedPerimeter=1;" value="Deterministic Checks for Existence" vertex="1">
+          <mxGeometry height="60" width="120" x="365" y="140" as="geometry" />
+        </mxCell>
+        <mxCell id="80Jggt2Mc_pwBkLTj8M0-2" parent="1" style="rounded=1;whiteSpace=wrap;html=1;roundedPerimeter=1;" value="v: value of field&lt;div&gt;e: evidence for field&lt;/div&gt;" vertex="1">
+          <mxGeometry height="60" width="120" x="170" y="50" as="geometry" />
+        </mxCell>
+        <mxCell id="80Jggt2Mc_pwBkLTj8M0-6" parent="1" style="text;html=1;whiteSpace=wrap;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;rounded=0;" value="v: no" vertex="1">
+          <mxGeometry height="30" width="60" x="170" y="140" as="geometry" />
+        </mxCell>
+        <mxCell id="80Jggt2Mc_pwBkLTj8M0-7" parent="1" style="rounded=1;whiteSpace=wrap;html=1;roundedPerimeter=1;" value="0 points" vertex="1">
+          <mxGeometry height="60" width="120" x="50" y="320" as="geometry" />
+        </mxCell>
+        <mxCell id="80Jggt2Mc_pwBkLTj8M0-10" parent="1" style="text;html=1;whiteSpace=wrap;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;rounded=0;" value="v: yes&lt;div&gt;e: no&lt;/div&gt;" vertex="1">
+          <mxGeometry height="30" width="60" x="210" y="220" as="geometry" />
+        </mxCell>
+        <mxCell id="80Jggt2Mc_pwBkLTj8M0-11" parent="1" style="rounded=1;whiteSpace=wrap;html=1;roundedPerimeter=1;" value="hallucination&lt;div&gt;- points&lt;/div&gt;" vertex="1">
+          <mxGeometry height="60" width="120" x="210" y="320" as="geometry" />
+        </mxCell>
+        <mxCell id="80Jggt2Mc_pwBkLTj8M0-13" parent="1" style="text;html=1;whiteSpace=wrap;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;rounded=0;" value="v: yes&lt;div&gt;e: yes&lt;/div&gt;" vertex="1">
+          <mxGeometry height="30" width="60" x="590" y="155" as="geometry" />
+        </mxCell>
+        <mxCell id="80Jggt2Mc_pwBkLTj8M0-16" edge="1" parent="1" source="80Jggt2Mc_pwBkLTj8M0-14" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0;exitY=1;exitDx=0;exitDy=0;">
+          <mxGeometry relative="1" x="0.0552" as="geometry">
+            <mxPoint x="540" y="290" as="sourcePoint" />
+            <mxPoint x="480" y="350" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="80Jggt2Mc_pwBkLTj8M0-19" edge="1" parent="1" source="80Jggt2Mc_pwBkLTj8M0-14" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=1;exitDx=0;exitDy=0;">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="660" y="290" as="sourcePoint" />
+            <mxPoint x="760" y="350" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="80Jggt2Mc_pwBkLTj8M0-14" parent="1" style="rounded=1;whiteSpace=wrap;html=1;roundedPerimeter=1;" value="&lt;div&gt;Evidence in fulltext&lt;/div&gt;1. direct text search (via &quot;in&quot;)" vertex="1">
+          <mxGeometry height="80" width="120" x="540" y="210" as="geometry" />
+        </mxCell>
+        <mxCell id="80Jggt2Mc_pwBkLTj8M0-17" parent="1" style="rounded=1;whiteSpace=wrap;html=1;roundedPerimeter=1;" value="pass to llm judge" vertex="1">
+          <mxGeometry height="60" width="120" x="420" y="350" as="geometry" />
+        </mxCell>
+        <mxCell id="80Jggt2Mc_pwBkLTj8M0-18" parent="1" style="text;html=1;whiteSpace=wrap;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;rounded=0;" value="Found" vertex="1">
+          <mxGeometry height="30" width="60" x="470" y="260" as="geometry" />
+        </mxCell>
+        <mxCell id="80Jggt2Mc_pwBkLTj8M0-20" parent="1" style="text;html=1;whiteSpace=wrap;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;rounded=0;" value="Not Found" vertex="1">
+          <mxGeometry height="30" width="60" x="680" y="260" as="geometry" />
+        </mxCell>
+        <mxCell id="80Jggt2Mc_pwBkLTj8M0-22" edge="1" parent="1" source="80Jggt2Mc_pwBkLTj8M0-21" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="640" y="430" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="80Jggt2Mc_pwBkLTj8M0-24" edge="1" parent="1" source="80Jggt2Mc_pwBkLTj8M0-21" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="910" y="430" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="80Jggt2Mc_pwBkLTj8M0-21" parent="1" style="rounded=1;whiteSpace=wrap;html=1;roundedPerimeter=1;" value="Fuzzy Search (via rapidfuzzy) with a threshold of 90%" vertex="1">
+          <mxGeometry height="60" width="120" x="700" y="350" as="geometry" />
+        </mxCell>
+        <mxCell id="80Jggt2Mc_pwBkLTj8M0-23" parent="1" style="rounded=1;whiteSpace=wrap;html=1;roundedPerimeter=1;" value="pass to llm judge" vertex="1">
+          <mxGeometry height="60" width="120" x="580" y="430" as="geometry" />
+        </mxCell>
+        <mxCell id="80Jggt2Mc_pwBkLTj8M0-25" parent="1" style="rounded=1;whiteSpace=wrap;html=1;roundedPerimeter=1;" value="hallucination&lt;div&gt;- points&lt;/div&gt;" vertex="1">
+          <mxGeometry height="60" width="120" x="850" y="430" as="geometry" />
+        </mxCell>
+        <mxCell id="80Jggt2Mc_pwBkLTj8M0-26" parent="1" style="text;html=1;whiteSpace=wrap;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;rounded=0;" value="Found" vertex="1">
+          <mxGeometry height="30" width="60" x="640" y="360" as="geometry" />
+        </mxCell>
+        <mxCell id="80Jggt2Mc_pwBkLTj8M0-28" parent="1" style="text;html=1;whiteSpace=wrap;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;rounded=0;" value="Not Found" vertex="1">
+          <mxGeometry height="30" width="60" x="830" y="360" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+  <diagram id="K_ypcU1WNTkElbr2d8TY" name="Page-2">
+    <mxGraphModel dx="982" dy="545" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="850" pageHeight="1100" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="F75LARsl3vmVSSY57RJA-1" parent="1" style="rounded=1;whiteSpace=wrap;html=1;roundedPerimeter=1;" value="LLM Judge receives evidence_span dict" vertex="1">
+          <mxGeometry height="60" width="120" x="365" y="85" as="geometry" />
+        </mxCell>
+        <mxCell id="F75LARsl3vmVSSY57RJA-4" parent="1" style="rounded=1;whiteSpace=wrap;html=1;roundedPerimeter=1;" value="1. check if value matches the evidence" vertex="1">
+          <mxGeometry height="60" width="130" x="280" y="245" as="geometry" />
+        </mxCell>
+        <mxCell id="F75LARsl3vmVSSY57RJA-5" parent="1" style="rounded=1;whiteSpace=wrap;html=1;roundedPerimeter=1;" value="2. check if value is scientifically sound" vertex="1">
+          <mxGeometry height="60" width="120" x="450" y="245" as="geometry" />
+        </mxCell>
+        <mxCell id="F75LARsl3vmVSSY57RJA-6" parent="1" style="strokeWidth=2;html=1;shape=mxgraph.flowchart.annotation_2;align=left;labelPosition=right;pointerEvents=1;rotation=90;" value="" vertex="1">
+          <mxGeometry height="160" width="100" x="375" y="115" as="geometry" />
+        </mxCell>
+        <mxCell id="F75LARsl3vmVSSY57RJA-8" parent="1" style="text;html=1;whiteSpace=wrap;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;rounded=0;" value="per field" vertex="1">
+          <mxGeometry height="30" width="60" x="390" y="190" as="geometry" />
+        </mxCell>
+        <mxCell id="F75LARsl3vmVSSY57RJA-9" edge="1" parent="1" source="F75LARsl3vmVSSY57RJA-4" style="endArrow=classic;html=1;rounded=0;exitX=0.5;exitY=1;exitDx=0;exitDy=0;" value="">
+          <mxGeometry height="50" relative="1" width="50" as="geometry">
+            <mxPoint x="420" y="270" as="sourcePoint" />
+            <mxPoint x="430" y="360" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="F75LARsl3vmVSSY57RJA-11" edge="1" parent="1" source="F75LARsl3vmVSSY57RJA-5" style="endArrow=classic;html=1;rounded=0;exitX=0.5;exitY=1;exitDx=0;exitDy=0;" value="">
+          <mxGeometry height="50" relative="1" width="50" as="geometry">
+            <mxPoint x="420" y="270" as="sourcePoint" />
+            <mxPoint x="430" y="360" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="F75LARsl3vmVSSY57RJA-13" parent="1" style="rounded=1;whiteSpace=wrap;html=1;roundedPerimeter=1;" value="give a score&lt;div&gt;(per field)&lt;/div&gt;" vertex="1">
+          <mxGeometry height="60" width="120" x="370" y="350" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

@@ -1,3 +1,4 @@
+from pydantic import Json
 from decimal import Decimal
 from pydantic import BaseModel
 from peptide_extractor.utils import to_lowercase, to_uppercase, get_utc_now
@@ -10,7 +11,6 @@ from sqlmodel import DateTime, Field, Relationship, SQLModel
 
 if TYPE_CHECKING:
     from peptide_extractor.db.paper_metadata import PaperMetadata
-
 
 class ExtractionMode(str, Enum):
     MANUAL = "manual"
@@ -72,7 +72,6 @@ class PeptideEntry(SQLModel, table=True):
     evidence_span: Optional[str] = Field(
         default=None,
         sa_column=Column(Text, nullable=True),
-        description="Concise summary or quoted evidence from the paper text",
     )
 
 
@@ -99,8 +98,74 @@ class PeptideEntry(SQLModel, table=True):
 
     paper: Optional["PaperMetadata"] = Relationship()
 
+# these are from peptide miner paper
 solution_examples = ["acetic acid", "acetone", "acetonitrile", "acetyl acetone", "2-aminoethanol", "aniline", "anisole", "benzene", "benzonitrile", "benzyl alcohol", "1-butanol", "2-butanol", "i-butanol", "2-butanone", "t-butyl alcohol", "carbon disulfide", "carbon tetrachloride", "chlorobenzene", "chloroform", "cyclohexane", "cyclohexanol", "cyclohexanone", "di-n-butylphthalate", "1,1-dichloroethane", "1,2-dichloroethane", "diethylamine", "diethylene glycol", "diglyme", "dimethoxyethane", "glyme", "N,N-dimethylaniline", "dimethylformamide", "DMF", "dimethylphthalate", "dimethylsulfoxide", "DMSO", "dioxane", "ethanol", "ether", "ethyl acetate", "ethyl acetoacetate", "ethyl benzoate", "ethlyene glycol", "glycerin", "heptane", "1-heptanol", "hexane", "1-hexanol", "methanol", "methyl acetate", "methyl t-butyl ether", "MTBE", "methylene chloride", "1-octanol", "pentane", "1-pentanol", "2-pentanol", "3-pentanol", "2-pentanone", "3-pentanone", "1-propanol", "2-propanol", "pyridine", "tetrahydrofuran", "THF", "toluene", "water", "H2O", "D2O", "o-xylene", "p-xylene", "m-xylene", "heavy water", "water, heavy", "phosphate-buffered saline", "PBS", "sodium phosphate", "hexafluoro-2-propanol", "HFP", "HFIP", "phosphate buffer", "NaOH", "NaCl", "HCl", "glucono delta-lactone", "GdL", "dichloromethane", "1,3-butanediol", "dimethyl carbonate", "pyrimidine", "pyridine", "mesitylene", "octane", "decane", "isopropanol", "glycine"]
 
+class EvidenceSpan(BaseModel):
+    sequence: Optional[str] = Field(
+        default=None,
+        description="Exact verbatim quote from the text stating or showing the peptide sequence. Required if 'sequence' is extracted."
+    )
+    type: Optional[str] = Field(
+        default=None,
+        description="Exact verbatim quote identifying the assembly morphology (e.g., 'nanofibers', 'hydrogel'). Required if 'type' is extracted."
+    )
+    n_terminal: Optional[str] = Field(
+        default=None,
+        description="Exact verbatim quote mentioning the N-terminal cap or modification (e.g., 'Fmoc-protected', 'Ac-')."
+    )
+    c_terminal: Optional[str] = Field(
+        default=None,
+        description="Exact verbatim quote mentioning the C-terminal cap or modification (e.g., 'amidated', '-NH2')."
+    )
+    temperature: Optional[str] = Field(
+        default=None,
+        description="Exact verbatim quote containing the temperature (e.g., 'incubated at 37 °C', 'room temperature'). Required if 'temperature' is extracted."
+    )
+    ph: Optional[str] = Field(
+        default=None,
+        description="Exact verbatim quote specifying the pH (e.g., 'adjusted to pH 7.4 with HCl'). Required if 'ph' is extracted."
+    )
+    peptide_concentration: Optional[str] = Field(
+        default=None,
+        description="Exact verbatim quote specifying the peptide concentration (e.g., 'dissolved at 5 mg/mL', '10 wt%'). Required if 'peptide_concentration' is extracted."
+    )
+    solution: Optional[str] = Field(
+        default=None,
+        description="Exact verbatim quote naming the primary solution or buffer (e.g., 'in 10 mM PBS buffer'). Required if 'solution' is extracted."
+    )
+    solvent: Optional[str] = Field(
+        default=None,
+        description="Exact verbatim quote naming the organic co-solvent (e.g., 'pre-dissolved in HFIP')."
+    )
+    volume_ratio: Optional[str] = Field(
+        default=None,
+        description="Exact verbatim quote stating the solvent mixture ratio (e.g., 'HFIP/water (1:9 v/v)'). Required if 'volume_ratio' is extracted."
+    )
+    incubation_period: Optional[str] = Field(
+        default=None,
+        description="Exact verbatim quote stating the incubation duration (e.g., 'incubated for 24 h at RT'). Required if 'incubation_period' is extracted."
+    )
+    peptide_conjugate_mixture: Optional[str] = Field(
+        default=None,
+        description="Exact verbatim quote indicating whether the peptide is conjugated or mixed with another molecule."
+    )
+    conjugate_partner: Optional[str] = Field(
+        default=None,
+        description="Exact verbatim quote naming the conjugate partner or additive."
+    )
+    linear_cyclic: Optional[str] = Field(
+        default=None,
+        description="Exact verbatim quote stating whether the peptide is linear or cyclic."
+    )
+
+    def to_string(self):
+        """Convert EvidenceSpan to a string that can be parsed as a python dict directly."""
+        result = self.model_dump_json(exclude_none=True)
+        return result
+
+        
+        
 
 # this one is for LLM api (not db)
 class PeptideLLMEntry(BaseModel):
@@ -116,19 +181,23 @@ class PeptideLLMEntry(BaseModel):
     ph: Optional[float] = Field(default=None, description="pH value (e.g. 7.4, 4.8 etc.)")
 
     peptide_concentration: Optional[float] = Field(default=None, description="Peptide concentration normalized to mg/ml as a float (e.g. 5.0, 10.2). Convert 1 wt% or 1% (w/v) to 10.0 mg/ml. Return null if only mM is given or not mentioned.")
-    solution: Optional[str] = Field(default=None, description=f"some examples: {solution_examples}")
-    solvent: Optional[str] = Field(default=None)
+    solution: Optional[str] = Field(default=None, description=f"Examples: {solution_examples}")
+    solvent: Optional[str] = None
     volume_ratio: Optional[list[int]] = Field(default=None, description="Examples: [50, 50] for 50% to 50% (v/v) or [30, 70] for 30% to 70% (v/v). The list should sum to 100 if there are multiple solvents. Return [1] if the solution is only made of a single solvent. Return null if not mentioned.")
     incubation_period: Optional[int] = Field(default=None, description="In minutes")
 
     peptide_conjugate_mixture: PeptideConjugateMixture = PeptideConjugateMixture.PEPTIDE
     conjugate_partner: Optional[str] = None
     linear_cyclic: PeptideLinearity = PeptideLinearity.LINEAR
-    detection_method: Optional[str] = None
-    preparation_protocol: Optional[str] = None
+    detection_method: Optional[list[str]] = Field(default=None, description="Provide each identified method as a seperate item in the list as verbatim text from source text.")
+    preparation_protocol: Optional[str] = Field(default=None, description="Verbatim text from source text describing how the peptide was prepared or manufactured or synthesized.")
 
-    evidence_span: Optional[str] = Field(
-        description="Positions (paragraph) or summary of where you found the information for this peptide entry from the given paper content.",
+    evidence_span: Optional[EvidenceSpan] = Field(
+        description="""Verbatim text sequences (1 per field - at least 5 words) from the source text grounding each extracted property. 
+        Different fields can have the same evidence if they are includes together (so duplicates are not an issue for evidence).
+        Don't use "..." to truncate, just provide the shortest meaningful text sequence that represents (includes) that field.
+        The sentences will be used for a text search to check for existence, so make sure you are actually just copying exactly what is in the text (including any formatting from the original text format like xml, md etc.)
+        Example: \"The experiment was performed at room temperature (25 C)...\" -> EvidenceSpan for temperature: \"room temperature (25 C)\"""",
     )
     
 # this one is for multiple entries
@@ -174,9 +243,9 @@ def peptide_llm_entry_to_peptide_entry(peptide_llm_entry: PeptideLLMEntry, paper
         peptide_conjugate_mixture=peptide_llm_entry.peptide_conjugate_mixture,
         conjugate_partner=peptide_conjugate_check(peptide_llm_entry),
         linear_cyclic=peptide_llm_entry.linear_cyclic,
-        detection_method=peptide_llm_entry.detection_method,
+        detection_method=",".join(peptide_llm_entry.detection_method),
         preparation_protocol=peptide_llm_entry.preparation_protocol,
-        evidence_span=peptide_llm_entry.evidence_span,
+        evidence_span=peptide_llm_entry.evidence_span.to_string() if peptide_llm_entry.evidence_span is not None else None,
         extraction_mode=ExtractionMode.LLM,
         model=model,
         database=database,
