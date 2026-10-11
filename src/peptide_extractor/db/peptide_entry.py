@@ -138,25 +138,13 @@ class EvidenceSpan(BaseModel):
         default=None,
         description="Exact verbatim quote naming the organic co-solvent (e.g., 'pre-dissolved in HFIP')."
     )
-    volume_ratio: Optional[str] = Field(
-        default=None,
-        description="Exact verbatim quote stating the solvent mixture ratio (e.g., 'HFIP/water (1:9 v/v)'). Required if 'volume_ratio' is extracted."
-    )
     incubation_period: Optional[str] = Field(
         default=None,
         description="Exact verbatim quote stating the incubation duration (e.g., 'incubated for 24 h at RT'). Required if 'incubation_period' is extracted."
     )
-    peptide_conjugate_mixture: Optional[str] = Field(
-        default=None,
-        description="Exact verbatim quote indicating whether the peptide is conjugated or mixed with another molecule."
-    )
     conjugate_partner: Optional[str] = Field(
         default=None,
         description="Exact verbatim quote naming the conjugate partner or additive."
-    )
-    linear_cyclic: Optional[str] = Field(
-        default=None,
-        description="Exact verbatim quote stating whether the peptide is linear or cyclic."
     )
 
     def to_string(self):

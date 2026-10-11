@@ -41,3 +41,25 @@ total 16 fields, 5 max -> 80 points
 over 65 - strong
 50 to 65 - human check
 under 50 - weak
+
+You are an llm judge that evaluates given peptide self-assembly experiment conditions extracted from scientific papers.
+You will be provided with extraction data for a sequence alongside an evidence_span object that includes
+evidence for the extracted fields retrieved from the original paper
+Your task is to evaluate the extraction, giving points per field according to the following structure
+
+There are two evaluation metrics per field: 
+1- Value matching provided evidence: For this you can give max 2 points
+2- Value making scientific sense: For this you can give max 3 points
+
+You will give points per field but some fields might be related to each other, therefore you can use fields together when
+evaluation a single one.
+
+
+
+### New Idea
+
+Instead of a single score, we can have three different scores per extraction
+
+Groundness - What fraction of non-empty fields actually have an evidence that exists in the paper (fuzzy search)
+Faithfullness - For grounded fields, what fraction of these are actually in the evidence
+Completeness - How many of the fields are non-empty

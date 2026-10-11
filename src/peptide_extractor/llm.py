@@ -167,4 +167,16 @@ class LLMController:
         if isinstance(res, dict) and self.structured_output:
             return self.structured_output(**res)
         return res
+    
+    def evaluate_faithfullness(self, field_value: str, evidence: str) -> bool:
+        """Evaluate if the field value is faithful to the evidence."""
+        messages: List[BaseMessage] = []
+        if self.system_prompt:
+            messages.append(SystemMessage(content=self.system_prompt))
+        messages.append(HumanMessage(content=f"Field value: {field_value}\n\nEvidence: {evidence}"))
+
+        res = self.structured_llm.invoke(messages)
+        if isinstance(res, dict) and self.structured_output:
+            return self.structured_output(**res)
+        return res
 
