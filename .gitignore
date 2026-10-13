@@ -8,6 +8,9 @@ draft
 .pytest_cache/
 .coverage
 htmlcov/
+
 docs/questions.md
 docs/todos.md
+docs/scratchpad.md
+
 data/*.db
