@@ -24,6 +24,7 @@ DEFAULT_MODELS: Dict[str, str] = {
 
 def get_chat_model(
     provider: str = "google_genai",
+    base_url: Optional[str] = None,
     model_name: Optional[str] = None,
     temperature: float = 0.0,
     api_key: Optional[str] = None,
@@ -60,7 +61,12 @@ def get_chat_model(
             from langchain_community.chat_models import ChatOllama
 
         target_model = model_name or DEFAULT_MODELS["ollama"]
-        return ChatOllama(model=target_model, temperature=temperature, **kwargs)
+        return ChatOllama(
+            base_url=base_url,
+            model=target_model, 
+            temperature=temperature,
+            num_ctx=32768, 
+            **kwargs)
 
     elif provider_clean in ("open_router", "openrouter", "open-router"):
         try:
@@ -99,6 +105,7 @@ class LLMController:
         llm: Optional[BaseChatModel] = None,
         temperature: float = 0.0,
         api_key: Optional[str] = None,
+        base_url: Optional[str] = None, # used for remote llm connection via ollama
         **kwargs: Any,
     ):
         self.provider = provider
@@ -115,6 +122,7 @@ class LLMController:
             model_name=self.model_name,
             temperature=temperature,
             api_key=api_key,
+            base_url=base_url,
             **kwargs,
         )
 
@@ -174,6 +182,20 @@ class LLMController:
         if self.system_prompt:
             messages.append(SystemMessage(content=self.system_prompt))
         messages.append(HumanMessage(content=f"Field value: {field_value}\n\nEvidence: {evidence}"))
+
+        res = self.structured_llm.invoke(messages)
+        if isinstance(res, dict) and self.structured_output:
+            return self.structured_output(**res)
+        return res
+
+    def evaluate_groundness(self, field_value_quote_list: list) -> bool:
+        """Evaluate if the field value is grounded in the original text."""
+        messages: List[BaseMessage] = []
+        if self.system_prompt:
+            messages.append(SystemMessage(content=self.system_prompt))
+        messages.append(HumanMessage(content=f"""Following is a list of three item tuples (field, value, quote). Check if the value for each tuple is grounded in the corresponding quote. Return a list of booleans indicating whether each value is grounded. 
+        {field_value_quote_list}
+        """))
 
         res = self.structured_llm.invoke(messages)
         if isinstance(res, dict) and self.structured_output:

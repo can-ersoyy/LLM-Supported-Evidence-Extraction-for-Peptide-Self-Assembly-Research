@@ -57,6 +57,28 @@ def groundness_check(field_evidence, fulltext) -> bool:
     
     return False
 
+GROUNDNESS_CHECK_SYSTEM_PROMPT = """
+You are a scientific data verification auditor.
+Your task is to determine whether an extracted experimental property value is faithfully supported by the provided verbatim quote from a paper.
+You should return a dictionary of field names and their corresponding verdicts, with True if the value is grounded in the evidence and False otherwise.
+
+Example:
+Input: [("temperature", "25", "The incubation was carried out at 25°C."), ("pH", "7.0", "The incubation was carried out at pH 7.0.")]
+Output: {"temperature": True, "pH": True}
+
+Input: [("temperature", "37", "The incubation was carried out at 25°C."), ("pH", "7.0", "The incubation was carried out at pH 7.0.")]
+Output: {"temperature": False, "pH": True}
+"""
+
+class GroundnessVerdict(BaseModel):
+    field_verdict: dict = Field(description="Dictionary of field names and their corresponding verdicts")
+
+# TODO: implement groundness/faithfulness checks for evidence span with locations
+def groundness_check_llm(field_value_quote_list: list, model: LLMController = None) -> GroundnessVerdict:
+    model = LLMController(provider="google-genai", model_name="gemini-3.5-flash-lite", system_prompt=GROUNDNESS_CHECK_SYSTEM_PROMPT, structured_output=GroundnessVerdict)
+    return model.evaluate_groundness(field_value_quote_list)
+    
+
 class FaithfulnessVerdict(BaseModel):
     is_faithful: bool = Field(
         description="True if the extracted field value is supported by the evidence quote, False otherwise."
@@ -66,7 +88,7 @@ class FaithfulnessVerdict(BaseModel):
         description="Brief explanation of the decision."
     )
 
-def faithfulness_check(field_value, field_evidence, model) -> FaithfulnessVerdict:
+def faithfulness_check(field_value, field_evidence, model: LLMController) -> FaithfulnessVerdict:
     """Check if the field value is faithful to the evidence span"""
     return model.evaluate_faithfullness(field_value, field_evidence)
 
