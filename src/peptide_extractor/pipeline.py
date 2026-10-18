@@ -1,3 +1,16 @@
+from peptide_extractor.schemas import RelevanceResult
+from peptide_extractor.relevance import SYSTEM_PROMPT_V3
+from peptide_extractor.llm import LLMController
+from peptide_extractor.parsers import to_debug_string
+from peptide_extractor.db import paper_content
+from peptide_extractor.evaluation import groundness_check_llm
+from peptide_extractor.parsers import get_node_by_id
+from peptide_extractor.evaluation import groundness_check
+from sqlalchemy.sql.functions import mode
+from sqlalchemy.engine import result
+from peptide_extractor.parsers import add_sentences
+from peptide_extractor.parsers import to_llm_string
+from peptide_extractor.parsers import parse_xml
 from peptide_extractor.evaluation import evaluate_extraction
 from peptide_extractor.db import PeptideEntry
 from peptide_extractor.evaluation import search_fuzzy
@@ -221,6 +234,7 @@ def normalize_database_dois(session: Optional[Session] = None) -> int:
 def run_relevance_screening(
     provider: str = "google_genai",
     model_name: Optional[str] = None,
+    classifier: LLMController = None,
     batch_size: Optional[int] = None,
     api_key: Optional[str] = None,
     delay_seconds: float = 2.0,
@@ -243,7 +257,7 @@ def run_relevance_screening(
     )
 
     init_db()
-    classifier = LLMController(
+    classifier = classifier or LLMController(
         provider=provider,
         model_name=model_name,
         structured_output=RelevanceResult,
@@ -257,7 +271,7 @@ def run_relevance_screening(
         golden_dataset=golden_dataset,
         **kwargs
     )
-    return len(screened_results), failed_paper_ids, run_identifier
+    return screened_results, failed_paper_ids, run_identifier
 
 
 if __name__ == "__main__":
@@ -273,88 +287,21 @@ if __name__ == "__main__":
     # 2.5 Do relevance check on deduplicated dois
     # 3. Fetch full texts for relevant papers
 
-    #ncbi_provider = NCBIProvider(ncbi_api_key, batch_size=200)
+    #from peptide_extractor.scratchpad import papers_to_test
+
+    # Run relevance check on papers_to_test
+    #base_url = "https://infants-also-involvement-soundtrack.trycloudflare.com"
+    #base_url = "http://10.148.235.53:11435"
+    #relevance_model = LLMController(provider="ollama", model_name="gemma4:31b", structured_output=RelevanceResult, system_prompt=SYSTEM_PROMPT_V3, base_url=base_url)
     
-    """
-
-    pmid_list = [
-    #'18070345',
-#'25010703',
-#'22016623',
-#'25621167',
-#'22915849',
-#'23020140',
-#'23800286',
-#'24786493',
-#'30104564',
-#'30920525'
-]
-
-    pmid_list = ['35057029']
-
-
-    errored_pmids = []
-
-    # for testing purposes manually retrieve the paper content
-    
-    paper_ids = [paper_metadata.id for paper_metadata in get_records(PaperMetadata, pmid=pmid_list)]
-
-    for i,id in enumerate(paper_ids):
-        paper_content = get_records(PaperContent, paper_id=id)[0]
-
-        blob_url = paper_content.blob_url
-        raw_paper_content = download_xml(blob_url, decompress=False)
-        sample_body = get_body_from_jats_xml(raw_paper_content)
-
-        #positive_example = "NGIWY-amide (Asn-Gly-Ile-Trp-Tyr-NH 2 )"
-        #negative_example = "dissolved in Milli-Q water ata 2% final concentration"
-        #check_values_in_fulltext(negative_example, sample_body)
-        #search_fuzzy(negative_example, sample_body)
-        #exit(0)
-
-        print(sample_body)
-        
-        model_name = "gemini-3.5-flash-lite"
-        try:
-            peptide_entries = run_extraction(sample_body, model_name=model_name)
-            time.sleep(5)
-            actual_peptide_entries = [peptide_llm_entry_to_peptide_entry(peptide_llm_entry=entry, paper_id=id, pmid=pmid_list[i], model=model_name) for entry in peptide_entries]
-
-            # This is just a temporary check
-            evidence_span = actual_peptide_entries[0].evidence_span
-            for key, evidence in json.loads(evidence_span).items():
-                print(f"Checking {key}: ")
-                check_values_in_fulltext(evidence, sample_body)
-            
-            
-            with get_session_context() as session:
-                session.add_all(actual_peptide_entries)
-                session.commit()
-        except Exception as e:
-            errored_pmids.append(pmid_list[i])
-            print(e)        
-    
-    print("These PMIDs errored out:", errored_pmids)
+    #relevance_model = LLMController(provider="ollama", model_name="mistral-small3.2:latest", structured_output=RelevanceResult, system_prompt=SYSTEM_PROMPT_V3, base_url=base_url)
+    #
+    #success, failed, identifier = run_relevance_screening(id=papers_to_test, classifier=relevance_model)
+#
+    #print(f"Relevance check completed. Success: {len(success)}, Failed: {len(failed)}, Identifier: {identifier}")
     
     
-
-    """
-
-    # Run evaluation on already extracted peptides
-
-    # example: '18070345'
-
-    pmid = '35057029'
-
-    paper_id = get_records(PaperMetadata, pmid=pmid)[0].id
-    peptide_entries = get_records(PeptideEntry, paper_id=paper_id)
-
-    paper_content = get_records(PaperContent, paper_id=paper_id)[0]
-    blob_url = paper_content.blob_url
-    raw_paper_content = download_xml(blob_url, decompress=False)
-    sample_body = get_body_from_jats_xml(raw_paper_content)
-
-    evaluation = evaluate_extraction(peptide_entries[0], sample_body)
-    print(evaluation)
-
+    #with get_session_context() as session:
+    #    session.add_all(success)
+    #    session.commit()
     

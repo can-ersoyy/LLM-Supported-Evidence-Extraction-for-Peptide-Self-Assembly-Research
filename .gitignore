@@ -14,3 +14,5 @@ docs/todos.md
 docs/scratchpad.md
 
 data/*.db
+
+src/*/scratchpad.py

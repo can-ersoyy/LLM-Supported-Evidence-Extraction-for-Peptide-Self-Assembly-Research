@@ -65,7 +65,6 @@ def get_chat_model(
             base_url=base_url,
             model=target_model, 
             temperature=temperature,
-            num_ctx=32768, 
             **kwargs)
 
     elif provider_clean in ("open_router", "openrouter", "open-router"):
@@ -126,9 +125,14 @@ class LLMController:
             **kwargs,
         )
 
-        if self.structured_output:
+        if self.structured_output and provider != "ollama":
             try:
                 self.structured_llm = self.llm.with_structured_output(self.structured_output, method="json_mode")
+            except Exception:
+                self.structured_llm = self.llm.with_structured_output(self.structured_output)
+        elif self.structured_output and provider == "ollama":
+            try:
+                self.structured_llm = self.llm.with_structured_output(self.structured_output, method="json_schema")
             except Exception:
                 self.structured_llm = self.llm.with_structured_output(self.structured_output)
         else:

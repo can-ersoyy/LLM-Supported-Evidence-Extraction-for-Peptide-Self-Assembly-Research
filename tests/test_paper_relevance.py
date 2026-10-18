@@ -159,7 +159,7 @@ def test_run_relevance_screening_pipeline_function(monkeypatch):
     monkeypatch.setattr("peptide_extractor.pipeline.init_db", lambda: None)
 
     (succesful_screens, _, _) = run_relevance_screening(provider="google_genai", model_name="gemma-4-31b-it", batch_size=5)
-    assert succesful_screens == 2
+    assert len(succesful_screens) == 2
     mock_screen.assert_called_once()
 
 
