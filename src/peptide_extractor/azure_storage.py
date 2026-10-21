@@ -77,15 +77,11 @@ def parse_blob_url_or_name(
 
 def build_blob_name(
     identifier: str,
-    provider: str = "ncbi",
     format: str = "xml",
     compress: bool = True,
 ) -> str:
-    """Construct a structured blob path: {format}/{provider}/{filename}."""
+    """Construct a structured blob path: {format}/{filename}."""
     clean_id = identifier.strip().lstrip("/")
-    # If already prefixed with format/provider, preserve it
-    if clean_id.startswith(f"{format}/{provider}/"):
-        return clean_id
 
     ext = f".{format}"
     gz_ext = f".{format}.gz"
@@ -96,25 +92,23 @@ def build_blob_name(
     else:
         filename = f"{clean_id}{gz_ext}" if compress else f"{clean_id}{ext}"
 
-    return f"{format}/{provider}/{filename}"
+    return f"{format}/{filename}"
 
 
 def upload_file(
     content: Union[str, bytes],
     filename_or_id: str,
-    provider: str = "ncbi",
     format: str = "xml",
-    container_name: Optional[str] = None,
+    container_name: Optional[str] = DEFAULT_CONTAINER_NAME,
     client: Optional[BlobServiceClient] = None,
     compress: bool = True,
     content_type: Optional[str] = None,
 ) -> str:
-    """Upload content to Azure Blob Storage under {format}/{provider}/{filename}.
+    """Upload content to Azure Blob Storage under {format}/{filename}.
 
     Args:
         content: Text string or raw bytes to upload.
         filename_or_id: File name or entity ID (e.g. 'PMC12345').
-        provider: Source provider (e.g. 'ncbi', 'europepmc', 'crossref').
         format: Content format directory (e.g. 'xml', 'pdf').
         container_name: Target Azure container name (default: from env or 'paper-xmls').
         client: Optional existing BlobServiceClient.
@@ -125,7 +119,7 @@ def upload_file(
         The URL of the uploaded blob.
     """
     blob_client_service = client or get_blob_service_client()
-    target_container = container_name or DEFAULT_CONTAINER_NAME
+    target_container = container_name
 
     container_client = blob_client_service.get_container_client(target_container)
     try:
@@ -135,7 +129,6 @@ def upload_file(
 
     blob_name = build_blob_name(
         identifier=filename_or_id,
-        provider=provider,
         format=format,
         compress=compress,
     )
@@ -174,19 +167,17 @@ def upload_file(
 
 def upload_xml(
     xml_content: str,
-    pmcid: str,
-    provider: str = "ncbi",
+    doi: str,
     format: str = "xml",
-    container_name: Optional[str] = None,
+    container_name: Optional[str] = DEFAULT_CONTAINER_NAME,
     client: Optional[BlobServiceClient] = None,
     compress: bool = True,
 ) -> str:
-    """Compress and upload a paper XML to Azure Blob Storage under {format}/{provider}/{filename}.
+    """Compress and upload a paper XML to Azure Blob Storage under {format}/{filename}.
 
     Args:
         xml_content: Raw XML string content.
-        pmcid: PubMed Central ID or filename (e.g., 'PMC1234567').
-        provider: Provider name (e.g., 'ncbi', 'europepmc'). Default: 'ncbi'.
+        doi: DOI of the paper (e.g., '10.1186/1471-2164-15-123').
         format: Format category (default: 'xml').
         container_name: Target Azure container name (default: from env or 'paper-xmls').
         client: Optional existing BlobServiceClient.
@@ -197,8 +188,7 @@ def upload_xml(
     """
     return upload_file(
         content=xml_content,
-        filename_or_id=pmcid,
-        provider=provider,
+        filename_or_id=doi,
         format=format,
         container_name=container_name,
         client=client,
@@ -208,10 +198,9 @@ def upload_xml(
 
 def upload_pdf(
     pdf_content: bytes,
-    filename_or_id: str,
+    doi: str,
     format: str = "pdf",
-    provider: str = "unknown",
-    container_name: Optional[str] = None,
+    container_name: Optional[str] = DEFAULT_CONTAINER_NAME,
     client: Optional[BlobServiceClient] = None,
     compress: bool = False,
     content_type: str = "application/pdf",
@@ -224,8 +213,7 @@ def upload_pdf(
     
     return upload_file(
         content=pdf_content,
-        filename_or_id=filename_or_id,
-        provider=provider,
+        filename_or_id=doi,
         format=format,
         container_name=container_name,
         client=client,
@@ -236,7 +224,7 @@ def upload_pdf(
 
 def download_file(
     blob_url_or_name: str,
-    container_name: Optional[str] = None,
+    container_name: Optional[str] = DEFAULT_CONTAINER_NAME,
     client: Optional[BlobServiceClient] = None,
     use_cache: bool = True,
     cache_dir: Optional[Path] = None,
@@ -283,7 +271,7 @@ def download_file(
 
 def download_xml(
     blob_url_or_name: str,
-    container_name: Optional[str] = None,
+    container_name: Optional[str] = DEFAULT_CONTAINER_NAME,
     client: Optional[BlobServiceClient] = None,
     use_cache: bool = True,
     cache_dir: Optional[Path] = None,
@@ -311,7 +299,6 @@ def download_xml(
     if decompress:
         return gzip.decompress(raw_data).decode("utf-8")
     return raw_data.decode("utf-8")
-
 
 def delete_blob(
     blob_url_or_name: str,
@@ -362,80 +349,3 @@ def delete_blob(
             cached_file.unlink()
 
     return deleted
-
-
-# This is not going to be used (seems like it) since we don't have a raw_content column anymore
-def backfill_paper_contents_to_azure(
-    source_db: Optional[Union[str, Path]] = None,
-    target_db: Optional[Union[str, Path]] = None,
-    provider: str = "ncbi",
-    format: str = "xml",
-    container_name: Optional[str] = None,
-    client: Optional[BlobServiceClient] = None,
-    limit: Optional[int] = None,
-) -> int:
-    """Backfill existing uncompressed XMLs from a database into Azure Blob Storage.
-
-    Reads from source_db (default: data/papers_pre_azure.db) where raw_content was stored,
-    uploads to Azure under {format}/{provider}/, and updates blob_url in target_db (default: data/papers.db).
-    """
-    import sqlite3
-
-    data_dir = Path(__file__).resolve().parent.parent.parent / "data"
-    src = Path(source_db) if source_db else data_dir / "papers_pre_azure.db"
-    tgt = Path(target_db) if target_db else data_dir / "papers.db"
-
-    if not src.exists():
-        raise FileNotFoundError(f"Source database '{src}' does not exist.")
-    if not tgt.exists():
-        raise FileNotFoundError(f"Target database '{tgt}' does not exist.")
-
-    src_conn = sqlite3.connect(src)
-    src_cur = src_conn.cursor()
-
-    tgt_conn = sqlite3.connect(tgt)
-    tgt_cur = tgt_conn.cursor()
-
-    query = """
-        SELECT pc.id, pc.paper_id, pc.raw_content, pm.pmcid
-        FROM paper_content pc
-        LEFT JOIN paper_metadata pm ON pc.paper_id = pm.id
-        WHERE pc.raw_content IS NOT NULL AND trim(pc.raw_content) != ''
-    """
-    if limit:
-        query += f" LIMIT {limit}"
-
-    src_cur.execute(query)
-    rows = src_cur.fetchall()
-    total = len(rows)
-    print(f"Found {total} records to backfill to Azure...")
-
-    blob_service = client or get_blob_service_client()
-    count = 0
-
-    for content_id, paper_id, raw_content, pmcid in rows:
-        identifier = pmcid if (pmcid and pmcid.strip()) else f"paper_{paper_id}"
-        blob_url = upload_xml(
-            xml_content=raw_content,
-            pmcid=identifier,
-            provider=provider,
-            format=format,
-            container_name=container_name,
-            client=blob_service,
-        )
-        tgt_cur.execute(
-            "UPDATE paper_content SET blob_url = ? WHERE id = ?",
-            (blob_url, content_id),
-        )
-        count += 1
-        if count % 25 == 0 or count == total:
-            tgt_conn.commit()
-            print(f"Backfilled {count}/{total} records...")
-
-    tgt_conn.commit()
-    src_conn.close()
-    tgt_conn.close()
-    print(f"Backfill complete! Updated {count} records in '{tgt}'.")
-    return count
-
-

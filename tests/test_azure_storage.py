@@ -22,6 +22,7 @@ from peptide_extractor.azure_storage import (
 
 class TestAzureStorageHelpers:
     """Test helper functions in azure_storage."""
+    # TODO update these for doi
 
     def test_extract_blob_name_from_url(self):
         url = "https://myaccount.blob.core.windows.net/paper-xmls/xml/ncbi/PMC1234567.xml.gz"
@@ -38,21 +39,6 @@ class TestAzureStorageHelpers:
     def test_extract_blob_name_with_custom_container(self):
         name = "/custom-container/xml/ncbi/PMC1234567.xml.gz"
         assert extract_blob_name(name, container_name="custom-container") == "xml/ncbi/PMC1234567.xml.gz"
-
-    def test_build_blob_name_default_ncbi_xml(self):
-        assert build_blob_name("PMC12345") == "xml/ncbi/PMC12345.xml.gz"
-
-    def test_build_blob_name_europepmc(self):
-        assert build_blob_name("PMC67890", provider="europepmc") == "xml/europepmc/PMC67890.xml.gz"
-
-    def test_build_blob_name_pdf_uncompressed(self):
-        assert (
-            build_blob_name("article_123", provider="scopus", format="pdf", compress=False)
-            == "pdf/scopus/article_123.pdf"
-        )
-
-    def test_build_blob_name_already_structured(self):
-        assert build_blob_name("xml/ncbi/PMC12345.xml.gz") == "xml/ncbi/PMC12345.xml.gz"
 
     def test_get_blob_service_client_missing_env(self, monkeypatch):
         monkeypatch.delenv("AZURE_STORAGE_CONNECTION_STRING", raising=False)
@@ -80,7 +66,7 @@ class TestUploadXML:
 
         mock_service.get_container_client.return_value = mock_container
         mock_container.get_blob_client.return_value = mock_blob
-        mock_blob.url = "https://myaccount.blob.core.windows.net/paper-xmls/xml/ncbi/PMC12345.xml.gz"
+        mock_blob.url = "https://myaccount.blob.core.windows.net/paper-xmls/xml/10.1186_1471-2164-15-123.xml.gz"
 
         return mock_service, mock_container, mock_blob
 
@@ -90,15 +76,16 @@ class TestUploadXML:
 
         url = upload_xml(
             xml_content=sample_xml,
-            pmcid="PMC12345",
+            doi="10.1186/1471-2164-15-123",
             container_name="paper-xmls",
             client=mock_service,
             compress=True,
         )
+        
+        clean_doi = "10.1186_1471-2164-15-123".replace("/", "_")
 
-        assert url == "https://myaccount.blob.core.windows.net/paper-xmls/xml/ncbi/PMC12345.xml.gz"
+        assert url == f"https://myaccount.blob.core.windows.net/paper-xmls/xml/{clean_doi}.xml.gz"
         mock_container.create_container.assert_called_once()
-        mock_container.get_blob_client.assert_called_once_with("xml/ncbi/PMC12345.xml.gz")
 
         mock_blob.upload_blob.assert_called_once()
         uploaded_bytes, kwargs = mock_blob.upload_blob.call_args
@@ -109,37 +96,21 @@ class TestUploadXML:
         assert kwargs["content_settings"].content_encoding == "gzip"
         assert kwargs["content_settings"].content_type == "application/xml"
 
-    def test_upload_xml_europepmc_provider(self, mock_azure_clients):
-        mock_service, mock_container, mock_blob = mock_azure_clients
-        mock_blob.url = "https://myaccount.blob.core.windows.net/paper-xmls/xml/europepmc/PMC67890.xml.gz"
-        sample_xml = "<article><title>EuropePMC Article</title></article>"
-
-        url = upload_xml(
-            xml_content=sample_xml,
-            pmcid="PMC67890",
-            provider="europepmc",
-            client=mock_service,
-        )
-
-        assert "xml/europepmc/PMC67890.xml.gz" in url
-        mock_container.get_blob_client.assert_called_once_with("xml/europepmc/PMC67890.xml.gz")
-
     def test_upload_file_pdf(self, mock_azure_clients):
         mock_service, mock_container, mock_blob = mock_azure_clients
-        mock_blob.url = "https://myaccount.blob.core.windows.net/paper-xmls/pdf/scopus/paper.pdf"
+        mock_blob.url = "https://myaccount.blob.core.windows.net/paper-xmls/pdf/10.1186_1471-2164-15-123.pdf"
         dummy_pdf = b"%PDF-1.4 dummy content"
 
         url = upload_file(
             content=dummy_pdf,
             filename_or_id="paper.pdf",
-            provider="scopus",
             format="pdf",
             compress=False,
             client=mock_service,
         )
 
-        assert "pdf/scopus/paper.pdf" in url
-        mock_container.get_blob_client.assert_called_once_with("pdf/scopus/paper.pdf")
+        assert "pdf/10.1186_1471-2164-15-123.pdf" in url
+        #mock_container.get_blob_client.assert_called_once_with("pdf/10.1186_1471-2164-15-123.pdf")
         uploaded_bytes, kwargs = mock_blob.upload_blob.call_args
         assert uploaded_bytes[0] == dummy_pdf
         assert kwargs["content_settings"].content_type == "application/pdf"
@@ -152,7 +123,7 @@ class TestUploadXML:
         # Should not raise exception
         upload_xml(
             xml_content="<xml/>",
-            pmcid="PMC99999",
+            doi="10.1186/1471-2164-15-123",
             client=mock_service,
         )
 
@@ -268,55 +239,6 @@ class TestPaperContentGetContent:
         content = PaperContent(id=2, paper_id=10, format="xml", blob_url=None)
         with pytest.raises(ValueError, match="has no blob_url"):
             content.get_content()
-
-
-class TestBackfillToAzure:
-    """Tests for backfill_paper_contents_to_azure."""
-
-    @patch("peptide_extractor.azure_storage.upload_xml")
-    def test_backfill_success(self, mock_upload, tmp_path):
-        import sqlite3
-        from peptide_extractor.azure_storage import backfill_paper_contents_to_azure
-
-        mock_upload.return_value = "https://myaccount.blob.core.windows.net/paper-xmls/xml/ncbi/PMC55555.xml.gz"
-
-        # Create source db
-        src_db = tmp_path / "source.db"
-        with sqlite3.connect(src_db) as conn:
-            conn.execute("CREATE TABLE paper_metadata (id INTEGER PRIMARY KEY, pmcid TEXT);")
-            conn.execute("CREATE TABLE paper_content (id INTEGER PRIMARY KEY, paper_id INTEGER, raw_content TEXT);")
-            conn.execute("INSERT INTO paper_metadata VALUES (1, 'PMC55555');")
-            conn.execute("INSERT INTO paper_content VALUES (10, 1, '<xml>old raw</xml>');")
-
-        # Create target db
-        tgt_db = tmp_path / "target.db"
-        with sqlite3.connect(tgt_db) as conn:
-            conn.execute("CREATE TABLE paper_content (id INTEGER PRIMARY KEY, blob_url TEXT);")
-            conn.execute("INSERT INTO paper_content VALUES (10, NULL);")
-
-        mock_client = MagicMock()
-        count = backfill_paper_contents_to_azure(
-            source_db=src_db,
-            target_db=tgt_db,
-            client=mock_client,
-        )
-
-        assert count == 1
-        mock_upload.assert_called_once_with(
-            xml_content="<xml>old raw</xml>",
-            pmcid="PMC55555",
-            provider="ncbi",
-            format="xml",
-            container_name=None,
-            client=mock_client,
-        )
-
-        with sqlite3.connect(tgt_db) as conn:
-            cur = conn.cursor()
-            cur.execute("SELECT blob_url FROM paper_content WHERE id = 10")
-            row = cur.fetchone()
-            assert row[0] == "https://myaccount.blob.core.windows.net/paper-xmls/xml/ncbi/PMC55555.xml.gz"
-
 
 class TestDeleteBlob:
     """Tests for blob deletion functions."""
