@@ -1,33 +1,20 @@
-from peptide_extractor.schemas import RelevanceResult
-from peptide_extractor.relevance import SYSTEM_PROMPT_V3
-from peptide_extractor.llm import LLMController
-from peptide_extractor.parsers import to_debug_string
-from peptide_extractor.db import paper_content
-from peptide_extractor.evaluation import groundness_check_llm
-from peptide_extractor.parsers import get_node_by_id
-from peptide_extractor.evaluation import groundness_check
-from sqlalchemy.sql.functions import mode
-from sqlalchemy.engine import result
-from peptide_extractor.parsers import add_sentences
-from peptide_extractor.parsers import to_llm_string
-from peptide_extractor.parsers import parse_xml
 from peptide_extractor.evaluation import evaluate_extraction
-from peptide_extractor.db import PeptideEntry
-from peptide_extractor.evaluation import search_fuzzy
-import json
-from peptide_extractor.evaluation import check_values_in_fulltext
-from peptide_extractor.db.peptide_entry import peptide_llm_entry_to_peptide_entry
-from peptide_extractor.azure_storage import download_xml
-from peptide_extractor.db import PaperContent
+from peptide_extractor.db.peptide_entry import PeptideEntry
+from peptide_extractor.db import peptide_llm_entry_to_peptide_entry
 from peptide_extractor.extraction import run_extraction
-from peptide_extractor.utils import get_body_from_jats_xml
+from peptide_extractor.parsers import extraction_ready_string_from_xml
+from peptide_extractor.db.paper_content import get_paper_content_by_paper_id
+from peptide_extractor.db import PaperContent
+from peptide_extractor.utils import doi_to_filename
+from peptide_extractor import azure_storage
+from peptide_extractor.db import get_session
+from peptide_extractor.utils import normalize_database_dois
+from peptide_extractor.llm import LLMController
+from typing import Optional
 from peptide_extractor.relevance import screen_papers
-from peptide_extractor.db.paper_metadata import update_paper_pmcid
-from peptide_extractor.utils import get_pmcid_from_pmid
 from peptide_extractor.providers import NCBIProvider
 from sqlmodel import select
 from peptide_extractor.utils import normalize_doi
-from collections import defaultdict
 from peptide_extractor.db import get_records
 from peptide_extractor.db import DatasetSubset
 from peptide_extractor.db import PaperMetadata
@@ -35,55 +22,22 @@ from peptide_extractor.providers import OpenAlexProvider
 import time
 from peptide_extractor.providers import SemanticScholarProvider
 from peptide_extractor.db import get_paper_metadatas
-import csv
-from pathlib import Path
-from typing import List, Optional
-
 from dotenv import find_dotenv, load_dotenv
 from sqlmodel import Session
 from peptide_extractor.db import get_session_context, init_db
 import os
 
-GOLDEN_DATASET_CSV_PATH = (
-    Path(__file__).resolve().parent.parent.parent
-    / "data"
-    / "golden_dataset_final.csv"
-)
+import logging
+logging.basicConfig()
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+
 
 # maps peptide length to structure name or self-assembly keyword, includes open-access, english and non review article filters, only title and abstract
 NCBI_SEARCH_QUERY_V1 = """((tetrapeptide[tiab] OR pentapeptide[tiab] OR hexapeptide[tiab] OR heptapeptide[tiab] OR octapeptide[tiab] OR nonapeptide[tiab] OR decapeptide[tiab] OR undecapeptide[tiab] OR dodecapeptide[tiab] OR tridecapeptide[tiab] OR tetradecapeptide[tiab] OR pentadecapeptide[tiab] OR hexadecapeptide[tiab] OR heptadecapeptide[tiab] OR octadecapeptide[tiab] OR nonadecapeptide[tiab] OR eicosapeptide[tiab] OR icosapeptide[tiab]) AND (nanostructure[tiab] OR nanotube[tiab] OR nanofiber[tiab] OR nanofibre[tiab] OR nanorod[tiab] OR hydrogel[tiab] OR nanosphere[tiab] OR nanoparticle[tiab] OR "self-assembly"[tiab])) AND (english[la]) AND ("free full text"[filter]) NOT (review[pt])"""
-
 NCBI_SEARCH_QUERY_V2 = """peptide self-assembly"""
 
 SCOPUS_SEARCH_QUERY_V1 = """TITLE-ABS-KEY(tetrapeptide OR pentapeptide OR hexapeptide OR heptapeptide OR octapeptide OR nonapeptide OR decapeptide OR undecapeptide OR dodecapeptide OR tridecapeptide OR tetradecapeptide OR pentadecapeptide OR hexadecapeptide OR heptadecapeptide OR octadecapeptide OR nonadecapeptide OR eicosapeptide OR icosapeptide) AND TITLE-ABS-KEY(nanostructure OR nanotube OR nanofiber OR nanofibre OR nanorod OR hydrogel OR nanosphere OR nanoparticle OR "self-assembly") AND LANGUAGE(english) AND DOCTYPE(ar) AND OA(all)"""
-
-def get_golden_dataset_pmids(csv_path: Optional[Path | str] = None) -> List[str]:
-    """Parse golden_dataset_initial.csv and return unique PubMed IDs."""
-    path = Path(csv_path) if csv_path else GOLDEN_DATASET_CSV_PATH
-    pmids: List[str] = []
-
-    with open(path, mode="r", encoding="utf-8") as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            pmid = row.get("pmid", "").strip()
-            if pmid and pmid not in pmids:
-                pmids.append(pmid)
-
-    return pmids
-
-
-# Pre-parsed list of golden dataset PubMed IDs
-#golden_dataset_pmids: List[str] = get_golden_dataset_pmids()
-
-def retrieve_golden_dataset(ncbi_provider, golden_dataset_pmids: List[str]):
-    raw_records = ncbi_provider.search_by_ids(golden_dataset_pmids)
-    golden_dataset_metadatas = ncbi_provider.parse_raw_search_records(raw_records)
-    print(f"Retrieved {golden_dataset_metadatas}")
-
-    init_db()
-    with get_session_context() as session:
-        session.add_all(golden_dataset_metadatas)
-        session.commit()
 
 
 def retrive_ncbi_by_query(ncbi_provider, query=NCBI_SEARCH_QUERY_V1, save=True):
@@ -109,6 +63,38 @@ def retrieve_scopus_by_query(scopus_provider, query=SCOPUS_SEARCH_QUERY_V1, save
             session.commit()
     else:
         return scopus_metadatas
+
+
+def deduplicate_by_doi(session: Optional[Session] = None, normalize: bool = True, remove_empty: bool = True) -> int:
+    """Updated to remove papers with duplicate doi. Also support normalization and removal of papers with empty doi"""
+    def _deduplicate(s: Session):
+        scraped_papers = get_records(PaperMetadata, session=s)
+        seen_papers = []
+        deleted_count = 0
+        print(f"Found {len(scraped_papers)} scraped papers.")
+        for paper in scraped_papers:
+            if paper.doi is None:
+                if remove_empty:
+                    s.delete(paper)
+                    deleted_count += 1
+                continue
+            if paper.doi in seen_papers:
+                s.delete(paper)
+                deleted_count += 1
+            else:
+                seen_papers.append(paper.doi)
+        s.commit()
+        return deleted_count
+    
+    if session is not None:
+        if normalize:
+            normalize_database_dois(session)
+        return _deduplicate(session)
+    init_db()
+    with get_session_context() as s:
+        if normalize:
+            normalize_database_dois(s)
+        return _deduplicate(s)
 
 def find_abstracts_by_doi(open_alex_api_key):
     init_db()
@@ -163,72 +149,24 @@ def find_abstracts_by_doi(open_alex_api_key):
 
         print(f"Retrieved {len(abstract_found)} abstracts out of {len(non_abstract_metadas)}")
 
-def deduplicate_by_doi(session: Optional[Session] = None) -> int:
-    """Removes scraped PaperMetadata records with duplicate DOIs according to priority rules:
-    1. Has non-empty abstract over missing abstract
-    2. Has non-empty PMCID over missing PMCID
-    3. Provider 'ncbi' over other providers
-    4. Lower database ID over higher database ID (keeps the older record, deletes the higher ID)
-
-    Returns the number of deleted duplicate records.
-    """
-    def _deduplicate(s: Session) -> int:
-        metadatas = get_records(PaperMetadata, dataset_subset=DatasetSubset.SCRAPED, session=s)
+def remove_empty_abstract_title_papers(session: Optional[Session] = None) -> int:
+    def _remove(session: Session):
+        empty_abstract = get_paper_metadatas(abstract="", session=session)
+        empty_title = get_paper_metadatas(title="", session=session)
+        empty_papers = [paper for paper in empty_abstract + empty_title]
         
-        # Group records by DOI (normalized/lowercased, ignoring records with no DOI)
-        doi_groups = defaultdict(list)
-        for m in metadatas:
-            if m.doi and m.doi.strip():
-                doi_groups[m.doi.strip().lower()].append(m)
-
         deleted_count = 0
-        for doi, group in doi_groups.items():
-            if len(group) <= 1:
-                continue
-            # Priority scoring tuple: higher values are kept
-            # (has_abstract, has_pmcid, is_ncbi, -db_id)
-            def candidate_score(paper: PaperMetadata):
-                return (
-                    1 if bool(paper.abstract and paper.abstract.strip()) else 0,
-                    1 if bool(paper.pmcid and paper.pmcid.strip()) else 0,
-                    1 if paper.provider == "ncbi" else 0,
-                    -(paper.id or 0),  # Keep lower ID, delete higher ID
-                )
-            # Sort best candidate to the end
-            sorted_candidates = sorted(group, key=candidate_score)
-            winner = sorted_candidates[-1]
-            duplicates_to_delete = sorted_candidates[:-1]
-            for dup in duplicates_to_delete:
-                s.delete(dup)
-                deleted_count += 1
-        s.commit()
+        for paper in empty_papers:
+            session.delete(paper)
+            deleted_count += 1
+        session.commit()
         return deleted_count
-
+    
     if session is not None:
-        return _deduplicate(session)
-
+        return _remove(session)
     init_db()
     with get_session_context() as s:
-        return _deduplicate(s)
-
-def normalize_database_dois(session: Optional[Session] = None) -> int:
-    """Normalizes all existing DOIs in the database to lowercase, prefix-free format."""
-    def _normalize(s: Session) -> int:
-        papers = s.exec(select(PaperMetadata).where(PaperMetadata.doi.is_not(None))).all()
-        updated_count = 0
-        for paper in papers:
-            norm = normalize_doi(paper.doi)
-            if norm != paper.doi:
-                paper.doi = norm
-                s.add(paper)
-                updated_count += 1
-        s.commit()
-        return updated_count
-
-    if session is not None:
-        return _normalize(session)
-    with get_session_context() as s:
-        return _normalize(s)
+        return _remove(s)
 
 
 def run_relevance_screening(
@@ -273,6 +211,123 @@ def run_relevance_screening(
     )
     return screened_results, failed_paper_ids, run_identifier
 
+def fetch_paper_fulltexts(session: Optional[Session] = None, ncbi_provider: NCBIProvider = None, open_alex_provider: OpenAlexProvider = None, **kwargs):
+    """Retrieve fulltexts according to db query"""
+    def _fetch(session: Session):
+        papers_to_retrieve = get_paper_metadatas(**kwargs, session=session)
+        print(papers_to_retrieve)
+
+        success_count = 0
+        fail_count = 0
+
+        for paper in papers_to_retrieve:
+            paper_content: Optional[PaperContent] = None
+
+            # normally it is better to batch retrieve from pubmed but for now just singular fetch
+            try:
+                paper_contents, _, _ = ncbi_provider.fetch([paper])
+                paper_content = paper_contents[0]
+            except Exception as e:
+                print(f"Failed to retrieve fulltext for {paper.doi}: {e}")
+                print("Trying pdf retrieval")
+                try:
+                    paper_content = open_alex_provider.fetch(paper)
+                    
+                except Exception as e:
+                    print(f"Failed to retrieve fulltext for {paper.doi}: {e}")
+                    
+           
+            if paper_content is not None:
+                session.add(paper_content)
+                session.commit()
+                success_count += 1
+            else:
+                fail_count += 1
+    
+            time.sleep(1)
+        
+        print(f"Success: {success_count}, Fail: {fail_count}")
+        return success_count, fail_count
+        
+    if session is not None:
+        return _fetch(session)
+    init_db()
+    with get_session_context() as s:
+        return _fetch(s)
+
+def run_peptide_extraction(session: Optional[Session] = None, save: bool = True, provider: str = "google_genai", model_name: str = "gemma-4-31b-it", **kwargs):
+    """Run peptide extraction"""
+    def _run(session: Session):
+        
+        papers_to_extract = get_paper_metadatas(session, **kwargs)
+        failed_paper_ids = []
+
+        for paper in papers_to_extract:
+            try:
+                paper_content = get_paper_content_by_paper_id(paper.id, session)
+
+                if paper_content is None:
+                    print(f"Skipping paper {paper.id}: no content")
+                    continue
+                
+                paper_fulltext = paper_content.get_content()
+
+                if paper_content.format == "pdf":
+                    pass
+                elif paper_content.format == "xml":
+                    extraction_ready_string = extraction_ready_string_from_xml(paper_fulltext)
+                    entries = run_extraction(extraction_ready_string, provider, model_name).entries
+                    db_entries = [peptide_llm_entry_to_peptide_entry(entry, paper.id, paper.pmid, model=model_name) for entry in entries]
+                    if save:
+                        session.add_all(db_entries)
+                        session.commit()
+                time.sleep(5)
+            except Exception as e:
+                failed_paper_ids.append(paper.id)
+                print(f"Failed to extract peptides for paper {paper.id}: {e}")
+            
+
+        return failed_paper_ids
+
+    if session is not None:
+        return _run(session)
+    init_db()
+    with get_session_context() as s:
+        return _run(s)
+
+def run_evaluation(session: Optional[Session] = None, save: bool = True, **kwargs):
+    def _evaluate(session: Session):
+
+        extractions_to_evaluate = get_records(PeptideEntry, session=session, **kwargs)
+        failed_entries = []
+
+        for extraction in extractions_to_evaluate:
+            try:
+                paper_for_extraction = extraction.paper_id
+                paper_content = get_paper_content_by_paper_id(paper_for_extraction, session)
+
+                if paper_content is None:
+                    raise ValueError(f"No paper content found for peptide {extraction.id}")
+                
+                paper_fulltext = paper_content.get_content()
+
+                evaluation = evaluate_extraction(extraction, paper_fulltext)
+                evaluation.peptide_entry_id = extraction.id
+                if save:
+                    session.add(evaluation)
+                    session.commit()
+            except Exception as e:
+                print(f"Failed to evaluate extraction for peptide {extraction.id}: {e}")
+                failed_entries.append(extraction.id)
+            time.sleep(1)
+
+        return failed_entries
+
+    if session is not None:
+        return _evaluate(session)
+    init_db()
+    with get_session_context() as s:
+        return _evaluate(s)
 
 if __name__ == "__main__":
     find_dotenv("..")
@@ -282,26 +337,16 @@ if __name__ == "__main__":
     scopus_api_key = os.getenv("SCOPUS_API_KEY")
     open_alex_api_key = os.getenv("OPEN_ALEX_API_KEY")
 
-    # 1. Search in different providers
-    # 2. Complete abstracts and deduplicate by doi
-    # 2.5 Do relevance check on deduplicated dois
-    # 3. Fetch full texts for relevant papers
+    # 1. Search in different providers X
+    # 2. Deduplicate by doi / remove empty doi X
+    # 3. Complete abstracts X 
+    # 4. Remove papers with no abstract/title X
+    # 5. Do relevance check X
+    # 6. Fetch full texts for relevant papers X
+    # 7. Preprocess paper fulltext (xml / pdf -> structured format) X
+    # 8. (includes 7 inside) Run extraction on fulltexts (of relevant papers - in case we already have fulltexts)X
+    # 9. Run evaluation on extractions
 
-    #from peptide_extractor.scratchpad import papers_to_test
-
-    # Run relevance check on papers_to_test
-    #base_url = "https://infants-also-involvement-soundtrack.trycloudflare.com"
-    #base_url = "http://10.148.235.53:11435"
-    #relevance_model = LLMController(provider="ollama", model_name="gemma4:31b", structured_output=RelevanceResult, system_prompt=SYSTEM_PROMPT_V3, base_url=base_url)
-    
-    #relevance_model = LLMController(provider="ollama", model_name="mistral-small3.2:latest", structured_output=RelevanceResult, system_prompt=SYSTEM_PROMPT_V3, base_url=base_url)
-    #
-    #success, failed, identifier = run_relevance_screening(id=papers_to_test, classifier=relevance_model)
-#
-    #print(f"Relevance check completed. Success: {len(success)}, Failed: {len(failed)}, Identifier: {identifier}")
-    
-    
-    #with get_session_context() as session:
-    #    session.add_all(success)
-    #    session.commit()
-    
+    example_extractions = [148, 149]
+    failed_extractions = run_evaluation(id=example_extractions)
+    print(f"Failed extractions: {failed_extractions}")

@@ -38,7 +38,7 @@ class TestNCBIProviderXMLParsing:
         article_elem = root.findall(".//PubmedArticle")[0]
         xml_str = ET.tostring(article_elem, encoding="unicode")
 
-        parsed = ncbi_provider.parse_xml(xml_str)
+        parsed = ncbi_provider._parse_xml(xml_str)
         assert parsed["pmid"] == "31000001"
         assert parsed["doi"] == "10.1000/182"
         assert parsed["pmcid"] == "PMC70001"
@@ -50,7 +50,7 @@ class TestNCBIProviderXMLParsing:
         root = ET.fromstring(sample_pubmed_xml)
         article_elem = root.findall(".//PubmedArticle")[1]
 
-        parsed = ncbi_provider.parse_xml(article_elem)
+        parsed = ncbi_provider._parse_xml(article_elem)
         assert parsed["pmid"] == "31000002"
         assert parsed["doi"] == "10.1000/183"
         assert parsed["pmcid"] == "PMC70002"
@@ -61,7 +61,7 @@ class TestNCBIProviderXMLParsing:
         root = ET.fromstring(sample_pmc_xml)
         article_elem = root.find(".//article")
 
-        parsed = ncbi_provider.parse_xml(article_elem)
+        parsed = ncbi_provider._parse_xml(article_elem)
         assert parsed["pmid"] == "32000003"
         assert parsed["doi"] == "10.1000/184"
         assert parsed["pmcid"] == "PMC70003"
@@ -76,20 +76,20 @@ class TestNCBIProviderXMLParsing:
         </PubmedArticle>
         """
 
-        parsed_1 = ncbi_provider.parse_xml(xml_template.format(pmc_val="pmc-id: 12345;"))
+        parsed_1 = ncbi_provider._parse_xml(xml_template.format(pmc_val="pmc-id: 12345;"))
         assert parsed_1["pmcid"] == "PMC12345"
 
-        parsed_2 = ncbi_provider.parse_xml(xml_template.format(pmc_val="PMC99999"))
+        parsed_2 = ncbi_provider._parse_xml(xml_template.format(pmc_val="PMC99999"))
         assert parsed_2["pmcid"] == "PMC99999"
 
-        parsed_3 = ncbi_provider.parse_xml(xml_template.format(pmc_val="88888"))
+        parsed_3 = ncbi_provider._parse_xml(xml_template.format(pmc_val="88888"))
         assert parsed_3["pmcid"] == "PMC88888"
 
     def test_parse_xml_missing_fields(self, ncbi_provider, sample_minimal_article_xml):
         root = ET.fromstring(sample_minimal_article_xml)
         article_elem = root.findall(".//PubmedArticle")[0]
 
-        parsed = ncbi_provider.parse_xml(article_elem)
+        parsed = ncbi_provider._parse_xml(article_elem)
         assert parsed["pmid"] == "33000004"
         assert parsed["doi"] is None
         assert parsed["pmcid"] is None
@@ -110,7 +110,7 @@ class TestNCBIProviderXMLParsing:
           </MedlineCitation>
         </PubmedArticle>
         """
-        parsed = ncbi_provider.parse_xml(xml)
+        parsed = ncbi_provider._parse_xml(xml)
         assert parsed["title"] == "Effect of pH and temperature on assembly"
         assert parsed["abstract"] == "The alpha-helix structure with 14C marker."
 
@@ -466,11 +466,12 @@ class TestNCBIProviderFetch:
         mock_resp.raise_for_status = MagicMock()
         mock_get.return_value = mock_resp
 
-        mock_upload.return_value = "https://myaccount.blob.core.windows.net/paper-xmls/xml/ncbi/PMC70003.xml.gz"
+        mock_upload.return_value = "https://myaccount.blob.core.windows.net/paper-xmls/xml/10_1021_acs_nano_1c01792.xml.gz"
 
         paper = PaperMetadata(
             id=42,
             pmcid="PMC70003",
+            doi="10.1021/acsnano.1c01792",
             title="Designed self-assembling peptide hydrogels",
             is_open_access=True,
             status=PaperStatus.USABLE,
@@ -481,14 +482,13 @@ class TestNCBIProviderFetch:
 
         assert len(contents) == 1
         assert contents[0].paper_id == 42
-        assert contents[0].blob_url == "https://myaccount.blob.core.windows.net/paper-xmls/xml/ncbi/PMC70003.xml.gz"
+        assert contents[0].blob_url == "https://myaccount.blob.core.windows.net/paper-xmls/xml/10_1021_acs_nano_1c01792.xml.gz"
         assert contents[0].format == "xml"
         assert successful_ids == [42]
         assert failed_ids == []
 
         mock_upload.assert_called_once()
-        assert mock_upload.call_args.kwargs["pmcid"] == "PMC70003"
-        assert mock_upload.call_args.kwargs["provider"] == "ncbi"
+        assert mock_upload.call_args.kwargs["doi"] == "10_1021_acsnano_1c01792"
         assert mock_upload.call_args.kwargs["format"] == "xml"
 
     @patch("peptide_extractor.providers.requests.get")

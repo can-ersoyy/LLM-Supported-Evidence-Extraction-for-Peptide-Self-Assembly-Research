@@ -34,10 +34,9 @@ LOCATION GROUNDING RULES:
 5. If a property was NOT experimentally determined or mentioned in the text, leave both the property and its corresponding `evidence_span` field as null.
 """
 
-def run_extraction( paper_content: str, provider: str = "google_genai", model_name: str = "gemma-4-31b-it") -> PeptideExtractionResult:
-    #model = LLMController(provider=provider, model_name=model_name, structured_output=PeptideExtractionResult, system_prompt=EXTRACTION_SYSTEM_PROMPT)
-    model = LLMController(provider=provider, model_name=model_name, structured_output=PeptideExtractionResult, system_prompt=EXTRACTION_SYSTEM_PROMPT_V2)
-    #model = LLMController(provider=provider, model_name=model_name, structured_output=PeptideExtractionResult, system_prompt=EXTRACTION_SYSTEM_PROMPT_V3)
+def run_extraction(paper_content: str, provider: str = "google_genai", model_name: str = "gemma-4-31b-it") -> PeptideExtractionResult:
+   #model = LLMController(provider=provider, model_name=model_name, structured_output=PeptideExtractionResult, system_prompt=EXTRACTION_SYSTEM_PROMPT)
+   #model = LLMController(provider=provider, model_name=model_name, structured_output=PeptideExtractionResult, system_prompt=EXTRACTION_SYSTEM_PROMPT_V2)
+   model = LLMController(provider=provider, model_name=model_name, structured_output=PeptideExtractionResult, system_prompt=EXTRACTION_SYSTEM_PROMPT_V3)
 
-    res = model.extract_peptides(paper_content)
-    return res.entries
+   return model.extract_peptides(paper_content)

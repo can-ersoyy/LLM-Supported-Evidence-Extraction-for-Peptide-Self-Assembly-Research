@@ -1,3 +1,4 @@
+from peptide_extractor.utils import doi_to_filename
 from azure.storage.blob._shared import base_client
 from peptide_extractor.azure_storage import DEFAULT_CONTAINER_NAME
 from abc import ABC, abstractmethod
@@ -178,7 +179,7 @@ class NCBIProvider(BaseProvider):
     
         return results
 
-    def parse_xml(self, xml_content: str | ET.Element) -> dict:
+    def _parse_xml(self, xml_content: str | ET.Element) -> dict:
         """Parse an article XML element or XML string to extract metadata, abstract, and IDs."""
         if isinstance(xml_content, str):
             elem = ET.fromstring(xml_content)
@@ -238,7 +239,7 @@ class NCBIProvider(BaseProvider):
 
         for raw_record in raw_records:
             if "xml" in raw_record.raw_data:
-                parsed = self.parse_xml(raw_record.raw_data["xml"])
+                parsed = self._parse_xml(raw_record.raw_data["xml"])
                 doi = parsed.get("doi")
                 pmid = parsed.get("pmid")
                 pmcid = parsed.get("pmcid")
@@ -294,7 +295,6 @@ class NCBIProvider(BaseProvider):
         paper_contents: List[PaperContent] = []
 
         for i in range(0, num_records, batch_size):
-            print("batch done")
             batch_pmcids = pmcid_list[i : i + batch_size]
             valid_pmcids = [str(x).strip() for x in batch_pmcids if x and str(x).strip()]
             if not valid_pmcids:
@@ -325,11 +325,11 @@ class NCBIProvider(BaseProvider):
 
                     paper_metadata = next((p for p in paper_metadatas[i:i+batch_size] if p.pmcid == pmcid_text), None)
                     if paper_metadata:
+                        clean_doi = doi_to_filename(paper_metadata.doi)
                         xml_str = ET.tostring(article_elem, encoding="unicode")
                         blob_url = upload_xml(
                             xml_content=xml_str,
-                            pmcid=paper_metadata.pmcid or pmcid_text,
-                            provider="ncbi",
+                            doi=clean_doi,
                             format="xml",
                         )
                         paper_content = PaperContent(
@@ -512,11 +512,12 @@ class OpenAlexProvider():
             except Exception as e:
                 print(f"Failed to retrieve pdf {pdf_url}: {e}")
                 return None
+
+            clean_doi = doi_to_filename(paper_metadata.doi)
             
             blob_url = upload_pdf(
                 pdf_content=pdf_content,
-                filename_or_id=paper_metadata.pmid,
-                provider="openalex"
+                doi=clean_doi,
             )
             paper_content = PaperContent(
                 pdf_url=pdf_url,

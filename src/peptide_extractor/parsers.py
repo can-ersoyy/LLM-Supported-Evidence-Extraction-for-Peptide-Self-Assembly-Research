@@ -160,10 +160,10 @@ def to_debug_string(paper_tree: RootNode) -> str:
         
         # Leaf node: collapsed on one line
         if not node.children:
-            return [f"{indent}({type(node).__name__})"]
+            return [f"{indent}({type(node).__name__}, {node.id})"]
         
         # Parent node: open tag, render children, close tag
-        lines = [f"{indent}({type(node).__name__}"]
+        lines = [f"{indent}({type(node).__name__}, {node.id}"]
         for child in node.children:
             lines.extend(_render(child, depth + 1))
         lines.append(f"{indent})")
@@ -175,6 +175,7 @@ def to_debug_string(paper_tree: RootNode) -> str:
 
 def get_node_by_id(paper_tree: Node, id: str) -> Node:
     """Returns a node by its ID. Utility function for validation."""
+    id = id.replace('[', '').replace(']', '')
 
     if paper_tree.id == id:
         return paper_tree
@@ -183,3 +184,10 @@ def get_node_by_id(paper_tree: Node, id: str) -> Node:
         if node:
             return node
     return None
+
+def extraction_ready_string_from_xml(xml_text: str) -> str:
+    """Returns an extraction-ready string from an XML string."""
+
+    root_node = parse_xml(xml_text)
+    root_node = add_sentences(root_node)
+    return to_llm_string(root_node)

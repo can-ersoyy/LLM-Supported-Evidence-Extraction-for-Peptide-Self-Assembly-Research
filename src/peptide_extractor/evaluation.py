@@ -2,6 +2,10 @@
 This file will include evaluation methods for extraction entries
 Main idea with evaluation is to check if extracted information exists in fulltext
 """
+from peptide_extractor.parsers import to_debug_string
+from peptide_extractor.parsers import get_node_by_id
+from peptide_extractor.parsers import add_sentences
+from peptide_extractor.parsers import parse_xml
 from peptide_extractor.db.peptide_entry import PeptideConjugateMixture
 from pydantic import Field
 from typing import Optional
@@ -75,22 +79,23 @@ class GroundnessVerdict(BaseModel):
 
 # TODO: implement groundness/faithfulness checks for evidence span with locations
 def groundness_check_llm(field_value_quote_list: list, model: LLMController = None) -> GroundnessVerdict:
-    model = LLMController(provider="google-genai", model_name="gemini-3.5-flash-lite", system_prompt=GROUNDNESS_CHECK_SYSTEM_PROMPT, structured_output=GroundnessVerdict)
+    model = LLMController(provider="google-genai", model_name="gemini-3.5-flash-lite", system_prompt=GROUNDNESS_CHECK_SYSTEM_PROMPT, structured_output=GroundnessVerdict) if model is None else model
     return model.evaluate_groundness(field_value_quote_list)
     
 
-class FaithfulnessVerdict(BaseModel):
-    is_faithful: bool = Field(
-        description="True if the extracted field value is supported by the evidence quote, False otherwise."
-    )
-    reason: Optional[str] = Field(
-        default=None, 
-        description="Brief explanation of the decision."
-    )
-
-def faithfulness_check(field_value, field_evidence, model: LLMController) -> FaithfulnessVerdict:
-    """Check if the field value is faithful to the evidence span"""
-    return model.evaluate_faithfullness(field_value, field_evidence)
+#class FaithfulnessVerdict(BaseModel):
+#    is_faithful: bool = Field(
+#        description="True if the extracted field value is supported by the evidence quote, False otherwise."
+#    )
+#    reason: Optional[str] = Field(
+#        default=None, 
+#        description="Brief explanation of the decision."
+#    )
+#
+#def faithfulness_check(field_value, field_evidence, model: LLMController) -> FaithfulnessVerdict:
+#    """Check if the field value is faithful to the evidence span"""
+#    return model.evaluate_faithfullness(field_value, field_evidence)
+#
 
 def check_detection_methods_grounding(detection_method_str: str, fulltext: str) -> bool:
     """Split comma-separated methods and check if each technique is mentioned in full text."""
@@ -129,8 +134,9 @@ DEFAULT_STRUCTURAL_FIELDS = [
     "volume_ratio",
 ]
 
-def evaluate_extraction(extraction: PeptideEntry, fulltext: str):
-    model = LLMController(provider="google-genai", model_name="gemini-3.5-flash-lite", system_prompt=JUDGE_SYSTEM_PROMPT, structured_output=FaithfulnessVerdict)
+def evaluate_extraction(extraction: PeptideEntry, fulltext: str) -> ExtractionEvaluation:
+    #model = LLMController(provider="google-genai", model_name="gemini-3.5-flash-lite", system_prompt=JUDGE_SYSTEM_PROMPT, structured_output=FaithfulnessVerdict)
+    model = LLMController(provider="google-genai", model_name="gemini-3.5-flash-lite", system_prompt=GROUNDNESS_CHECK_SYSTEM_PROMPT, structured_output=GroundnessVerdict)
 
     evidence_span = json.loads(extraction.evidence_span) if extraction.evidence_span else {}
     if evidence_span == {}:
@@ -151,12 +157,37 @@ def evaluate_extraction(extraction: PeptideEntry, fulltext: str):
 
     grounded_fields = []
     
-    # 1. Check fields that use EvidenceSpan
+    ## 1. Check fields that use EvidenceSpan
+    #for field in extracted_evidence_fields:
+    #    quote = evidence_span.get(field)
+    #    if quote and quote.strip(): # if there is no evidence for an extracted field, it lowers the groundness
+    #        if groundness_check(quote.strip(), fulltext):
+    #            grounded_fields.append(field)
+
+    # 1. Check fields that use EvidenceSpan (via location)
+    field_value_quote_list = []
     for field in extracted_evidence_fields:
-        quote = evidence_span.get(field)
-        if quote and quote.strip(): # if there is no evidence for an extracted field, it lowers the groundness
-            if groundness_check(quote.strip(), fulltext):
-                grounded_fields.append(field)
+        location = evidence_span.get(field)
+        
+        ## this should be updated to simpler usage later on
+        root_node = parse_xml(fulltext)
+        with_sentences = add_sentences(root_node)
+        print(to_debug_string(with_sentences))
+        print(f"ID:{location}")
+        quote = get_node_by_id(with_sentences, location)
+        quote_text = quote.content if quote is not None else ""
+        print(quote_text)
+        ####
+
+        field_value_quote_list.append((field, getattr(extraction, field), quote_text))
+    
+    grounded_dict = groundness_check_llm(field_value_quote_list, model)
+    print(f"Grounded: {grounded_dict}")
+
+    for field, grounded in grounded_dict.field_verdict.items():
+        if grounded:
+            grounded_fields.append(field)
+    
 
     # 2. Check Verbatim Fields directly on their value
     for field in VERBATIM_FIELDS:
@@ -175,24 +206,24 @@ def evaluate_extraction(extraction: PeptideEntry, fulltext: str):
     total_checkable = len(extracted_evidence_fields)
     groundness_rate = (len(grounded_fields) / total_checkable) if total_checkable > 0 else 0.0
 
-    faithfulness_count = 0
-    for field in [f for f in grounded_fields if f in active_evidence_fields]:
-        verdict = faithfulness_check(
-            getattr(extraction, field), 
-            evidence_span[field], 
-            model
-        )
-        is_faithful = verdict.is_faithful
-        reason = verdict.reason
-        print(f"Field: {field}")
-        print(f"is_faithful: {is_faithful}")
-        print(f"Reason {reason}")
-        if bool(is_faithful):
-            faithfulness_count += 1
-    
-    print(f"Faithfullness_count {faithfulness_count}")
-    print(f"Grounded fields: {len(grounded_fields)}")
-    faithfulness_rate = (faithfulness_count / len(grounded_fields)) if grounded_fields else 0.0
+    #faithfulness_count = 0
+    #for field in [f for f in grounded_fields if f in active_evidence_fields]:
+    #    verdict = faithfulness_check(
+    #        getattr(extraction, field), 
+    #        evidence_span[field], 
+    #        model
+    #    )
+    #    is_faithful = verdict.is_faithful
+    #    reason = verdict.reason
+    #    print(f"Field: {field}")
+    #    print(f"is_faithful: {is_faithful}")
+    #    print(f"Reason {reason}")
+    #    if bool(is_faithful):
+    #        faithfulness_count += 1
+    #
+    #print(f"Faithfullness_count {faithfulness_count}")
+    #print(f"Grounded fields: {len(grounded_fields)}")
+    #faithfulness_rate = (faithfulness_count / len(grounded_fields)) if grounded_fields else 0.0
 
     total_possible_fields = 15 if is_pure_peptide else 16
     present_fields_count = sum(
@@ -203,6 +234,6 @@ def evaluate_extraction(extraction: PeptideEntry, fulltext: str):
 
     return ExtractionEvaluation(
         groundness_rate=f'{groundness_rate:.1%}',
-        faithfulness_rate=f'{faithfulness_rate:.1%}',
+        #faithfulness_rate=f'{faithfulness_rate:.1%}',
         completeness_rate=f'{completeness_rate:.1%}',
     )

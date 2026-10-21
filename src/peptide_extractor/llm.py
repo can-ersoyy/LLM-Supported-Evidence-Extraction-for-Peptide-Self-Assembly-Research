@@ -13,14 +13,6 @@ from peptide_extractor.db.paper_metadata import PaperMetadata
 
 load_dotenv(find_dotenv(usecwd=True))
 
-DEFAULT_MODELS: Dict[str, str] = {
-    "google": "gemma-4-31b-it",
-    "google_genai": "gemma-4-31b-it",
-    "ollama": "gemma2:27b",
-    "openrouter": "google/gemma-4-31b-it",
-    "open_router": "google/gemma-4-31b-it",
-}
-
 
 def get_chat_model(
     provider: str = "google_genai",
@@ -36,7 +28,7 @@ def get_chat_model(
     if provider_clean in ("google_genai", "google", "google-genai"):
         from langchain_google_genai import ChatGoogleGenerativeAI
 
-        target_model = model_name or DEFAULT_MODELS["google"]
+        target_model = model_name
         resolved_key = (
             api_key
             or os.getenv("GOOGLE_AI_KEY")
@@ -60,7 +52,7 @@ def get_chat_model(
         except ImportError:
             from langchain_community.chat_models import ChatOllama
 
-        target_model = model_name or DEFAULT_MODELS["ollama"]
+        target_model = model_name
         return ChatOllama(
             base_url=base_url,
             model=target_model, 
@@ -83,7 +75,7 @@ def get_chat_model(
         clean_key = resolved_key.strip()
         os.environ["OPENROUTER_API_KEY"] = clean_key
         return ChatOpenRouter(
-            model=model_name or DEFAULT_MODELS["openrouter"],
+            model=model_name,
             temperature=temperature,
             openrouter_api_key=clean_key,
             **kwargs,
@@ -113,7 +105,6 @@ class LLMController:
         self.model_name = model_name or (
             getattr(llm, "model_name", None)
             or getattr(llm, "model", None)
-            or DEFAULT_MODELS.get(provider.lower().strip(), "gemma-4-31b-it")
         )
 
         self.llm = llm or get_chat_model(

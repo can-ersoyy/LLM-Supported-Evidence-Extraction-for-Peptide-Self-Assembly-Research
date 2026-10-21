@@ -31,7 +31,13 @@ class PaperContent(SQLModel, table=True):
             raise ValueError(f"PaperContent {self.id} has no blob_url.")
         from peptide_extractor.azure_storage import download_xml
 
-        return download_xml(self.blob_url, use_cache=use_cache)
+        if self.format == "xml":
+            return download_xml(self.blob_url, use_cache=use_cache)
+        elif self.format == "pdf":
+            pass
+            #return download_pdf(self.blob_url, use_cache=use_cache)
+        else:
+            raise ValueError(f"Unsupported format: {self.format}")
 
 
 def get_paper_contents(
@@ -48,3 +54,10 @@ def get_paper_contents(
         offset=offset,
         **filters,
     )
+
+def get_paper_content_by_paper_id(
+    paper_id: int,
+    session: Optional[Session] = None,
+) -> Optional[PaperContent]:
+    """Retrieve a PaperContent record by paper ID."""
+    return get_records(PaperContent, paper_id=paper_id, session=session)[0]

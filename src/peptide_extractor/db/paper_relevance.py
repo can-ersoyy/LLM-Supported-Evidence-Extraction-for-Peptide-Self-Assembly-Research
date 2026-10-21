@@ -45,8 +45,8 @@ def save_paper_relevance(
     is_relevant: bool,
     confidence: float,
     run_identifier: int,
-    provider: str = "google_genai",
-    model_name: str = "gemma-4-31b-it",
+    provider: str,
+    model_name: str,
     session: Optional[Session] = None,
 ) -> PaperRelevance:
     """Save a PaperRelevance database record."""
@@ -57,8 +57,8 @@ def save_paper_relevance(
             explanation=explanation,
             is_relevant=is_relevant,
             confidence=confidence,
-            provider=provider if isinstance(provider, str) and provider.strip() else "google_genai",
-            model_name=model_name if isinstance(model_name, str) and model_name.strip() else "gemma-4-31b-it",
+            provider=provider,
+            model_name=model_name,
             run_identifier=run_identifier,
         )
         s.add(record)

@@ -1,11 +1,16 @@
+from __future__ import annotations
+
+from sqlmodel import select
+from sqlmodel import Session
 import html
 import re
 import time
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
-from typing import Optional
-
+from typing import Optional, TYPE_CHECKING
 import requests
+
+
 
 def normalize_doi(doi: Optional[str]) -> Optional[str]:
     """Clean and normalize a DOI string according to ISO 26324 standards.
@@ -19,6 +24,35 @@ def normalize_doi(doi: Optional[str]) -> Optional[str]:
     cleaned = doi.strip().lower()
     cleaned = re.sub(r"^(https?://(dx\.)?doi\.org/|doi:)", "", cleaned).strip()
     return cleaned if cleaned else None
+
+def doi_to_filename(doi: Optional[str]) -> Optional[str]:
+    """replaces / -> _ and . -> _ to make it a valid filename (for blob storage usage)"""
+    clean_doi = normalize_doi(doi) # first normalize just in case
+    if not clean_doi:
+        return None
+    clean_doi = clean_doi.replace("/", "_").replace(".", "_")
+    return clean_doi
+
+def normalize_database_dois(session: Optional[Session] = None) -> int:
+    """Normalizes all existing DOIs in the database to lowercase, prefix-free format."""
+    from peptide_extractor.db.database import get_session_context
+    from peptide_extractor.db.paper_metadata import PaperMetadata
+    def _normalize(s: Session) -> int:
+        papers = s.exec(select(PaperMetadata).where(PaperMetadata.doi.is_not(None))).all()
+        updated_count = 0
+        for paper in papers:
+            norm = normalize_doi(paper.doi)
+            if norm != paper.doi:
+                paper.doi = norm
+                s.add(paper)
+                updated_count += 1
+        s.commit()
+        return updated_count
+
+    if session is not None:
+        return _normalize(session)
+    with get_session_context() as s:
+        return _normalize(s)
 
 
 def get_utc_now():

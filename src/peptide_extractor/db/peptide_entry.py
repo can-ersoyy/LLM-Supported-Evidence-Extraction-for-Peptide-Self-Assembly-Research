@@ -104,58 +104,58 @@ solution_examples = ["acetic acid", "acetone", "acetonitrile", "acetyl acetone",
 class EvidenceSpan(BaseModel):
     sequence: Optional[str] = Field(
         default=None,
-        description="Exact verbatim quote from the text stating or showing the peptide sequence. Required if 'sequence' is extracted."
-        #description="Location [sec,p,s] of sequence"
+        #description="Exact verbatim quote from the text stating or showing the peptide sequence. Required if 'sequence' is extracted."
+        description="Location [sec,p,s] of sequence"
     )
     type: Optional[str] = Field(
         default=None,
-        description="Exact verbatim quote identifying the assembly morphology (e.g., 'nanofibers', 'hydrogel'). Required if 'type' is extracted."
-        #description="Location [sec,p,s] of assembly morphology"
+        #description="Exact verbatim quote identifying the assembly morphology (e.g., 'nanofibers', 'hydrogel'). Required if 'type' is extracted."
+        description="Location [sec,p,s] of assembly morphology"
     )
     n_terminal: Optional[str] = Field(
         default=None,
-        description="Exact verbatim quote mentioning the N-terminal cap or modification (e.g., 'Fmoc-protected', 'Ac-')."
-        #description="Location [sec,p,s] of N-terminal modification"
+        #description="Exact verbatim quote mentioning the N-terminal cap or modification (e.g., 'Fmoc-protected', 'Ac-')."
+        description="Location [sec,p,s] of N-terminal modification"
     )
     c_terminal: Optional[str] = Field(
         default=None,
-        description="Exact verbatim quote mentioning the C-terminal cap or modification (e.g., 'amidated', '-NH2')."
-        #description="Location [sec,p,s] of C-terminal modification"
+        #description="Exact verbatim quote mentioning the C-terminal cap or modification (e.g., 'amidated', '-NH2')."
+        description="Location [sec,p,s] of C-terminal modification"
     )
     temperature: Optional[str] = Field(
         default=None,
-        description="Exact verbatim quote containing the temperature (e.g., 'incubated at 37 °C', 'room temperature'). Required if 'temperature' is extracted."
-        #description="Location [sec,p,s] of temperature"
+        #description="Exact verbatim quote containing the temperature (e.g., 'incubated at 37 °C', 'room temperature'). Required if 'temperature' is extracted."
+        description="Location [sec,p,s] of temperature"
     )
     ph: Optional[str] = Field(
         default=None,
-        description="Exact verbatim quote specifying the pH (e.g., 'adjusted to pH 7.4 with HCl'). Required if 'ph' is extracted."
-        #description="Location [sec,p,s] of pH"
+        #description="Exact verbatim quote specifying the pH (e.g., 'adjusted to pH 7.4 with HCl'). Required if 'ph' is extracted."
+        description="Location [sec,p,s] of pH"
     )
     peptide_concentration: Optional[str] = Field(
         default=None,
-        description="Exact verbatim quote specifying the peptide concentration (e.g., 'dissolved at 5 mg/mL', '10 wt%'). Required if 'peptide_concentration' is extracted."
-        #description="Location [sec,p,s] of peptide concentration"
+        #description="Exact verbatim quote specifying the peptide concentration (e.g., 'dissolved at 5 mg/mL', '10 wt%'). Required if 'peptide_concentration' is extracted."
+        description="Location [sec,p,s] of peptide concentration"
     )
     solution: Optional[str] = Field(
         default=None,
-        description="Exact verbatim quote naming the primary solution or buffer (e.g., 'in 10 mM PBS buffer'). Required if 'solution' is extracted."
-        #description="Location [sec,p,s] of solution"
+        #description="Exact verbatim quote naming the primary solution or buffer (e.g., 'in 10 mM PBS buffer'). Required if 'solution' is extracted."
+        description="Location [sec,p,s] of solution"
     )
     solvent: Optional[str] = Field(
         default=None,
-        description="Exact verbatim quote naming the organic co-solvent (e.g., 'pre-dissolved in HFIP')."
-        #description="Location [sec,p,s] of solvent"
+        #description="Exact verbatim quote naming the organic co-solvent (e.g., 'pre-dissolved in HFIP')."
+        description="Location [sec,p,s] of solvent"
     )
     incubation_period: Optional[str] = Field(
         default=None,
-        description="Exact verbatim quote stating the incubation duration (e.g., 'incubated for 24 h at RT'). Required if 'incubation_period' is extracted."
-        #description="Location [sec,p,s] of incubation period"
+        #description="Exact verbatim quote stating the incubation duration (e.g., 'incubated for 24 h at RT'). Required if 'incubation_period' is extracted."
+        description="Location [sec,p,s] of incubation period"
     )
     conjugate_partner: Optional[str] = Field(
         default=None,
-        description="Exact verbatim quote naming the conjugate partner or additive."
-        #description="Location [sec,p,s] of conjugate partner"
+        #description="Exact verbatim quote naming the conjugate partner or additive."
+        description="Location [sec,p,s] of conjugate partner"
     )
 
     def to_string(self):
@@ -192,24 +192,24 @@ class PeptideLLMEntry(BaseModel):
     preparation_protocol: Optional[str] = Field(default=None, description="Verbatim text from source text describing how the peptide was prepared or manufactured or synthesized.")
 
     
-    evidence_span: Optional[EvidenceSpan] = Field(
-        description="""Verbatim text sequences (1 per field - at least 5 words) from the source text grounding each extracted property. 
-        Different fields can have the same evidence if they are includes together (so duplicates are not an issue for evidence).
-        Don't use "..." to truncate, just provide the shortest meaningful text sequence that represents (includes) that field.
-        The sentences will be used for a text search to check for existence, so make sure you are actually just copying exactly what is in the text (including any formatting from the original text format like xml, md etc.)
-        Example: \"The experiment was performed at room temperature (25 C)...\" -> EvidenceSpan for temperature: \"room temperature (25 C)\"""",
-    )
+    #evidence_span: Optional[EvidenceSpan] = Field(
+    #    description="""Verbatim text sequences (1 per field - at least 5 words) from the source text grounding each extracted property. 
+    #    Different fields can have the same evidence if they are includes together (so duplicates are not an issue for evidence).
+    #    Don't use "..." to truncate, just provide the shortest meaningful text sequence that represents (includes) that field.
+    #    The sentences will be used for a text search to check for existence, so make sure you are actually just copying exactly what is in the text (including any formatting from the original text format like xml, md etc.)
+    #    Example: \"The experiment was performed at room temperature (25 C)...\" -> EvidenceSpan for temperature: \"room temperature (25 C)\"""",
+    #)
 
-    #evidence_span: Optional[EvidenceSpan] = Field(default=None,
-    #description= """
-    #Location annotations from the source text grounding each extracted property.
-    #Different fields can have the same location.
-    #Don't give anything else like any text evidence! Just provide the location where this information is found.
-    #Locations are marked with []: [sec-1/p-2/s-1], [sec-5/p-3/sec-1/p-1/s-11]...
-    #There can max be 1 location provided per field.
-    #Example: 
-    #[sec-2/p-1/sec-1/p-0/s-3] Assembly happened at 25 C. -> "temperature" : "[sec-2/p-1/sec-1/p-0/s-3]"
-    #""")
+    evidence_span: Optional[EvidenceSpan] = Field(default=None,
+    description= """
+    Location annotations from the source text grounding each extracted property.
+    Different fields can have the same location.
+    Don't give anything else like any text evidence! Just provide the location where this information is found.
+    Locations are marked with []: [sec-1/p-2/s-1], [sec-5/p-3/sec-1/p-1/s-11]...
+    There can max be 1 location provided per field.
+    Example: 
+    [sec-2/p-1/sec-1/p-0/s-3] Assembly happened at 25 C. -> "temperature" : "[sec-2/p-1/sec-1/p-0/s-3]"
+    """)
         
     
     
