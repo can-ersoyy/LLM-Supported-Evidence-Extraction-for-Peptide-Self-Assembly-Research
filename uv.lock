@@ -20,6 +20,9 @@ resolution-markers = [
     "python_full_version < '3.11'",
 ]
 
+[manifest]
+overrides = [{ name = "spacy", specifier = ">=3.8.16" }]
+
 [[package]]
 name = "aiohappyeyeballs"
 version = "2.7.1"
@@ -1201,6 +1204,18 @@ sdist = { url = "https://files.pythonhosted.org/packages/fc/f8/98eea607f65de6527
 wheels = [
     { url = "https://files.pythonhosted.org/packages/12/b3/231ffd4ab1fc9d679809f356cebee130ac7daa00d6d6f3206dd4fd137e9e/distro-1.9.0-py3-none-any.whl", hash = "sha256:7bffd925d65168f85027d8da9af6bddab658135b840670a223589bc0c8ef02b2", size = 20277, upload-time = "2023-12-24T09:54:30.421Z" },
 ]
+
+[[package]]
+name = "en-core-sci-sm"
+version = "0.5.4"
+source = { url = "https://s3-us-west-2.amazonaws.com/ai2-s2-scispacy/releases/v0.5.4/en_core_sci_sm-0.5.4.tar.gz" }
+dependencies = [
+    { name = "spacy" },
+]
+sdist = { hash = "sha256:a54a114ee11dab7cf6db8cf69ef485145011537f45f3c16c71338c48fd6f070b" }
+
+[package.metadata]
+requires-dist = [{ name = "spacy", specifier = ">=3.7.4,<3.8.0" }]
 
 [[package]]
 name = "et-xmlfile"
@@ -3278,6 +3293,7 @@ dependencies = [
     { name = "bs4" },
     { name = "certifi" },
     { name = "charset-normalizer" },
+    { name = "en-core-sci-sm" },
     { name = "idna" },
     { name = "langchain-community" },
     { name = "langchain-core" },
@@ -3313,6 +3329,7 @@ requires-dist = [
     { name = "bs4", specifier = ">=0.0.2" },
     { name = "certifi", specifier = "==2026.7.22" },
     { name = "charset-normalizer", specifier = "==3.5.0" },
+    { name = "en-core-sci-sm", url = "https://s3-us-west-2.amazonaws.com/ai2-s2-scispacy/releases/v0.5.4/en_core_sci_sm-0.5.4.tar.gz" },
     { name = "idna", specifier = "==3.18" },
     { name = "langchain-community", specifier = ">=0.3.0" },
     { name = "langchain-core", specifier = ">=0.3.0" },

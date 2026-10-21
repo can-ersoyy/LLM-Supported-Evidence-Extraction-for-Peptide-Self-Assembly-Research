@@ -13,6 +13,7 @@ dependencies = [
     "bs4>=0.0.2",
     "certifi==2026.7.22",
     "charset-normalizer==3.5.0",
+    "en-core-sci-sm",
     "idna==3.18",
     "langchain-community>=0.3.0",
     "langchain-core>=0.3.0",
@@ -45,3 +46,11 @@ dev = [
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
+
+[tool.uv]
+override-dependencies = [
+    "spacy>=3.8.16"
+]
+
+[tool.uv.sources]
+en-core-sci-sm = { url = "https://s3-us-west-2.amazonaws.com/ai2-s2-scispacy/releases/v0.5.4/en_core_sci_sm-0.5.4.tar.gz" }
