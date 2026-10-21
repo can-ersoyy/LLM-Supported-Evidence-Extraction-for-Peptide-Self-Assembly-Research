@@ -256,7 +256,7 @@ def peptide_llm_entry_to_peptide_entry(peptide_llm_entry: PeptideLLMEntry, paper
         peptide_conjugate_mixture=peptide_llm_entry.peptide_conjugate_mixture,
         conjugate_partner=peptide_conjugate_check(peptide_llm_entry),
         linear_cyclic=peptide_llm_entry.linear_cyclic,
-        detection_method=",".join(peptide_llm_entry.detection_method),
+        detection_method=",".join(peptide_llm_entry.detection_method) if peptide_llm_entry.detection_method else None,
         preparation_protocol=peptide_llm_entry.preparation_protocol,
         evidence_span=peptide_llm_entry.evidence_span.to_string() if peptide_llm_entry.evidence_span is not None else None,
         extraction_mode=ExtractionMode.LLM,

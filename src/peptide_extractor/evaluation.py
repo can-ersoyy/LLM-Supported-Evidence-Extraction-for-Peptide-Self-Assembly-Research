@@ -165,18 +165,19 @@ def evaluate_extraction(extraction: PeptideEntry, fulltext: str) -> ExtractionEv
     #            grounded_fields.append(field)
 
     # 1. Check fields that use EvidenceSpan (via location)
+
+    root_node = parse_xml(fulltext)
+    with_sentences = add_sentences(root_node)
     field_value_quote_list = []
     for field in extracted_evidence_fields:
         location = evidence_span.get(field)
         
         ## this should be updated to simpler usage later on
-        root_node = parse_xml(fulltext)
-        with_sentences = add_sentences(root_node)
-        print(to_debug_string(with_sentences))
-        print(f"ID:{location}")
+        #print(to_debug_string(with_sentences))
+        #print(f"ID:{location}")
         quote = get_node_by_id(with_sentences, location)
         quote_text = quote.content if quote is not None else ""
-        print(quote_text)
+        #print(quote_text)
         ####
 
         field_value_quote_list.append((field, getattr(extraction, field), quote_text))
