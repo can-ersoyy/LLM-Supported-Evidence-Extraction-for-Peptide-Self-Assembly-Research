@@ -1,3 +1,6 @@
+from peptide_extractor.schemas import RelevanceResult
+from typing import List
+from langchain_core.language_models import BaseChatModel
 from peptide_extractor.evaluation import evaluate_extraction
 from peptide_extractor.db.peptide_entry import PeptideEntry
 from peptide_extractor.db import peptide_llm_entry_to_peptide_entry
@@ -170,43 +173,30 @@ def remove_empty_abstract_title_papers(session: Optional[Session] = None) -> int
 
 
 def run_relevance_screening(
-    provider: str = "google_genai",
-    model_name: Optional[str] = None,
-    classifier: LLMController = None,
+    model_name: str,
+    provider: str,
     batch_size: Optional[int] = None,
-    api_key: Optional[str] = None,
     delay_seconds: float = 2.0,
-    golden_dataset: bool = False,
     **kwargs
-) -> int:
+) -> tuple[List[tuple[PaperMetadata, RelevanceResult]], List[int], int]:
     """Run abstract relevance screening on paper metadata records in the database.
 
     Evaluates papers using the relevance classifier, persisting PaperRelevance records
     and updating paper status to USABLE or DISCARD.
-     If batch_size is None, processes ALL eligible papers in the database.
 
-    Returns the total number of paper records screened, failed_paper_ids and run_identifier
+    Returns the succesful paper/relevance pairs, failed_paper_ids and a run_identifier
     """
-    from peptide_extractor.llm import LLMController
-    from peptide_extractor.relevance import (
-        SYSTEM_PROMPT_GOLDEN_BENCHMARK,
-        RelevanceResult,
-        screen_papers,
-    )
+    from peptide_extractor.relevance import screen_papers
+
+    run_identifier = int(time.time())
 
     init_db()
-    classifier = classifier or LLMController(
-        provider=provider,
+    screened_results, failed_paper_ids = screen_papers(
         model_name=model_name,
-        structured_output=RelevanceResult,
-        system_prompt=SYSTEM_PROMPT_GOLDEN_BENCHMARK,
-        api_key=api_key,
-    )
-    screened_results, failed_paper_ids, run_identifier = screen_papers(
+        provider=provider,
         batch_size=batch_size,
-        classifier=classifier,
         delay_seconds=delay_seconds,
-        golden_dataset=golden_dataset,
+        run_identifier=run_identifier,
         **kwargs
     )
     return screened_results, failed_paper_ids, run_identifier
@@ -347,6 +337,7 @@ if __name__ == "__main__":
     # 8. (includes 7 inside) Run extraction on fulltexts (of relevant papers - in case we already have fulltexts)X
     # 9. Run evaluation on extractions
 
-    example_extractions = [148, 149]
-    failed_extractions = run_evaluation(id=example_extractions)
-    print(f"Failed extractions: {failed_extractions}")
+    example_paper_ids = [590, 606]
+    success, fails, identifier = run_relevance_screening("gemma-4-31b-it", "google", delay_seconds=1, id=example_paper_ids)
+
+    print(f"Success: {success}, Fails: {fails}, Identifier: {identifier}")

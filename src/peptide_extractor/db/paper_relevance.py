@@ -15,10 +15,10 @@ class PaperRelevance(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     paper_id: Optional[int] = Field(default=None, foreign_key="paper_metadata.id", index=True)
 
-    detected_clues: str = Field(sa_column=Column(Text, nullable=False), description="JSON-encoded array or text list of detected clues")
-    explanation: str = Field(sa_column=Column(Text, nullable=False), description="Justification focusing on experimental conditions")
-    is_relevant: bool = Field(index=True, description="True if experimental self-assembly data is reported or hinted at")
-    confidence: float = Field(description="Confidence score between 0.0 and 1.0")
+    detected_clues: Optional[str] = Field(sa_column=Column(Text, nullable=True), description="list of detected clues")
+    explanation: Optional[str] = Field(sa_column=Column(Text, nullable=True), description="Justification focusing on experimental conditions")
+    is_relevant: Optional[bool] = Field(index=True, description="True if experimental self-assembly data is reported or hinted at")
+    confidence: Optional[float] = Field(description="Confidence score between 0.0 and 1.0")
 
     provider: str = Field(index=True, description="LLM provider name: 'google_genai', 'ollama', etc.")
     model_name: str = Field(index=True, description="LLM model name: e.g. 'gemma-4-31b-it', 'gemini-3.5-flash'")
@@ -40,11 +40,11 @@ class PaperRelevance(SQLModel, table=True):
 
 def save_paper_relevance(
     paper_id: int,
-    detected_clues: str,
-    explanation: str,
-    is_relevant: bool,
-    confidence: float,
-    run_identifier: int,
+    detected_clues: Optional[List[str]],
+    explanation: Optional[str],
+    is_relevant: Optional[bool],
+    confidence: Optional[float],
+    run_identifier: Optional[int],
     provider: str,
     model_name: str,
     session: Optional[Session] = None,

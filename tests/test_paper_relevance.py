@@ -132,7 +132,13 @@ def test_screen_papers_workflow(mock_llm):
             structured_output=RelevanceResult,
             system_prompt=SYSTEM_PROMPT_GOLDEN_BENCHMARK,
         )
-        (succesful_screens, _, _) = screen_papers(batch_size=10, classifier=controller, session=session, delay_seconds=0)
+
+        succesful_screens, _ = screen_papers(
+            classifier=controller,
+            batch_size=10,
+            session=session,
+            delay_seconds=0
+        )
 
         assert len(succesful_screens) == 2
 
@@ -151,7 +157,7 @@ def test_get_chat_model_invalid_provider():
 def test_run_relevance_screening_pipeline_function(monkeypatch):
     from peptide_extractor.pipeline import run_relevance_screening
 
-    mock_screen = MagicMock(return_value=([("paper1", "res1"), ("paper2", "res2")], [], 1234567890))
+    mock_screen = MagicMock(return_value=([("paper1", "res1"), ("paper2", "res2")], []))
     mock_controller_cls = MagicMock()
 
     monkeypatch.setattr("peptide_extractor.relevance.screen_papers", mock_screen)
@@ -160,6 +166,22 @@ def test_run_relevance_screening_pipeline_function(monkeypatch):
 
     (succesful_screens, _, _) = run_relevance_screening(provider="google_genai", model_name="gemma-4-31b-it", batch_size=5)
     assert len(succesful_screens) == 2
+    mock_screen.assert_called_once()
+
+def test_run_relevance_screening_pipeline_function_2(monkeypatch):
+    from peptide_extractor.pipeline import run_relevance_screening
+    
+    # testing failure modes as well
+    mock_screen = MagicMock(return_value=([1], [2, 3]))
+
+    monkeypatch.setattr("peptide_extractor.relevance.screen_papers", mock_screen)
+    monkeypatch.setattr("peptide_extractor.pipeline.init_db", lambda: None)
+
+    (succesful_screens, failed_screens, run_identifier) = run_relevance_screening(provider="google_genai", model_name="gemma-4-31b-it", batch_size=5)
+    assert len(succesful_screens) == 1
+    assert len(failed_screens) == 2
+    assert run_identifier is not None
+
     mock_screen.assert_called_once()
 
 
@@ -202,7 +224,13 @@ def test_screen_papers_skips_failed_api_call(mock_llm):
             structured_output=RelevanceResult,
             system_prompt=SYSTEM_PROMPT_GOLDEN_BENCHMARK,
         )
-        (succesful_screens, _, _) = screen_papers(batch_size=10, classifier=controller, session=session, delay_seconds=0)
+
+        succesful_screens, _ = screen_papers(
+            classifier=controller,
+            batch_size=10,
+            session=session,
+            delay_seconds=0
+        )
 
         # Only paper2 should be in results
         assert len(succesful_screens) == 1
@@ -265,14 +293,19 @@ def test_screen_papers(mock_llm):
         )
 
         # By default screen all papers
-        (succesful_screens, _, _) = screen_papers(
-            classifier=controller, session=session, delay_seconds=0
+        succesful_screens, _ = screen_papers(
+            classifier=controller,
+            session=session,
+            delay_seconds=0
         )
         assert len(succesful_screens) == 4
         assert succesful_screens[0][0].id == paper1.id
 
-        (screened_golden_dataset, _, _) = screen_papers(
-            classifier=controller, session=session, delay_seconds=0, golden_dataset=True
+        screened_golden_dataset, _ = screen_papers(
+            classifier=controller,
+            session=session,
+            delay_seconds=0,
+            dataset_subset=DatasetSubset.GOLDEN_BENCHMARK
         )
         assert len(screened_golden_dataset) == 1
         assert screened_golden_dataset[0][0].id == paper4.id

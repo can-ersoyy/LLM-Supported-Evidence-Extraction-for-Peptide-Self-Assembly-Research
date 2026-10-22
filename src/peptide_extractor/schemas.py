@@ -1,3 +1,4 @@
+from typing import Optional
 from pydantic import BaseModel, Field
 from typing_extensions import List
 from typing import Any
@@ -9,17 +10,17 @@ class RawProviderRecord(BaseModel):
     raw_data: dict[str, Any] = Field(default_factory=dict, description="Complete unmodified JSON payload from provider, this will be used later for processing...")
 
 class RelevanceResult(BaseModel):
-    detected_clues: List[str] = Field(
+    detected_clues: Optional[List[str]] = Field(
         default_factory=list,
         description="Specific experimental techniques, peptide identities, or conditions mentioned in the abstract.",
     )
-    explanation: str = Field(
+    explanation: Optional[str] = Field(
         description="Justification focusing on experimental conditions mentioned or hinted upon.",
     )
-    is_relevant: bool = Field(
+    is_relevant: Optional[bool] = Field(
         description="True if experimental data is potentially reported or hinted at in the fulltext.",
     )
-    confidence: float = Field(
+    confidence: Optional[float] = Field(
         ge=0.0,
         le=1.0,
         description="Confidence score between 0.0 and 1.0.",

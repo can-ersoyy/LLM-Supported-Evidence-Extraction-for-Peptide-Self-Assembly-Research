@@ -90,7 +90,7 @@ class LLMController:
     def __init__(
         self,
         provider: str = "google_genai",
-        model_name: Optional[str] = None,
+        model_name: str = "gemini-3.5-flash-lite",
         structured_output: Optional[Type[BaseModel]] = None,
         system_prompt: Optional[str] = None,
         llm: Optional[BaseChatModel] = None,

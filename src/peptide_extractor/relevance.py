@@ -1,3 +1,4 @@
+from peptide_extractor.llm import LLMController
 from peptide_extractor.schemas import RelevanceResult
 from peptide_extractor.db import DatasetSubset
 import logging
@@ -94,113 +95,69 @@ Title: {title}
 Abstract: {abstract}
 """
 
-
-
-
-
-from peptide_extractor.llm import LLMController, get_chat_model
-
-
-def evaluate_paper_relevance(
-    paper: PaperMetadata,
-    classifier: Optional[LLMController] = None,
-    session: Optional[Session] = None,
-    update_status: bool = True,
-    run_identifier: int = 0,
-) -> tuple[PaperRelevance, RelevanceResult]:
-    """Evaluate relevance for a single PaperMetadata record.
-
-    Runs LLM classification, inserts a new PaperRelevance record into the database
-    (supporting multiple evaluation runs per paper metadata object), and optionally
-    updates paper.status to USABLE or DISCARD.
-    """
-    if classifier is None:
-        classifier = LLMController(
-            structured_output=RelevanceResult,
-            system_prompt=SYSTEM_PROMPT_GOLDEN_BENCHMARK,
-        )
-
-    if paper.id is None:
-        raise ValueError("PaperMetadata object must have a non-None primary key id.")
-
-    rel_result: RelevanceResult = classifier.classify_paper(paper)
-
-    import json
-    clues_str = json.dumps(rel_result.detected_clues) if isinstance(rel_result.detected_clues, list) else str(rel_result.detected_clues)
-    raw_provider = getattr(classifier, "provider", None)
-    provider_name = raw_provider if isinstance(raw_provider, str) and raw_provider.strip() else "google_genai"
-    raw_model = getattr(classifier, "model_name", None)
-    model_name_val = raw_model if isinstance(raw_model, str) and raw_model.strip() else "gemma-4-31b-it"
-
-    relevance_record = save_paper_relevance(
-        paper_id=paper.id,
-        detected_clues=clues_str,
-        explanation=rel_result.explanation,
-        is_relevant=rel_result.is_relevant,
-        confidence=rel_result.confidence,
-        provider=provider_name,
-        model_name=model_name_val,
-        run_identifier=run_identifier,
-        session=session,
-    )
-
-    if update_status:
-        new_status = PaperStatus.USABLE if rel_result.is_relevant else PaperStatus.DISCARD
-        update_paper_status(paper.id, new_status, session=session)
-
-    return relevance_record, rel_result
-
-
 def screen_papers(
     batch_size: Optional[int] = None,
     classifier: Optional[LLMController] = None,
+    model_name: str = "gemini-3.5-flash-lite",
+    provider: str = "google",
     session: Optional[Session] = None,
     delay_seconds: float = 2.0,
-    golden_dataset: bool = False,
+    run_identifier: int = 0,
+    update_status: bool = True,
     **kwargs: Any,
-) -> tuple[List[tuple[PaperMetadata, RelevanceResult]], List[int], int]:
-    """Screen papers given conditions for relevance.
-    """
+) -> tuple[List[tuple[PaperMetadata, RelevanceResult]], List[int]]:
+    """Screen papers given conditions for relevance."""
+
     if classifier is None:
         classifier = LLMController(
+            model_name=model_name,
+            provider=provider,
             structured_output=RelevanceResult,
-            system_prompt=SYSTEM_PROMPT_GOLDEN_BENCHMARK,
+            system_prompt=SYSTEM_PROMPT_V3,
         )
 
-
-
-    if golden_dataset:
-        papers_to_screen = get_paper_metadatas(limit=batch_size, session=session, dataset_subset=DatasetSubset.GOLDEN_BENCHMARK)
-    else:
-        papers_to_screen = get_paper_metadatas(limit=batch_size, session=session, **kwargs)
+    papers_to_screen = get_paper_metadatas(limit=batch_size, session=session, **kwargs)
 
     results: List[tuple[PaperMetadata, RelevanceResult]] = []
     failed_paper_ids = []
-    run_identifier = int(time.time())
-
+    
     for paper in papers_to_screen:
-        if paper.id is None:
-            continue
         paper_id = paper.id
         try:
-            relevance_rec, rel_result = evaluate_paper_relevance(
-                paper=paper,
-                classifier=classifier,
-                session=session,
-                update_status=True,
+            relevance_result: RelevanceResult = classifier.classify_paper(paper.title, paper.abstract)
+
+            import json
+            clues_str = json.dumps(relevance_result.detected_clues)
+
+            save_paper_relevance(
+                paper_id=paper_id,
+                detected_clues=clues_str,
+                explanation=relevance_result.explanation,
+                is_relevant=relevance_result.is_relevant,
+                confidence=relevance_result.confidence,
+                provider=provider,
+                model_name=model_name,
                 run_identifier=run_identifier,
+                session=session,
             )
-            results.append((paper, rel_result))
+
+            if update_status:
+                new_status = PaperStatus.USABLE if relevance_result.is_relevant else PaperStatus.DISCARD
+                update_paper_status(paper_id, new_status, session=session)
+
+            results.append((paper, relevance_result))
             print(f"Paper {paper_id} processed")
             logger.info(f"Paper with id {paper_id} is processed")
+
         except Exception as e:
             if session is not None:
                 session.rollback()
             failed_paper_ids.append(paper_id)
-            print(f"Skipping paper ID {paper_id} due to API evaluation error: {e}")
+
+            print(f"Skipping paper ID {paper_id} due to error: {e}")
+            
             continue
         finally:
-            if delay_seconds > 0:
-                time.sleep(delay_seconds)
+            time.sleep(delay_seconds)
 
-    return results, failed_paper_ids, run_identifier
+    return results, failed_paper_ids
