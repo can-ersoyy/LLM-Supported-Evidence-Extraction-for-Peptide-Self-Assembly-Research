@@ -1,3 +1,4 @@
+from peptide_extractor.scratchpad import papers_to_extract
 from peptide_extractor.schemas import RelevanceResult
 from typing import List
 from langchain_core.language_models import BaseChatModel
@@ -201,6 +202,35 @@ def run_relevance_screening(
     )
     return screened_results, failed_paper_ids, run_identifier
 
+def run_bulk_relevance_screening(
+    model_name: str,
+    provider: str,
+    batch_size: Optional[int] = 10,
+    delay_seconds: float = 2.0,
+    **kwargs
+):
+    """Run abstract relevance screening on paper metadata records in the database in bulk.
+
+    Evaluates papers using the relevance classifier, persisting PaperRelevance records
+    and updating paper status to USABLE or DISCARD.
+
+    Returns the succesful paper/relevance pairs, failed_paper_ids and a run_identifier
+    """
+    from peptide_extractor.relevance import bulk_screen_papers
+
+    run_identifier = int(time.time())
+
+    init_db()
+    screened_results, failed_paper_ids = bulk_screen_papers(
+        model_name=model_name,
+        provider=provider,
+        batch_size=batch_size,
+        delay_seconds=delay_seconds,
+        run_identifier=run_identifier,
+        **kwargs
+    )
+    return screened_results, failed_paper_ids, run_identifier
+
 def fetch_paper_fulltexts(session: Optional[Session] = None, ncbi_provider: NCBIProvider = None, open_alex_provider: OpenAlexProvider = None, **kwargs):
     """Retrieve fulltexts according to db query"""
     def _fetch(session: Session):
@@ -240,17 +270,18 @@ def fetch_paper_fulltexts(session: Optional[Session] = None, ncbi_provider: NCBI
         return success_count, fail_count
         
     if session is not None:
-        return _fetch(session)
+        return _fetch(s)
     init_db()
     with get_session_context() as s:
         return _fetch(s)
 
-def run_peptide_extraction(session: Optional[Session] = None, save: bool = True, provider: str = "google_genai", model_name: str = "gemma-4-31b-it", **kwargs):
+def run_peptide_extraction(session: Optional[Session] = None, save: bool = True, provider: str = "google_genai", model_name: str = "gemma-4-31b-it", delay_seconds: float = 2.0, **kwargs) -> List[int]:
     """Run peptide extraction"""
     def _run(session: Session):
         
         papers_to_extract = get_paper_metadatas(session, **kwargs)
         failed_paper_ids = []
+        run_identifier = int(time.time())
 
         for paper in papers_to_extract:
             try:
@@ -266,18 +297,19 @@ def run_peptide_extraction(session: Optional[Session] = None, save: bool = True,
                     pass
                 elif paper_content.format == "xml":
                     extraction_ready_string = extraction_ready_string_from_xml(paper_fulltext)
+                    print(f"Extraction Ready String: {extraction_ready_string}")
                     entries = run_extraction(extraction_ready_string, provider, model_name).entries
-                    db_entries = [peptide_llm_entry_to_peptide_entry(entry, paper.id, paper.pmid, model=model_name) for entry in entries]
+                    db_entries = [peptide_llm_entry_to_peptide_entry(entry, paper.id, paper.pmid, model=model_name, run_identifier=run_identifier) for entry in entries]
                     if save:
                         session.add_all(db_entries)
                         session.commit()
-                time.sleep(5)
+                time.sleep(delay_seconds)
             except Exception as e:
                 failed_paper_ids.append(paper.id)
                 print(f"Failed to extract peptides for paper {paper.id}: {e}")
             
 
-        return failed_paper_ids
+        return failed_paper_ids, run_identifier
 
     if session is not None:
         return _run(session)
@@ -290,6 +322,7 @@ def run_evaluation(session: Optional[Session] = None, save: bool = True, **kwarg
 
         extractions_to_evaluate = get_records(PeptideEntry, session=session, **kwargs)
         failed_entries = []
+        run_identifier = int(time.time())
 
         for extraction in extractions_to_evaluate:
             try:
@@ -303,6 +336,7 @@ def run_evaluation(session: Optional[Session] = None, save: bool = True, **kwarg
 
                 evaluation = evaluate_extraction(extraction, paper_fulltext)
                 evaluation.peptide_entry_id = extraction.id
+                evaluation.run_identifier = run_identifier
                 if save:
                     session.add(evaluation)
                     session.commit()
@@ -311,7 +345,7 @@ def run_evaluation(session: Optional[Session] = None, save: bool = True, **kwarg
                 failed_entries.append(extraction.id)
             time.sleep(1)
 
-        return failed_entries
+        return failed_entries, run_identifier
 
     if session is not None:
         return _evaluate(session)
@@ -336,8 +370,26 @@ if __name__ == "__main__":
     # 7. Preprocess paper fulltext (xml / pdf -> structured format) X
     # 8. (includes 7 inside) Run extraction on fulltexts (of relevant papers - in case we already have fulltexts)X
     # 9. Run evaluation on extractions
+    
+    from peptide_extractor.scratchpad import papers_to_relevance_check, papers_to_extract
 
-    example_paper_ids = [590, 606]
-    success, fails, identifier = run_relevance_screening("gemma-4-31b-it", "google", delay_seconds=1, id=example_paper_ids)
+    #paper_ids = list(range(120,160))
+    
+    start_time = time.time()
+    #success, fails, identifier = run_bulk_relevance_screening("mistral-small3.2:latest", "ollama", delay_seconds=0, id=papers_to_relevance_check, batch_size=10)
+    #success, fails, identifier = run_bulk_relevance_screening("gemini-3.5-flash-lite", "google", delay_seconds=2, id=papers_to_relevance_check, batch_size=10)
+    
+    #fails = run_peptide_extraction(provider="ollama", model_name="qwen3.8:latest", delay_seconds=0, id=papers_to_extract[1:])
+    #fails = run_peptide_extraction(provider="ollama", model_name="mistral-small3.2:latest", delay_seconds=0, id=papers_to_extract)
+    #fails = run_peptide_extraction(provider="google", model_name="gemini-3.5-flash-lite", delay_seconds=5, id=papers_to_extract)
+    #fails = run_peptide_extraction(provider="ollama", model_name="gemma4:31b", delay_seconds=0, id=papers_to_extract)
+    fails, identifier = run_peptide_extraction(provider="google", model_name="gemini-3.5-flash-lite", delay_seconds=4, id=papers_to_extract[210:700])
 
-    print(f"Success: {success}, Fails: {fails}, Identifier: {identifier}")
+    end_time = time.time()
+
+    # batch 20 - 40 papers - mistral3.2-small - 240 seconds
+    # batch 10 - 40 papers - mistral3.2-small - 250 seconds
+
+    #print(f"Relevance Success: {success}, Fails: {fails}, Identifier: {identifier}, Time: {end_time - start_time}")
+    print(f"Extraction failed for papers with IDs: {fails}, Identifier: {identifier}, Time: {end_time - start_time}")
+    #print(f"Mock identifier {int(time.time())}")

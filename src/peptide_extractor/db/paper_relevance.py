@@ -23,7 +23,7 @@ class PaperRelevance(SQLModel, table=True):
     provider: str = Field(index=True, description="LLM provider name: 'google_genai', 'ollama', etc.")
     model_name: str = Field(index=True, description="LLM model name: e.g. 'gemma-4-31b-it', 'gemini-3.5-flash'")
 
-    run_identifier: Optional[int] = Field(default=None, index=True, description="Identifier for the run. Generated when run starts from the current time in seconds since epoch.")
+    run_identifier: Optional[int] = Field(default=None, index=True)
 
     created_at: datetime = Field(
         sa_type=DateTime(timezone=True),  # type: ignore

@@ -25,3 +25,11 @@ class RelevanceResult(BaseModel):
         le=1.0,
         description="Confidence score between 0.0 and 1.0.",
     )
+
+class PerPaperResult(BaseModel):
+    paper_id: int = Field(description="Id of the paper (received with input) sent back to match the relevance result to paper.")
+    relevance: RelevanceResult
+
+class BulkRelevanceResults(BaseModel):
+    results: List[PerPaperResult] = Field(description="List of relevance results for each paper.")
+    

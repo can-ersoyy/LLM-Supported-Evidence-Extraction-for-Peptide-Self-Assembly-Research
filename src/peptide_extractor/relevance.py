@@ -1,3 +1,4 @@
+from peptide_extractor.schemas import BulkRelevanceResults
 from peptide_extractor.llm import LLMController
 from peptide_extractor.schemas import RelevanceResult
 from peptide_extractor.db import DatasetSubset
@@ -87,12 +88,23 @@ Provide structured output containing:
 - confidence: Floating-point confidence score between 0.0 and 1.0.
 """
 
+SYSTEM_PROMPT_BULK = """
+You are an expert in scientific paper reading and biophysics specializing in peptide self-assembly and amyloid aggregation.
+Your task is to determine whether a batch of scientific papers are relevant for an information extraction pipeline on 4-20mer peptide self-assembly research based only on their titles and abstracts.
 
-USER_PROMPT = """Here is the title and abstract of a paper:
+The project extracts experimental records for short peptides (roughly 4-20 residues, including canonical sequences, capped/modified peptides, and amyloidogenic fragments), capturing self-assembly or phase behavior (e.g., nanofibers, hydrogels, nanotubes, nanospheres, amyloid fibrils, ribbons, vesicles, or amorphous aggregates) and associated experimental conditions (e.g., pH, concentration, solvent/buffer, temperature, characterization methods).
 
-Title: {title}
+Because abstracts are dense summaries that often omit detailed experimental parameters:
+- Assume a paper is RELEVANT (`is_relevant: True`) if it reports or strongly implies original experimental (wet-lab) work on peptide self-assembly, aggregation, or amyloid formation.
+- Do NOT require full quantitative experimental conditions (such as exact pH or concentration values) or full sequence lengths to be explicitly stated in the abstract; hints of physical characterization (e.g., microscopy, spectroscopy, gelation, kinetic assays) are sufficient.
+- Only mark `is_relevant: False` if the paper is unambiguously out of scope: purely theoretical/computational studies without experimental validation, general review articles/editorials, or studies exclusively on intact, full-length proteins without isolated peptide fragments.
+- When in doubt, prioritize recall and classify borderline papers as relevant with a lower confidence score.
 
-Abstract: {abstract}
+Provide structured output containing:
+- detected_clues: List of specific techniques, peptide identities, nanostructures, or experimental conditions mentioned.
+- explanation: Clear justification for the relevance assessment.
+- is_relevant: True if the paper likely contains experimental peptide self-assembly data in its full text, False otherwise.
+- confidence: Floating-point confidence score between 0.0 and 1.0.
 """
 
 def screen_papers(
@@ -114,6 +126,7 @@ def screen_papers(
             provider=provider,
             structured_output=RelevanceResult,
             system_prompt=SYSTEM_PROMPT_V3,
+            #base_url="http://localhost:11435"
         )
 
     papers_to_screen = get_paper_metadatas(limit=batch_size, session=session, **kwargs)
@@ -161,3 +174,85 @@ def screen_papers(
             time.sleep(delay_seconds)
 
     return results, failed_paper_ids
+
+def bulk_screen_papers(
+    batch_size: Optional[int] = 10,
+    classifier: Optional[LLMController] = None,
+    model_name: str = "gemini-3.5-flash-lite",
+    provider: str = "google",
+    session: Optional[Session] = None,
+    delay_seconds: float = 2.0,
+    run_identifier: int = 0,
+    update_status: bool = True,
+    **kwargs: Any):
+
+    if classifier is None:
+        classifier = LLMController(
+            model_name=model_name,
+            provider=provider,
+            structured_output=BulkRelevanceResults,
+            system_prompt=SYSTEM_PROMPT_BULK,
+            base_url="http://localhost:11435"
+        )
+
+    results: List[tuple[PaperMetadata, RelevanceResult]] = []
+    failed_paper_ids = []
+
+    papers_to_screen = get_paper_metadatas(session=session, **kwargs)
+
+    for papers in range(0, len(papers_to_screen), batch_size):
+        try:
+            current_batch = papers_to_screen[papers:papers+batch_size]
+            prepared_batch = [(paper.id, paper.title, paper.abstract) for paper in current_batch]
+            print(prepared_batch)
+
+            relevance_results: BulkRelevanceResults = classifier.bulk_classify_paper(prepared_batch)
+
+            for result in relevance_results.results:
+                id = result.paper_id
+                real_result = result.relevance
+                try:
+                    import json
+                    clues_str = json.dumps(real_result.detected_clues)
+
+                    save_paper_relevance(
+                        paper_id=id,
+                        detected_clues=clues_str,
+                        explanation=real_result.explanation,
+                        is_relevant=real_result.is_relevant,
+                        confidence=real_result.confidence,
+                        provider=provider,
+                        model_name=model_name,
+                        run_identifier=run_identifier,
+                        session=session,
+                    )
+
+                    if update_status:
+                        new_status = PaperStatus.USABLE if real_result.is_relevant else PaperStatus.DISCARD
+                        update_paper_status(id, new_status, session=session)
+
+                    results.append((id, real_result))
+                    print(f"Paper {id} processed")
+                    logger.info(f"Paper with id {id} is processed")
+                except Exception as e:
+                    if session is not None:
+                        session.rollback()
+                    failed_paper_ids.append(id)
+                    print(f"Skipping paper {id} due to error: {e}")
+                    continue
+            
+        except Exception as e:
+                if session is not None:
+                    session.rollback()
+                failed_paper_ids.append(result.id)
+
+                print(f"Skipping papers {current_batch[0].id} - {current_batch[-1].id} due to error: {e}")
+                
+                continue
+        finally:
+            time.sleep(delay_seconds)
+
+    return results, failed_paper_ids
+            
+
+

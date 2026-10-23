@@ -34,9 +34,15 @@ LOCATION GROUNDING RULES:
 5. If a property was NOT experimentally determined or mentioned in the text, leave both the property and its corresponding `evidence_span` field as null.
 """
 
+EXTRACTION_SYSTEM_PROMPT_V4 = """
+You will receive the full text of a scientific paper and your goal is to extract experimental peptide self-assembly information according to the given schema.
+"""
+
+
 def run_extraction(paper_content: str, provider: str = "google_genai", model_name: str = "gemma-4-31b-it") -> PeptideExtractionResult:
    #model = LLMController(provider=provider, model_name=model_name, structured_output=PeptideExtractionResult, system_prompt=EXTRACTION_SYSTEM_PROMPT)
    #model = LLMController(provider=provider, model_name=model_name, structured_output=PeptideExtractionResult, system_prompt=EXTRACTION_SYSTEM_PROMPT_V2)
    model = LLMController(provider=provider, model_name=model_name, structured_output=PeptideExtractionResult, system_prompt=EXTRACTION_SYSTEM_PROMPT_V3)
+   #model = LLMController(provider=provider, model_name=model_name, structured_output=PeptideExtractionResult, system_prompt=EXTRACTION_SYSTEM_PROMPT_V4)
 
-   return model.extract_peptides(paper_content)
+   return model.extract_peptides(paper_content, stream=True)

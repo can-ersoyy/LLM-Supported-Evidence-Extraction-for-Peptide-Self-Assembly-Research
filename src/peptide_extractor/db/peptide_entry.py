@@ -96,6 +96,8 @@ class PeptideEntry(SQLModel, table=True):
         sa_column_kwargs={"onupdate": get_utc_now},
     )
 
+    run_identifier: Optional[int] = Field(default=None, index=True)
+
     paper: Optional["PaperMetadata"] = Relationship()
 
 # these are from peptide miner paper
@@ -237,7 +239,7 @@ def peptide_volume_ratio_to_str(ratio: Optional[list[int]]) -> Optional[str]:
     return None
 
 
-def peptide_llm_entry_to_peptide_entry(peptide_llm_entry: PeptideLLMEntry, paper_id: int, pmid: str, database: Optional[str] = None, model: Optional[str] = None) -> PeptideEntry:
+def peptide_llm_entry_to_peptide_entry(peptide_llm_entry: PeptideLLMEntry, paper_id: int, pmid: str, database: Optional[str] = None, model: Optional[str] = None, run_identifier: Optional[int] = None) -> PeptideEntry:
     return PeptideEntry(
         paper_id=paper_id,
         pmid=pmid,
@@ -260,6 +262,7 @@ def peptide_llm_entry_to_peptide_entry(peptide_llm_entry: PeptideLLMEntry, paper
         preparation_protocol=peptide_llm_entry.preparation_protocol,
         evidence_span=peptide_llm_entry.evidence_span.to_string() if peptide_llm_entry.evidence_span is not None else None,
         extraction_mode=ExtractionMode.LLM,
+        run_identifier=run_identifier,
         model=model,
         database=database,
     )
