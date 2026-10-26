@@ -79,7 +79,7 @@ class GroundnessVerdict(BaseModel):
 
 # TODO: implement groundness/faithfulness checks for evidence span with locations
 def groundness_check_llm(field_value_quote_list: list, model: LLMController = None) -> GroundnessVerdict:
-    model = LLMController(provider="google-genai", model_name="gemini-3.5-flash-lite", system_prompt=GROUNDNESS_CHECK_SYSTEM_PROMPT, structured_output=GroundnessVerdict) if model is None else model
+    #model = LLMController(provider="google-genai", model_name="gemini-3.5-flash-lite", system_prompt=GROUNDNESS_CHECK_SYSTEM_PROMPT, structured_output=GroundnessVerdict) if model is None else model
     return model.evaluate_groundness(field_value_quote_list)
     
 
@@ -136,20 +136,41 @@ DEFAULT_STRUCTURAL_FIELDS = [
 
 def evaluate_extraction(extraction: PeptideEntry, fulltext: str) -> ExtractionEvaluation:
     #model = LLMController(provider="google-genai", model_name="gemini-3.5-flash-lite", system_prompt=JUDGE_SYSTEM_PROMPT, structured_output=FaithfulnessVerdict)
-    model = LLMController(provider="google-genai", model_name="gemini-3.5-flash-lite", system_prompt=GROUNDNESS_CHECK_SYSTEM_PROMPT, structured_output=GroundnessVerdict)
+    model = LLMController(provider="ollama", model_name="mistral-small3.2:latest", system_prompt=GROUNDNESS_CHECK_SYSTEM_PROMPT, structured_output=GroundnessVerdict, base_url="http://localhost:11435")
+    #model = LLMController(provider="ollama", model_name="gemma4:12b", system_prompt=GROUNDNESS_CHECK_SYSTEM_PROMPT, structured_output=GroundnessVerdict, base_url="http://localhost:11435")
 
-    evidence_span = json.loads(extraction.evidence_span) if extraction.evidence_span else {}
-    if evidence_span == {}:
-        raise ValueError(f"No evidence span found for peptide entry {extraction.id}")
+
+    
+
+    
+
 
 
     active_evidence_fields = list(EVIDENCE_SPAN_FIELDS)
+
     
+
     # Conditional: conjugate_partner only expects a value/evidence if it's a conjugate or mixture
     is_pure_peptide = extraction.peptide_conjugate_mixture == PeptideConjugateMixture.PEPTIDE
     
     if not is_pure_peptide and extraction.conjugate_partner:
         active_evidence_fields.append("conjugate_partner")
+
+    total_possible_fields = 15 if is_pure_peptide else 16
+    present_fields_count = sum(
+        1 for f in active_evidence_fields + VERBATIM_FIELDS + DEFAULT_STRUCTURAL_FIELDS
+        if getattr(extraction, f) is not None
+    )
+    completeness_rate = min(1.0, present_fields_count / total_possible_fields)
+
+    evidence_span = json.loads(extraction.evidence_span) if extraction.evidence_span else {}
+    if evidence_span == {}:
+        return ExtractionEvaluation(
+            groundness_rate=0.0,
+            #faithfulness_rate=0.0,
+            completeness_rate=completeness_rate,
+            extraction=extraction,
+        )
 
     extracted_evidence_fields = [
         f for f in active_evidence_fields if getattr(extraction, f) is not None
@@ -171,6 +192,8 @@ def evaluate_extraction(extraction: PeptideEntry, fulltext: str) -> ExtractionEv
     field_value_quote_list = []
     for field in extracted_evidence_fields:
         location = evidence_span.get(field)
+        if location is None:
+            continue
         
         ## this should be updated to simpler usage later on
         #print(to_debug_string(with_sentences))
@@ -226,15 +249,10 @@ def evaluate_extraction(extraction: PeptideEntry, fulltext: str) -> ExtractionEv
     #print(f"Grounded fields: {len(grounded_fields)}")
     #faithfulness_rate = (faithfulness_count / len(grounded_fields)) if grounded_fields else 0.0
 
-    total_possible_fields = 15 if is_pure_peptide else 16
-    present_fields_count = sum(
-        1 for f in active_evidence_fields + VERBATIM_FIELDS + DEFAULT_STRUCTURAL_FIELDS
-        if getattr(extraction, f) is not None
-    )
-    completeness_rate = min(1.0, present_fields_count / total_possible_fields)
+    
 
     return ExtractionEvaluation(
-        groundness_rate=f'{groundness_rate:.1%}',
+        groundness_rate=groundness_rate,
         #faithfulness_rate=f'{faithfulness_rate:.1%}',
-        completeness_rate=f'{completeness_rate:.1%}',
+        completeness_rate=completeness_rate,
     )

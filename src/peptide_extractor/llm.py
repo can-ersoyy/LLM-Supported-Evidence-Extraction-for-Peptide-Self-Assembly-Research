@@ -1,3 +1,4 @@
+from typing import Tuple
 from peptide_extractor.db import PeptideEntry
 from typing import List
 import os
@@ -12,6 +13,22 @@ from pydantic import BaseModel
 from peptide_extractor.db.paper_metadata import PaperMetadata
 
 load_dotenv(find_dotenv(usecwd=True))
+
+import sys
+from langchain_core.callbacks import BaseCallbackHandler
+
+class StreamingTokenPrinter(BaseCallbackHandler):
+    """Streams LLM tokens to stdout as they are generated."""
+    def on_llm_start(self, *args, **kwargs) -> None:
+        print("\n--- [Streaming Tokens] ---", flush=True)
+
+    def on_llm_new_token(self, token: str, **kwargs) -> None:
+        sys.stdout.write(token)
+        sys.stdout.flush()
+
+    def on_llm_end(self, *args, **kwargs) -> None:
+        print("\n--- [End of Stream] ---\n", flush=True)
+
 
 
 def get_chat_model(
@@ -57,6 +74,7 @@ def get_chat_model(
             base_url=base_url,
             model=target_model, 
             temperature=temperature,
+            num_ctx=32000,
             **kwargs)
 
     elif provider_clean in ("open_router", "openrouter", "open-router"):
@@ -97,6 +115,7 @@ class LLMController:
         temperature: float = 0.0,
         api_key: Optional[str] = None,
         base_url: Optional[str] = None, # used for remote llm connection via ollama
+        stream: bool = False,
         **kwargs: Any,
     ):
         self.provider = provider
@@ -115,6 +134,7 @@ class LLMController:
             base_url=base_url,
             **kwargs,
         )
+        self.stream = stream
 
         if self.structured_output and provider != "ollama":
             try:
@@ -158,14 +178,49 @@ class LLMController:
             return self.structured_output(**res)
         return res
 
-    def extract_peptides(self, paper_content: str) -> Any:
+    def bulk_classify_paper(
+        self,
+        id_title_abstract_pairs: List[Tuple[int, str, str]],
+    ):
+
+        prompt_strings = ""
+        for (id,title,abstract) in id_title_abstract_pairs:
+            prompt_strings += "-------------------------------------\n"
+            prompt_strings += f"ID: {id}\n"
+            prompt_strings += f"Title: {title}\n"
+            prompt_strings += f"Abstract: {abstract}\n"
+            prompt_strings += "-------------------------------------\n"
+
+        user_content: str = (
+            f"Here are title and abstracts of {len(id_title_abstract_pairs)} papers. Work on each pair of title/abstract seperately.",
+            prompt_strings
+        )
+
+        messages: List[BaseMessage] = []
+        if self.system_prompt:
+            messages.append(SystemMessage(content=self.system_prompt))
+        messages.append(HumanMessage(content=user_content))
+
+        res = self.structured_llm.invoke(messages)
+        if isinstance(res, dict) and self.structured_output:
+            return self.structured_output(**res)
+        return res
+
+    def extract_peptides(self, paper_content: str, stream: bool = None) -> Any:
         """Run extraction on paper content."""
         messages: List[BaseMessage] = []
         if self.system_prompt:
             messages.append(SystemMessage(content=self.system_prompt))
         messages.append(HumanMessage(content=f"Fulltext:\n\n{paper_content}"))
 
-        res = self.structured_llm.invoke(messages)
+        should_stream = self.stream if stream is None else stream
+
+        if should_stream:
+            callbacks = [StreamingTokenPrinter()]
+            res = self.structured_llm.invoke(messages, config={"callbacks": callbacks})
+        else:
+            res = self.structured_llm.invoke(messages)
+
         print(f"LLM output: {res}")
         if isinstance(res, dict) and self.structured_output:
             return self.structured_output(**res)

@@ -19,9 +19,9 @@ class ExtractionEvaluation(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     peptide_entry_id: Optional[int] = Field(default=None, foreign_key="peptide_entry.id")
 
-    groundness_rate: Optional[str] = None
-    faithfulness_rate: Optional[str] = None
-    completeness_rate: Optional[str] = None
+    groundness_rate: Optional[float] = None
+    faithfulness_rate: Optional[float] = None
+    completeness_rate: Optional[float] = None
     
     #evaluation_category: EvaluationCategory
     explanation: Optional[str] = None

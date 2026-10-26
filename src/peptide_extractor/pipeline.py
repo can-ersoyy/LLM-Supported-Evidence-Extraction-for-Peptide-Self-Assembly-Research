@@ -1,4 +1,3 @@
-from peptide_extractor.scratchpad import papers_to_extract
 from peptide_extractor.schemas import RelevanceResult
 from typing import List
 from langchain_core.language_models import BaseChatModel
@@ -371,25 +370,41 @@ if __name__ == "__main__":
     # 8. (includes 7 inside) Run extraction on fulltexts (of relevant papers - in case we already have fulltexts)X
     # 9. Run evaluation on extractions
     
-    from peptide_extractor.scratchpad import papers_to_relevance_check, papers_to_extract
+    from peptide_extractor.scratchpad import papers_to_extract
 
     #paper_ids = list(range(120,160))
     
-    start_time = time.time()
-    #success, fails, identifier = run_bulk_relevance_screening("mistral-small3.2:latest", "ollama", delay_seconds=0, id=papers_to_relevance_check, batch_size=10)
-    #success, fails, identifier = run_bulk_relevance_screening("gemini-3.5-flash-lite", "google", delay_seconds=2, id=papers_to_relevance_check, batch_size=10)
     
+    #success, fails, identifier = run_bulk_relevance_screening("mistral-small3.2:latest", "ollama", delay_seconds=0, id=papers_to_relevance_check, batch_size=10)
+    
+    #start_time = time.time()
     #fails = run_peptide_extraction(provider="ollama", model_name="qwen3.8:latest", delay_seconds=0, id=papers_to_extract[1:])
     #fails = run_peptide_extraction(provider="ollama", model_name="mistral-small3.2:latest", delay_seconds=0, id=papers_to_extract)
     #fails = run_peptide_extraction(provider="google", model_name="gemini-3.5-flash-lite", delay_seconds=5, id=papers_to_extract)
     #fails = run_peptide_extraction(provider="ollama", model_name="gemma4:31b", delay_seconds=0, id=papers_to_extract)
-    fails, identifier = run_peptide_extraction(provider="google", model_name="gemini-3.5-flash-lite", delay_seconds=4, id=papers_to_extract[210:700])
-
-    end_time = time.time()
+    #fails, identifier = run_peptide_extraction(provider="google", model_name="gemini-3.5-flash-lite", delay_seconds=4, id=papers_to_extract[1490:1500])
+    
+    #success, fails, identifier = run_bulk_relevance_screening("gemini-3.5-flash-lite", "google", delay_seconds=2, id=[5563, 3386], batch_size=10)
+    #fails, identifier = run_peptide_extraction(provider="google", model_name="gemini-3.5-flash-lite", delay_seconds=4, id=[5563, 3386])
+    #end_time = time.time()
+   
 
     # batch 20 - 40 papers - mistral3.2-small - 240 seconds
     # batch 10 - 40 papers - mistral3.2-small - 250 seconds
 
     #print(f"Relevance Success: {success}, Fails: {fails}, Identifier: {identifier}, Time: {end_time - start_time}")
-    print(f"Extraction failed for papers with IDs: {fails}, Identifier: {identifier}, Time: {end_time - start_time}")
+    #print(f"Extraction failed for papers with IDs: {fails}, Identifier: {identifier}, Time: {end_time - start_time}")
     #print(f"Mock identifier {int(time.time())}")
+
+
+    # ----------------------
+
+    # 0-2866
+    #extraction_run_identifiers = [1792785738, 1792836645, 1792920960, 1792925750, 1793013630, 1793019671]
+    #start_time = time.time()
+    #
+    #fails, identifier = run_evaluation(id=extraction_run_identifiers)
+    #end_time = time.time()
+    #
+    #print(f"Failed: {fails}, ID: {identifier}")
+    #print(f"Evaluation completed in {end_time - start_time} seconds")

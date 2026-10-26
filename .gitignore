@@ -16,3 +16,4 @@ docs/scratchpad.md
 data/*.db
 
 src/*/scratchpad.py
+PMC-ids.csv
