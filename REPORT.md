@@ -47,10 +47,17 @@ def bulk_screen_papers(...):
         )
 ```
 
+Furthermore, we see similar hardcoded URLs in `evaluation.py`:
+```python
+# snippet from src/peptide_extractor/evaluation.py
+def evaluate_extraction(extraction: PeptideEntry, fulltext: str) -> ExtractionEvaluation:
+    model = LLMController(provider="ollama", model_name="mistral-small3.2:latest", system_prompt=GROUNDNESS_CHECK_SYSTEM_PROMPT, structured_output=GroundnessVerdict, base_url="http://localhost:11435")
+```
+
 **Recommendations:**
 - **Simplified Installation:** Provide a standard `pip install` mechanism or a pre-built Docker image.
   - A Docker setup (`docker run -v ./data:/app/data peptide-extractor run-pipeline`) is often preferred because it isolates dependencies entirely without the user needing to understand `uv` or `distrobox`.
-- **API and Model Configuration:** Make sure all endpoints (like Ollama) are configurable via the `.env` file or `config.yaml`. Remove hardcoded URLs from the source code.
+- **API and Model Configuration:** Make sure all endpoints (like Ollama) are configurable via the `.env` file or `config.yaml`. Remove hardcoded URLs from the source code. Pass these configuration options all the way down to the LLM initialization layers in `relevance.py`, `extraction.py`, and `evaluation.py`.
 
 ## 4. Pipeline State, Error Handling, and Logging
 
@@ -78,13 +85,37 @@ This broad `except Exception as e` swallows errors without a traceback, making d
 **Current Weakness:**
 All extracted data goes into a SQLite database (`data/papers.db`) via `SQLModel` and `Alembic`. Biologists and end-users generally expect tabular data (CSV, Excel) to review the results, perform statistical analysis, or import into other software. Telling a biologist to run an SQL query or write a Python script to get their data is a major usability flaw.
 
+Furthermore, we see data loading from specific hardcoded CSV files instead of user-configurable paths:
+```python
+# snippet from src/peptide_extractor/golden_dataset_utils.py
+GOLDEN_DATASET_CSV_PATH = (
+    Path(__file__).resolve().parent.parent.parent
+    / "data"
+    / "golden_dataset_final.csv"
+)
+```
+
 **Recommendations:**
 - **Export Functionality:** Add an explicit export command to the CLI.
   - `peptide-extractor export --format csv --output results.csv`
-  - This should dump the contents of the `PeptideEntry` table (and joined `PaperMetadata`) into a clean Excel or CSV file (using `pandas`).
-- **Input Lists:** Allow users to provide a text file or CSV of DOIs/PMIDs they want to process, rather than relying exclusively on the search API.
+  - This should dump the contents of the `PeptideEntry` table (and joined `PaperMetadata`, evaluation metrics, etc.) into a clean Excel or CSV file (using `pandas`).
+- **Input Lists:** Allow users to provide a text file or CSV of DOIs/PMIDs they want to process, rather than relying exclusively on the search API. Pass the CSV path via CLI argument instead of hardcoding `GOLDEN_DATASET_CSV_PATH`.
 
-## 6. Testing & Database Initialization
+## 6. Model Evaluation Extensibility
+
+**Current Weakness:**
+Evaluation models are tightly coupled to the logic. If a researcher wants to evaluate extractions using `gemini` instead of `ollama`, they must manually edit Python code.
+
+```python
+# snippet from src/peptide_extractor/evaluation.py
+    #model = LLMController(provider="google-genai", model_name="gemini-3.5-flash-lite", system_prompt=JUDGE_SYSTEM_PROMPT, structured_output=FaithfulnessVerdict)
+    model = LLMController(provider="ollama", model_name="mistral-small3.2:latest", system_prompt=GROUNDNESS_CHECK_SYSTEM_PROMPT, structured_output=GroundnessVerdict, base_url="http://localhost:11435")
+```
+
+**Recommendations:**
+- **Decoupled Evaluators:** Read the evaluator model, provider, and base URL from the global configuration. Allow end-users to specify evaluator properties from the CLI (e.g. `peptide-extractor evaluate --model gemini-3.5-flash`).
+
+## 7. Testing & Database Initialization
 
 **Current Weakness:**
 There is an ongoing issue where some tests (e.g., `test_ncbi_provider.py`) fail locally because the database schema (`raw_provider_records`) is not properly initialized in the test setup.
@@ -101,6 +132,6 @@ Error processing batch 0: (sqlite3.OperationalError) no such table: raw_provider
 ## Summary of Priority Actions for End-User Adoption:
 1. **Critical:** Build a Typer/Click CLI to replace `pipeline.py` script editing.
 2. **Critical:** Add a CSV/Excel export function so users can actually see and use the extracted data without SQL.
-3. **High:** Implement a unified config file (`config.yaml`) for search queries, model selection, and API keys.
-4. **Medium:** Add progress bars (`rich` or `tqdm`) and remove raw `print()` statements.
+3. **High:** Implement a unified config file (`config.yaml`) for search queries, model selection, evaluator configuration, and API keys. Remove all hardcoded `localhost` endpoints.
+4. **Medium:** Add progress bars (`rich` or `tqdm`) and remove raw `print()` statements. Make error logs informative instead of silently catching and skipping exceptions.
 5. **Medium:** Fix failing tests by ensuring the database tables are created in the pytest fixtures.
