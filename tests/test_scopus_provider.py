@@ -1,9 +1,9 @@
+from peptide_extractor.db.raw_provider_record import RawProviderRecord
 from unittest.mock import MagicMock, patch
 import pytest
 
 from peptide_extractor.db.paper_metadata import PaperMetadata, PaperStatus
 from peptide_extractor.providers import ScopusProvider
-from peptide_extractor.schemas import RawProviderRecord
 
 
 @pytest.fixture

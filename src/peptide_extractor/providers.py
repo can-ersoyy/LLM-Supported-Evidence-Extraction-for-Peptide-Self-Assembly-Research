@@ -1,3 +1,6 @@
+from peptide_extractor.utils import convert_pmc_to_pmid_batch
+from peptide_extractor.db.raw_provider_record import save_raw_provider_record
+from peptide_extractor.db.raw_provider_record import RawProviderRecord
 from peptide_extractor.utils import doi_to_filename
 from azure.storage.blob._shared import base_client
 from peptide_extractor.azure_storage import DEFAULT_CONTAINER_NAME
@@ -11,7 +14,6 @@ import time
 from peptide_extractor.azure_storage import upload_xml, upload_pdf
 from peptide_extractor.db.paper_content import PaperContent
 from peptide_extractor.db.paper_metadata import PaperMetadata, PaperStatus
-from peptide_extractor.schemas import RawProviderRecord
 
 import xml.etree.ElementTree as ET
 
@@ -87,57 +89,78 @@ class NCBIProvider(BaseProvider):
 
         for index_counter in range(0, matches, self.batch_size):
 
-            params = {
-                "term":query,
-                "retmax":1,
-                "db": db,
-                "retmode": "json",
-                "api_key": self.api_key
-            }
-
-            params["retstart"] = index_counter
-            params["retmax"] = self.batch_size
-
-            try: 
-                response = requests.get(f"{self.BASE_URL}esearch.fcgi", params=params)
-                response.raise_for_status()
-            except Exception as e:
-                print(f"Error: {e}")
-                continue
-
-            time.sleep(0.2)
-            id_list = self.extract_id_list(response.content)
-            print(id_list)
-
-    
-            if not id_list:
-                continue
-
-            params = {
-                "db": db,
-                "retmode": "xml",
-                "api_key": self.api_key,
-                "id": ",".join(id_list)
-            }
-
             try:
-                fetch_res = requests.get(f"{self.BASE_URL}efetch.fcgi", params=params)
-                fetch_res.raise_for_status()
+
+                params = {
+                    "term":query,
+                    "retmax":1,
+                    "db": db,
+                    "retmode": "json",
+                    "api_key": self.api_key
+                }
+
+                params["retstart"] = index_counter
+                params["retmax"] = self.batch_size
+
+                try: 
+                    response = requests.get(f"{self.BASE_URL}esearch.fcgi", params=params)
+                    response.raise_for_status()
+                    #print(f"Response for batch {index_counter} retreived: {response.content}")
+                except Exception as e:
+                    print(f"Error: {e}")
+                    continue
+
+                time.sleep(0.2)
+                id_list = self.extract_id_list(response.content)
+                print(id_list)
+
+        
+                if not id_list:
+                    continue
+
+                if db == "pmc":
+                    formatted_pmcids = [f"PMC{i}" if not str(i).startswith("PMC") else str(i) for i in id_list]
+                    id_map = convert_pmc_to_pmid_batch(formatted_pmcids, self.api_key) # since db is pmc, returned ids are pmc and need to be turned into pmid before using pubmed esearch
+                    
+                    pmid_list = [id_map[pid]['pmid'] for pid in formatted_pmcids if id_map[pid]['pmid']]
+                    
+                    if not pmid_list:
+                        continue
+
+                    id_list = pmid_list
+                
+
+                params = {
+                    "db": "pubmed", # we always want to search here from pubmed since pmc returns fulltext and not only abstract
+                    "retmode": "xml",
+                    "api_key": self.api_key,
+                    "id": ",".join(id_list)
+                }
+
+                try:
+                    fetch_res = requests.get(f"{self.BASE_URL}efetch.fcgi", params=params)
+                    fetch_res.raise_for_status()
+                except Exception as e:
+                    print(f"Error: {e}")
+                    continue
+
+                time.sleep(0.2)
+                root = ET.fromstring(fetch_res.content)
+
+                for article_elem in root:
+                    xml_str = ET.tostring(article_elem, encoding="unicode")
+                    record = RawProviderRecord(
+                        provider="ncbi",
+                        search_query=query,
+                        raw_data={"xml": xml_str}
+                    )
+                    # we need to save the record to the database as a backup for long tasks
+                    save_raw_provider_record(record)
+                    results.append(record)
+            
             except Exception as e:
-                print(f"Error: {e}")
+                print(f"Error processing batch {index_counter}: {e}. Skipping it.")
                 continue
-
-            time.sleep(0.2)
-            root = ET.fromstring(fetch_res.content)
-
-            for article_elem in root:
-                xml_str = ET.tostring(article_elem, encoding="unicode")
-                record = RawProviderRecord(
-                    provider="ncbi",
-                    search_query=query,
-                    raw_data={"xml": xml_str}
-                )
-                results.append(record)
 
         return results
 

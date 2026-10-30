@@ -101,6 +101,41 @@ def get_pmcid_from_pmid(api_key: str, pmid: str) -> str | None:
     except (KeyError, IndexError):
         return None
 
+def convert_pmc_to_pmid_batch(email: str, pmc_ids: list[str], api_key: Optional[str] = None) -> dict[str, dict]:
+    """Converts PMC IDs to PMIDs and DOIs using the NCBI ID Converter API."""
+    if not pmc_ids:
+        return {}
+
+    formatted_ids = [f"PMC{i}" if not str(i).startswith("PMC") else str(i) for i in pmc_ids] # normally should already receive formatted but just in case
+    
+    url = "https://www.ncbi.nlm.nih.gov/pmc/utils/idconv/v1.0/"
+    params = {
+        "ids": ",".join(formatted_ids),
+        "format": "json",
+        "tool": "evidence_extractor",
+        "email": email,
+        "api_key": api_key
+    }
+
+    resp = requests.get(url, params=params)
+    resp.raise_for_status()
+    data = resp.json()
+
+    results = {
+        pid: {"pmid": None, "doi": None, "pmcid": None} for pid in formatted_ids
+    }
+
+    for record in data.get("records", []):
+        req_id = record.get("requested-id")
+        if req_id in results:
+            results[req_id] = {
+                "pmid": str(record.get("pmid", "")),
+                "doi": str(record.get("doi", "")),
+                "pmcid": str(record.get("pmcid", "")),
+            }
+
+    return results
+
 
 def get_body_from_jats_xml(xml_text: str) -> str:
     """Extract and normalize the text content of the <body> tag from JATS XML text."""

@@ -13,6 +13,7 @@ from peptide_extractor.db.paper_content import PaperContent
 from peptide_extractor.db.paper_relevance import PaperRelevance
 from peptide_extractor.db.peptide_entry import PeptideEntry
 from peptide_extractor.db.extraction_evaluation import ExtractionEvaluation
+from peptide_extractor.db.raw_provider_record import RawProviderRecord
 from peptide_extractor.db.database import DATABASE_URL
 
 

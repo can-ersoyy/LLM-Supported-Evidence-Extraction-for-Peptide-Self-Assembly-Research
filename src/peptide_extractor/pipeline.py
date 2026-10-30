@@ -1,3 +1,4 @@
+from peptide_extractor.db.paper_metadata import PaperStatus
 from peptide_extractor.schemas import RelevanceResult
 from typing import List
 from langchain_core.language_models import BaseChatModel
@@ -40,18 +41,37 @@ logger.setLevel(logging.INFO)
 NCBI_SEARCH_QUERY_V1 = """((tetrapeptide[tiab] OR pentapeptide[tiab] OR hexapeptide[tiab] OR heptapeptide[tiab] OR octapeptide[tiab] OR nonapeptide[tiab] OR decapeptide[tiab] OR undecapeptide[tiab] OR dodecapeptide[tiab] OR tridecapeptide[tiab] OR tetradecapeptide[tiab] OR pentadecapeptide[tiab] OR hexadecapeptide[tiab] OR heptadecapeptide[tiab] OR octadecapeptide[tiab] OR nonadecapeptide[tiab] OR eicosapeptide[tiab] OR icosapeptide[tiab]) AND (nanostructure[tiab] OR nanotube[tiab] OR nanofiber[tiab] OR nanofibre[tiab] OR nanorod[tiab] OR hydrogel[tiab] OR nanosphere[tiab] OR nanoparticle[tiab] OR "self-assembly"[tiab])) AND (english[la]) AND ("free full text"[filter]) NOT (review[pt])"""
 NCBI_SEARCH_QUERY_V2 = """peptide self-assembly"""
 
+# this query on pmc returns 55k results (pmc only returns the first 10k per query)
+NCBI_SEARCH_QUERY_V3_TEMPLATE_INTERVAL = """("peptid"[All Fields] OR "peptidal"[All Fields] OR "peptide s"[All Fields] OR "peptides"[Supplementary Concept] OR "peptides"[All Fields] OR "peptide"[All Fields] OR "peptides"[MeSH Terms] OR "peptidic"[All Fields]) AND "self-assembly"[All Fields] AND (open_access[Filter]) AND ({}:{}[pdat]) AND (pmc_public[Filter])"""
+NCBI_SEARCH_QUERY_V3_TEMPLATE_YEAR = """("peptid"[All Fields] OR "peptidal"[All Fields] OR "peptide s"[All Fields] OR "peptides"[Supplementary Concept] OR "peptides"[All Fields] OR "peptide"[All Fields] OR "peptides"[MeSH Terms] OR "peptidic"[All Fields]) AND "self-assembly"[All Fields] AND (open_access[Filter]) AND ({}[pdat]) AND (pmc_public[Filter])"""
+NCBI_SEARCH_QUERIES_V3 = [NCBI_SEARCH_QUERY_V3_TEMPLATE_INTERVAL.format("1900", "2009")]
+NCBI_SEARCH_QUERIES_V3.extend([NCBI_SEARCH_QUERY_V3_TEMPLATE_YEAR.format(year) for year in range(2010, 2028)])
+
 SCOPUS_SEARCH_QUERY_V1 = """TITLE-ABS-KEY(tetrapeptide OR pentapeptide OR hexapeptide OR heptapeptide OR octapeptide OR nonapeptide OR decapeptide OR undecapeptide OR dodecapeptide OR tridecapeptide OR tetradecapeptide OR pentadecapeptide OR hexadecapeptide OR heptadecapeptide OR octadecapeptide OR nonadecapeptide OR eicosapeptide OR icosapeptide) AND TITLE-ABS-KEY(nanostructure OR nanotube OR nanofiber OR nanofibre OR nanorod OR hydrogel OR nanosphere OR nanoparticle OR "self-assembly") AND LANGUAGE(english) AND DOCTYPE(ar) AND OA(all)"""
 
 
-def retrive_ncbi_by_query(ncbi_provider, query=NCBI_SEARCH_QUERY_V1, save=True):
-    raw_records = ncbi_provider.search_by_query(query)
+def retrive_ncbi_by_query(ncbi_provider: NCBIProvider, query_list=[NCBI_SEARCH_QUERY_V1], save=True, db="pubmed", delete_raw_records=True):
+    """Wrapper method for doing query search on pubmed/pmc from ncbi provider."""
+    raw_records = []
+    for query in query_list:
+        print(f"Query: {query}")
+        raw_records.extend(ncbi_provider.search_by_query(query, db=db))
     ncbi_metadatas = ncbi_provider.parse_raw_search_records(raw_records)
+
 
     if save:
         init_db()
         with get_session_context() as session:
             session.add_all(ncbi_metadatas)
             session.commit()
+
+        if delete_raw_records: # cleanup since raw records are only needed before storing metadata
+            init_db()
+            with get_session_context() as session:
+                for record in raw_records:
+                    session.delete(record)
+                session.commit()
+    
     else:
         return ncbi_metadatas
 
@@ -69,7 +89,9 @@ def retrieve_scopus_by_query(scopus_provider, query=SCOPUS_SEARCH_QUERY_V1, save
 
 
 def deduplicate_by_doi(session: Optional[Session] = None, normalize: bool = True, remove_empty: bool = True) -> int:
-    """Updated to remove papers with duplicate doi. Also support normalization and removal of papers with empty doi"""
+    """Updated to remove papers with duplicate doi. Also supports normalization and removal of papers with empty doi
+        Returns deleted count
+    """
     def _deduplicate(s: Session):
         scraped_papers = get_records(PaperMetadata, session=s)
         seen_papers = []
@@ -102,7 +124,7 @@ def deduplicate_by_doi(session: Optional[Session] = None, normalize: bool = True
 def find_abstracts_by_doi(open_alex_api_key):
     init_db()
     non_abstract_metadas = get_paper_metadatas(abstract="")
-    abstract_found: list[PaperMetadata] = []
+    found_abstract_count = 0
     
     semantic_scholar = SemanticScholarProvider()
     open_alex = OpenAlexProvider(api_key=open_alex_api_key)
@@ -120,6 +142,7 @@ def find_abstracts_by_doi(open_alex_api_key):
                 print(abstract)
 
                 if abstract is not None:
+                    found_abstract_count += 1
                     metadata.abstract = abstract
                     session.add(metadata)
                     session.commit()
@@ -128,6 +151,7 @@ def find_abstracts_by_doi(open_alex_api_key):
                         abstract = open_alex.get_abstract_by_doi(metadata.doi)
                         time.sleep(0.5)
                         if abstract is not None:
+                            found_abstract_count += 1
                             metadata.abstract = abstract
                             session.add(metadata)
                             session.commit()
@@ -140,6 +164,7 @@ def find_abstracts_by_doi(open_alex_api_key):
                         abstract = open_alex.get_abstract_by_doi(metadata.doi)
                         time.sleep(0.5)
                         if abstract is not None:
+                            found_abstract_count += 1
                             metadata.abstract = abstract
                             session.add(metadata)
                             session.commit()
@@ -150,9 +175,10 @@ def find_abstracts_by_doi(open_alex_api_key):
                 
             time.sleep(1)
 
-        print(f"Retrieved {len(abstract_found)} abstracts out of {len(non_abstract_metadas)}")
+        print(f"Retrieved {found_abstract_count} abstracts out of {len(non_abstract_metadas)}")
 
 def remove_empty_abstract_title_papers(session: Optional[Session] = None) -> int:
+    """Returns removed count"""
     def _remove(session: Session):
         empty_abstract = get_paper_metadatas(abstract="", session=session)
         empty_title = get_paper_metadatas(title="", session=session)
@@ -360,51 +386,41 @@ if __name__ == "__main__":
     scopus_api_key = os.getenv("SCOPUS_API_KEY")
     open_alex_api_key = os.getenv("OPEN_ALEX_API_KEY")
 
-    # 1. Search in different providers X
-    # 2. Deduplicate by doi / remove empty doi X
-    # 3. Complete abstracts X 
-    # 4. Remove papers with no abstract/title X
-    # 5. Do relevance check X
-    # 6. Fetch full texts for relevant papers X
-    # 7. Preprocess paper fulltext (xml / pdf -> structured format) X
-    # 8. (includes 7 inside) Run extraction on fulltexts (of relevant papers - in case we already have fulltexts)X
-    # 9. Run evaluation on extractions
+    #ncbi_provider = NCBIProvider(api_key=ncbi_api_key, batch_size=100)
+    #open_alex_provider = OpenAlexProvider(api_key=open_alex_api_key)
     
-    from peptide_extractor.scratchpad import papers_to_extract
+    # 1. Run query search
+    #retrive_ncbi_by_query(ncbi_provider, db="pmc", query_list=NCBI_SEARCH_QUERIES_V3)
 
-    #paper_ids = list(range(120,160))
+    # 2. Deduplicate by doi (+ normalize doi and remove empty)
+    #removed = deduplicate_by_doi()
+    #print(f"Removed {removed} papers with duplicate doi")
+
+    # 3. Find abstracts by doi
+    #find_abstracts_by_doi(open_alex_api_key)
+
+    # 4. Remove papers with empty abstract or title
+    #removed = remove_empty_abstract_title_papers()
+    #print(f"Removed {removed} papers with empty abstract or title")
     
-    
+    # 5. Run relevance screening
+    #start_time = time.time()
     #success, fails, identifier = run_bulk_relevance_screening("mistral-small3.2:latest", "ollama", delay_seconds=0, id=papers_to_relevance_check, batch_size=10)
-    
-    #start_time = time.time()
-    #fails = run_peptide_extraction(provider="ollama", model_name="qwen3.8:latest", delay_seconds=0, id=papers_to_extract[1:])
-    #fails = run_peptide_extraction(provider="ollama", model_name="mistral-small3.2:latest", delay_seconds=0, id=papers_to_extract)
-    #fails = run_peptide_extraction(provider="google", model_name="gemini-3.5-flash-lite", delay_seconds=5, id=papers_to_extract)
-    #fails = run_peptide_extraction(provider="ollama", model_name="gemma4:31b", delay_seconds=0, id=papers_to_extract)
-    #fails, identifier = run_peptide_extraction(provider="google", model_name="gemini-3.5-flash-lite", delay_seconds=4, id=papers_to_extract[1490:1500])
-    
-    #success, fails, identifier = run_bulk_relevance_screening("gemini-3.5-flash-lite", "google", delay_seconds=2, id=[5563, 3386], batch_size=10)
-    #fails, identifier = run_peptide_extraction(provider="google", model_name="gemini-3.5-flash-lite", delay_seconds=4, id=[5563, 3386])
     #end_time = time.time()
-   
-
-    # batch 20 - 40 papers - mistral3.2-small - 240 seconds
-    # batch 10 - 40 papers - mistral3.2-small - 250 seconds
-
     #print(f"Relevance Success: {success}, Fails: {fails}, Identifier: {identifier}, Time: {end_time - start_time}")
-    #print(f"Extraction failed for papers with IDs: {fails}, Identifier: {identifier}, Time: {end_time - start_time}")
-    #print(f"Mock identifier {int(time.time())}")
+    
+    # 6. Fetch fulltexts
+    #relevant_paper_ids = get_paper_metadatas(status=PaperStatus.USABLE)
+    #fetch_paper_fulltexts(ncbi_provider, open_alex_provider, relevant_paper_ids)
 
-
-    # ----------------------
-
-    # 0-2866
-    #extraction_run_identifiers = [1792785738, 1792836645, 1792920960, 1792925750, 1793013630, 1793019671]
+    # 7. Run extraction
     #start_time = time.time()
-    #
-    #fails, identifier = run_evaluation(id=extraction_run_identifiers)
+    #fails, identifier = run_peptide_extraction(provider="google", model_name="gemini-3.5-flash-lite", delay_seconds=4, id=papers_to_extract[1490:1500])
     #end_time = time.time()
-    #
-    #print(f"Failed: {fails}, ID: {identifier}")
-    #print(f"Evaluation completed in {end_time - start_time} seconds")
+    #print(f"Extraction failed for papers with IDs: {fails}, Identifier: {identifier}, Time: {end_time - start_time}")
+
+    # 8. Run evaluation
+    #start_time = time.time()
+    #fails, identifier = run_evaluation(run_identifier=123)
+    #end_time = time.time()
+    #print(f"Evaluation failed for papers with IDs: {fails}, Identifier: {identifier}, Time: {end_time - start_time}")

@@ -1,3 +1,4 @@
+from peptide_extractor.db.raw_provider_record import RawProviderRecord
 import json
 import xml.etree.ElementTree as ET
 from unittest.mock import MagicMock, patch
@@ -7,7 +8,7 @@ import requests
 
 from peptide_extractor.db.paper_metadata import DatasetSubset, PaperMetadata, PaperStatus
 from peptide_extractor.providers import NCBIProvider
-from peptide_extractor.schemas import RawProviderRecord
+
 
 
 class TestNCBIProviderHelpers:
