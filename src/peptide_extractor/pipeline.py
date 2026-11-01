@@ -295,7 +295,7 @@ def fetch_paper_fulltexts(session: Optional[Session] = None, ncbi_provider: NCBI
         return success_count, fail_count
         
     if session is not None:
-        return _fetch(s)
+        return _fetch(session)
     init_db()
     with get_session_context() as s:
         return _fetch(s)
@@ -386,8 +386,8 @@ if __name__ == "__main__":
     scopus_api_key = os.getenv("SCOPUS_API_KEY")
     open_alex_api_key = os.getenv("OPEN_ALEX_API_KEY")
 
-    #ncbi_provider = NCBIProvider(api_key=ncbi_api_key, batch_size=100)
-    #open_alex_provider = OpenAlexProvider(api_key=open_alex_api_key)
+    ncbi_provider = NCBIProvider(api_key=ncbi_api_key, batch_size=100)
+    open_alex_provider = OpenAlexProvider(api_key=open_alex_api_key)
     
     # 1. Run query search
     #retrive_ncbi_by_query(ncbi_provider, db="pmc", query_list=NCBI_SEARCH_QUERIES_V3)
@@ -404,28 +404,27 @@ if __name__ == "__main__":
     #print(f"Removed {removed} papers with empty abstract or title")
     
     # 5. Run relevance screening
-    start_time = time.time()
+    #start_time = time.time()
     
     # doing relevance in batches
-    success, fails, identifier = run_bulk_relevance_screening("gemma4:26b", "ollama", delay_seconds=1, batch_size=1, search_query=NCBI_SEARCH_QUERIES_V3, limit=5000, offset=0)
+    #success, fails, identifier = run_bulk_relevance_screening("gemma4:26b", "ollama", delay_seconds=1, batch_size=1, search_query=NCBI_SEARCH_QUERIES_V3, limit=5000, offset=0)
     
     #success, fails, identifier = run_bulk_relevance_screening("llama4:16x17b", "ollama", delay_seconds=1, batch_size=10, id=9533, limit=5000, offset=0)
     
     #success, fails, identifier = run_bulk_relevance_screening("gemini-3.5-flash-lite", "google", delay_seconds=3, batch_size=50, search_query=NCBI_SEARCH_QUERIES_V3, limit=10000, offset=0)
 
-    end_time = time.time()
-    print(f"Relevance Success: {success}, Fails: {fails}, Identifier: {identifier}, Time: {end_time - start_time}")
+    #end_time = time.time()
+    #print(f"Relevance Success: {success}, Fails: {fails}, Identifier: {identifier}, Time: {end_time - start_time}")
     
     # 6. Fetch fulltexts
-    #relevant_paper_ids = get_paper_metadatas(status=PaperStatus.USABLE)
-    #fetch_paper_fulltexts(ncbi_provider, open_alex_provider, relevant_paper_ids)
-    from peptide_extractor.scratchpad import papers_to_extract
+    #fetch_paper_fulltexts(ncbi_provider=ncbi_provider, open_alex_provider=open_alex_provider, search_query=NCBI_SEARCH_QUERIES_V3, status=PaperStatus.USABLE)
+    from peptide_extractor.scratchpad import papers_to_extract_2
 
     # 7. Run extraction
-    #start_time = time.time()
-    #fails, identifier = run_peptide_extraction(provider="ollama", model_name="qwen3.5:122b", delay_seconds=4, id=papers_to_extract[0:209])
-    #end_time = time.time()
-    #print(f"Extraction failed for papers with IDs: {fails}, Identifier: {identifier}, Time: {end_time - start_time}")
+    start_time = time.time()
+    fails, identifier = run_peptide_extraction(provider="google", model_name="gemini-3.5-flash-lite", delay_seconds=4, id=papers_to_extract_2, limit=450, offset=0)
+    end_time = time.time()
+    print(f"Extraction failed for papers with IDs: {fails}, Identifier: {identifier}, Time: {end_time - start_time}")
 
     # 8. Run evaluation
     #start_time = time.time()

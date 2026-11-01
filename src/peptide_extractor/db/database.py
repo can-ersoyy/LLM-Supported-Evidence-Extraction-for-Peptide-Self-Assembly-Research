@@ -12,7 +12,7 @@ from sqlalchemy.engine import Engine
 load_dotenv(find_dotenv(usecwd=True))
 
 # Default SQLite database path in project's data directory
-DEFAULT_DB_PATH = Path(__file__).resolve().parent.parent.parent.parent / "data" / "papers.db"
+DEFAULT_DB_PATH = Path(__file__).resolve().parent.parent.parent.parent / "data" / "peptide-extractor.db"
 DEFAULT_DATABASE_URL = f"sqlite:///{DEFAULT_DB_PATH}"
 
 DATABASE_URL = os.getenv("DATABASE_URL", DEFAULT_DATABASE_URL)
