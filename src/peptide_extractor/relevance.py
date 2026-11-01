@@ -192,6 +192,7 @@ def bulk_screen_papers(
             provider=provider,
             structured_output=BulkRelevanceResults,
             system_prompt=SYSTEM_PROMPT_BULK,
+            #base_url="https://breaking-trees-favorites-replied.trycloudflare.com",
             base_url="http://localhost:11435"
         )
 
@@ -242,9 +243,9 @@ def bulk_screen_papers(
                     continue
             
         except Exception as e:
-                if session is not None:
-                    session.rollback()
-                failed_paper_ids.append(result.id)
+            if session is not None:
+                session.rollback()
+                #failed_paper_ids.append(result.id)
 
                 print(f"Skipping papers {current_batch[0].id} - {current_batch[-1].id} due to error: {e}")
                 

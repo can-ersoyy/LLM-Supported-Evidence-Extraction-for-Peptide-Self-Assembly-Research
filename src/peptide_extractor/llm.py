@@ -180,6 +180,7 @@ class LLMController:
     def bulk_classify_paper(
         self,
         id_title_abstract_pairs: List[Tuple[int, str, str]],
+        stream: bool = True
     ):
 
         prompt_strings = ""
@@ -195,12 +196,21 @@ class LLMController:
             prompt_strings
         )
 
+        
+
         messages: List[BaseMessage] = []
         if self.system_prompt:
             messages.append(SystemMessage(content=self.system_prompt))
         messages.append(HumanMessage(content=user_content))
 
-        res = self.structured_llm.invoke(messages)
+        should_stream = self.stream if stream is None else stream
+
+        if should_stream:
+            callbacks = [StreamingTokenPrinter()]
+            res = self.structured_llm.invoke(messages, config={"callbacks": callbacks})
+        else:
+            res = self.structured_llm.invoke(messages)
+
         if isinstance(res, dict) and self.structured_output:
             return self.structured_output(**res)
         return res

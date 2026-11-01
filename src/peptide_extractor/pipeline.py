@@ -404,18 +404,26 @@ if __name__ == "__main__":
     #print(f"Removed {removed} papers with empty abstract or title")
     
     # 5. Run relevance screening
-    #start_time = time.time()
-    #success, fails, identifier = run_bulk_relevance_screening("mistral-small3.2:latest", "ollama", delay_seconds=0, id=papers_to_relevance_check, batch_size=10)
-    #end_time = time.time()
-    #print(f"Relevance Success: {success}, Fails: {fails}, Identifier: {identifier}, Time: {end_time - start_time}")
+    start_time = time.time()
+    
+    # doing relevance in batches
+    success, fails, identifier = run_bulk_relevance_screening("gemma4:26b", "ollama", delay_seconds=1, batch_size=1, search_query=NCBI_SEARCH_QUERIES_V3, limit=5000, offset=0)
+    
+    #success, fails, identifier = run_bulk_relevance_screening("llama4:16x17b", "ollama", delay_seconds=1, batch_size=10, id=9533, limit=5000, offset=0)
+    
+    #success, fails, identifier = run_bulk_relevance_screening("gemini-3.5-flash-lite", "google", delay_seconds=3, batch_size=50, search_query=NCBI_SEARCH_QUERIES_V3, limit=10000, offset=0)
+
+    end_time = time.time()
+    print(f"Relevance Success: {success}, Fails: {fails}, Identifier: {identifier}, Time: {end_time - start_time}")
     
     # 6. Fetch fulltexts
     #relevant_paper_ids = get_paper_metadatas(status=PaperStatus.USABLE)
     #fetch_paper_fulltexts(ncbi_provider, open_alex_provider, relevant_paper_ids)
+    from peptide_extractor.scratchpad import papers_to_extract
 
     # 7. Run extraction
     #start_time = time.time()
-    #fails, identifier = run_peptide_extraction(provider="google", model_name="gemini-3.5-flash-lite", delay_seconds=4, id=papers_to_extract[1490:1500])
+    #fails, identifier = run_peptide_extraction(provider="ollama", model_name="qwen3.5:122b", delay_seconds=4, id=papers_to_extract[0:209])
     #end_time = time.time()
     #print(f"Extraction failed for papers with IDs: {fails}, Identifier: {identifier}, Time: {end_time - start_time}")
 
