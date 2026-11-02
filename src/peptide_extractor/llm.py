@@ -74,6 +74,8 @@ def get_chat_model(
             base_url=base_url,
             model=target_model, 
             temperature=temperature,
+            num_ctx=32000,
+            num_predict=5000,
             **kwargs)
 
     elif provider_clean in ("open_router", "openrouter", "open-router"):
