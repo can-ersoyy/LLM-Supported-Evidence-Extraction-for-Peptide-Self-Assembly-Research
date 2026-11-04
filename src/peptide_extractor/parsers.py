@@ -20,10 +20,16 @@ class ParagraphNode(Node):
 class SentenceNode(Node): # a bit trickier than others since there is no specific xml tag
 	pass
 
+class TableNode(Node):
+    def __init__(self, id, content, parent_id, caption, columns, rows):
+        super().__init__(id, content, parent_id)
+        self.caption = caption
+        self.columns = columns
+        self.rows = rows
+	
+
 # specials (these will have additional fields and logic)
 #class ImageNode(Node):
-#	pass
-#class TableNode(Node):
 #	pass
 
 def get_body_tag_from_xml_root(xml_string: str) -> Tag:
@@ -66,6 +72,36 @@ def add_sentences(root: RootNode):
     
     return _add_sentences(root, nlp)
 
+def parse_table_node(id, parent_id, table_wrap_tag: Tag) -> TableNode:
+    caption_tag = table_wrap_tag.find("caption")
+    caption = caption_tag.get_text(separator=" ", strip=True) if caption_tag else ""
+
+    tr_tags = table_wrap_tag.find_all("tr")
+
+    columns = []
+    rows = []
+
+    if tr_tags:
+        header_tr = tr_tags[0]
+        header_cells = header_tr.find_all(["th", "td"])
+        columns = [cell.get_text(separator=" ", strip=True) for cell in header_cells]
+
+        for tr in tr_tags[1:]:
+            row_cells = tr.find_all(["td", "th"])
+            rows.append([cell.get_text(separator=" ", strip=True) for cell in row_cells])
+
+    content = caption
+
+    return TableNode(
+        id=id,
+        content=content,
+        parent_id=parent_id,
+        caption=caption,
+        columns=columns,
+        rows=rows
+    )
+
+
 
 def parse_xml(xml_string: str) -> RootNode:
     """Parses an XML string into a tree of Node objects."""
@@ -82,8 +118,19 @@ def parse_xml(xml_string: str) -> RootNode:
                 content = root_tag.find("title")
                 node = SectionNode(id, content.text if content else "", parent_id)
             elif root_tag.name == "p":
-                content = root_tag.text
+                nested_tables = root_tag.find_all("table-wrap")
+                if nested_tables:
+                    # Clone or extract table text out of p so .text doesn't swallow it
+                    p_copy = BeautifulSoup(str(root_tag), "xml").find("p")
+                    for tw in p_copy.find_all("table-wrap"):
+                        tw.decompose()  # Remove table from paragraph text (this is the copy)
+                    content = p_copy.get_text(separator=" ", strip=True)
+                else:
+                    content = root_tag.get_text(separator=" ", strip=True)
                 node = ParagraphNode(id, content, parent_id)
+            elif root_tag.name == "table-wrap":
+                id = construct_node_id(parent_id, f"table-{level_index}")
+                node = parse_table_node(id, parent_id, root_tag) # returns TableNode directly
             else:
                 return
             parent_node.children.append(node)
@@ -126,6 +173,19 @@ def to_llm_string(paper_tree: RootNode) -> str:
         s += f" {paper_tree.content}\n"
     elif isinstance(paper_tree, SentenceNode):
         s += f" {paper_tree.content}\n"
+    elif isinstance(paper_tree, TableNode):
+        s += f" {paper_tree.content}\n"
+
+        indent = "\t" * tab_level
+
+        header_str = " | ".join(paper_tree.columns)
+        s += f"{indent}\tColumns: {header_str}\n"
+
+        # rows with location annotation
+        for idx, row in enumerate(paper_tree.rows):
+            row_id = f"[{paper_tree.id}/row-{idx}]"
+            row_str = " | ".join(str(cell) for cell in row)
+            s += f"{indent}\t{row_id} {row_str}\n"
 
     for child in paper_tree.children:
         s += to_llm_string(child)
@@ -150,6 +210,7 @@ def to_debug_string(paper_tree: RootNode) -> str:
                 (ParagraphNode
                     (SentenceNode)
                     (SentenceNode)
+                    (TableNode)
                 )
             )
         )
