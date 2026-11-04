@@ -165,18 +165,22 @@ class EvidenceSpan(BaseModel):
         result = self.model_dump_json(exclude_none=True)
         return result
 
-        
-        
 
 # this one is for LLM api (not db)
 class PeptideLLMEntry(BaseModel):
     """Peptide Entry for a single peptide, there can be several entries in a single paper. Return null for fields that are not found."""
 
-    sequence: str = Field(description="Peptide sequence in letters. (e.g. 'FF')")
-    type: Optional[PeptideAssemblyType] = Field(default=None, description="Peptide assembly type, one of [none, ribbon, nanosphere, organogel, tube, particle, vesicle, hydrogel, fiber, amyloid].")
+    #sequence: str = Field(description="Peptide sequence in letters. (e.g. 'FF')")
+    sequence: str = Field(description="""
+    The IUPAC amino acid sequence of the peptide using standard single-letter codes
+    (e.g., 'ACDEFGHIKLMNPQRSTVWY'). Must contain only valid uppercase IUPAC single-letter
+    residues. Do not include spaces, hyphens, numbers.
+    """)
+    
+    type: Optional[PeptideAssemblyType] = Field(default=None, description="Peptide assembly type, one of the following: [none, ribbon, nanosphere, organogel, tube, particle, vesicle, hydrogel, fiber, amyloid].")
 
-    n_terminal: Optional[str] = Field(default=None)
-    c_terminal: Optional[str] = Field(default=None)
+    n_terminal: Optional[str] = Field(default=None, description="N termini of the peptide sequence")
+    c_terminal: Optional[str] = Field(default=None, description="C termini of the peptide sequence")
 
     temperature: Optional[float] = Field(default=None, description="Reaction/assembly temperature in Celsius as a float (e.g. 25.0, 37.0). If reported as 'room temperature' or 'RT', convert to 25.0. Return null if not mentioned.")
     ph: Optional[float] = Field(default=None, description="pH value (e.g. 7.4, 4.8 etc.)")
@@ -185,11 +189,11 @@ class PeptideLLMEntry(BaseModel):
     solution: Optional[str] = Field(default=None, description=f"Examples: {solution_examples}")
     solvent: Optional[str] = None
     volume_ratio: Optional[list[int]] = Field(default=None, description="Examples: [50, 50] for 50% to 50% (v/v) or [30, 70] for 30% to 70% (v/v). The list should sum to 100 if there are multiple solvents. Return [1] if the solution is only made of a single solvent. Return null if not mentioned.")
-    incubation_period: Optional[int] = Field(default=None, description="In minutes")
+    incubation_period: Optional[int] = Field(default=None, description="Provided in minutes")
 
-    peptide_conjugate_mixture: PeptideConjugateMixture = PeptideConjugateMixture.PEPTIDE
-    conjugate_partner: Optional[str] = None
-    linear_cyclic: PeptideLinearity = PeptideLinearity.LINEAR
+    peptide_conjugate_mixture: Optional[PeptideConjugateMixture] = Field(default=None, description="Whether provided sequence is a single peptide, a conjugate or a mixture of multiple.")
+    conjugate_partner: Optional[str] = Field(default=None, description="Only provide in case it is not a single peptide")
+    linear_cyclic: Optional[PeptideLinearity] = Field(default=None, description="linear or cyclic")
     detection_method: Optional[list[str]] = Field(default=None, description="Provide each identified method as a seperate item in the list as verbatim text from source text.")
     preparation_protocol: Optional[str] = Field(default=None, description="Verbatim text from source text describing how the peptide was prepared or manufactured or synthesized.")
 
