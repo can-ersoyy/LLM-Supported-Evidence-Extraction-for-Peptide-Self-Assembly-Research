@@ -6,13 +6,6 @@ This is the main development repository for the IDP project.
 
 The pipeline can be run using the provided CLI and a YAML configuration file.
 
-### Setup
-
-Install the required dependencies:
-```bash
-uv pip install pyyaml click
-```
-
 ### Configuration
 
 Create a `config.yaml` file with the desired pipeline steps and parameters:
@@ -54,5 +47,5 @@ extraction:
 Execute the CLI by passing the config file path:
 
 ```bash
-python -m src.peptide_extractor.cli run-pipeline --config config.yaml
+uv run src/peptide_extractor/cli.py run_pipeline --config config.yaml
 ```

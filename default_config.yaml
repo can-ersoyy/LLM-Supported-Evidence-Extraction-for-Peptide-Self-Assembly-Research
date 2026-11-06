@@ -1,0 +1,14 @@
+log_level: "INFO"
+ncbi_batch_size: 100
+
+# List of steps to run in order
+steps:
+  - extraction
+
+extraction:
+  provider: "google"
+  model_name: "gemini-3.5-flash-lite"
+  delay_seconds: 4
+  kwargs:
+    limit: 3
+    id: [130, 257, 941, 958, 1074]

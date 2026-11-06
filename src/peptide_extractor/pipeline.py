@@ -22,9 +22,7 @@ from peptide_extractor.db import get_session_context, init_db
 
 import logging
 
-logging.basicConfig()
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
 
 
 # maps peptide length to structure name or self-assembly keyword, includes open-access, english and non review article filters, only title and abstract
