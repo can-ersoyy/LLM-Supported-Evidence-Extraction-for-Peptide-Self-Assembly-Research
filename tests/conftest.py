@@ -1,5 +1,4 @@
 import pytest
-from unittest.mock import MagicMock
 from peptide_extractor.providers import NCBIProvider
 
 SAMPLE_PUBMED_XML = """<?xml version="1.0" ?>

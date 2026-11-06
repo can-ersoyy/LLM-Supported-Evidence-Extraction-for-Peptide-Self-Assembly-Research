@@ -9,10 +9,13 @@ from peptide_extractor.pipeline import remove_empty_abstract_title_papers
 @pytest.fixture
 def test_session():
     """Provide an in-memory SQLite database session for testing."""
-    engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False})
+    engine = create_engine(
+        "sqlite:///:memory:", connect_args={"check_same_thread": False}
+    )
     SQLModel.metadata.create_all(engine)
     with Session(engine) as session:
         yield session
+
 
 def test_remove_empty_abstract_papers(test_session):
     p1 = PaperMetadata(
@@ -38,15 +41,16 @@ def test_remove_empty_abstract_papers(test_session):
     )
     test_session.add_all([p1, p2, p3])
     test_session.commit()
-    
+
     deleted = remove_empty_abstract_title_papers(session=test_session)
-    
+
     assert deleted == 1
     remaining = test_session.exec(select(PaperMetadata)).all()
     assert len(remaining) == 2
     assert p1 in remaining
     assert p3 in remaining
     assert p2 not in remaining
+
 
 def test_remove_empty_title_papers(test_session):
     p1 = PaperMetadata(
@@ -72,9 +76,9 @@ def test_remove_empty_title_papers(test_session):
     )
     test_session.add_all([p1, p2, p3])
     test_session.commit()
-    
+
     deleted = remove_empty_abstract_title_papers(session=test_session)
-    
+
     assert deleted == 1
     remaining = test_session.exec(select(PaperMetadata)).all()
     assert len(remaining) == 2

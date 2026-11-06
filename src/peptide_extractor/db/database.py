@@ -12,7 +12,11 @@ from sqlalchemy.engine import Engine
 load_dotenv(find_dotenv(usecwd=True))
 
 # Default SQLite database path in project's data directory
-DEFAULT_DB_PATH = Path(__file__).resolve().parent.parent.parent.parent / "data" / "peptide-extractor.db"
+DEFAULT_DB_PATH = (
+    Path(__file__).resolve().parent.parent.parent.parent
+    / "data"
+    / "peptide-extractor.db"
+)
 DEFAULT_DATABASE_URL = f"sqlite:///{DEFAULT_DB_PATH}"
 
 DATABASE_URL = os.getenv("DATABASE_URL", DEFAULT_DATABASE_URL)
@@ -74,7 +78,9 @@ def _resolve_model(model_or_name: Union[Type[SQLModel], str]) -> Type[SQLModel]:
     if not isinstance(model_or_name, str):
         if isinstance(model_or_name, type) and issubclass(model_or_name, SQLModel):
             return model_or_name
-        raise ValueError(f"Expected SQLModel subclass or string, got {type(model_or_name)}")
+        raise ValueError(
+            f"Expected SQLModel subclass or string, got {type(model_or_name)}"
+        )
 
     table_name = model_or_name.strip().lower()
     from peptide_extractor.db.paper_metadata import PaperMetadata
@@ -88,6 +94,7 @@ def _resolve_model(model_or_name: Union[Type[SQLModel], str]) -> Type[SQLModel]:
     }
     try:
         from peptide_extractor.db.peptide_entry import PeptideEntry
+
         if hasattr(PeptideEntry, "__tablename__"):
             registry["peptide_entry"] = PeptideEntry
     except ImportError:

@@ -91,7 +91,9 @@ def test_screen_papers_workflow(mock_llm):
     llm, structured_mock = mock_llm
 
     # Create in-memory DB session
-    engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False})
+    engine = create_engine(
+        "sqlite:///:memory:", connect_args={"check_same_thread": False}
+    )
     SQLModel.metadata.create_all(engine)
 
     with Session(engine) as session:
@@ -134,10 +136,7 @@ def test_screen_papers_workflow(mock_llm):
         )
 
         succesful_screens, _ = screen_papers(
-            classifier=controller,
-            batch_size=10,
-            session=session,
-            delay_seconds=0
+            classifier=controller, batch_size=10, session=session, delay_seconds=0
         )
 
         assert len(succesful_screens) == 2
@@ -160,24 +159,37 @@ def test_run_relevance_screening_pipeline_function(monkeypatch):
     mock_screen = MagicMock(return_value=([("paper1", "res1"), ("paper2", "res2")], []))
     mock_controller_cls = MagicMock()
 
-    monkeypatch.setattr("peptide_extractor.relevance.screen_papers", mock_screen)
+    monkeypatch.setattr("peptide_extractor.pipeline.screen_papers", mock_screen)
     monkeypatch.setattr("peptide_extractor.llm.LLMController", mock_controller_cls)
     monkeypatch.setattr("peptide_extractor.pipeline.init_db", lambda: None)
+    monkeypatch.setattr(
+        "peptide_extractor.relevance.get_paper_metadatas", MagicMock(return_value=[])
+    )
+    monkeypatch.setattr("peptide_extractor.llm.get_chat_model", MagicMock())
 
-    (succesful_screens, _, _) = run_relevance_screening(provider="google_genai", model_name="gemma-4-31b-it", batch_size=5)
+    (succesful_screens, _, _) = run_relevance_screening(
+        provider="google_genai", model_name="gemma-4-31b-it", batch_size=5
+    )
     assert len(succesful_screens) == 2
     mock_screen.assert_called_once()
 
+
 def test_run_relevance_screening_pipeline_function_2(monkeypatch):
     from peptide_extractor.pipeline import run_relevance_screening
-    
+
     # testing failure modes as well
     mock_screen = MagicMock(return_value=([1], [2, 3]))
 
-    monkeypatch.setattr("peptide_extractor.relevance.screen_papers", mock_screen)
+    monkeypatch.setattr("peptide_extractor.pipeline.screen_papers", mock_screen)
     monkeypatch.setattr("peptide_extractor.pipeline.init_db", lambda: None)
+    monkeypatch.setattr(
+        "peptide_extractor.relevance.get_paper_metadatas", MagicMock(return_value=[])
+    )
+    monkeypatch.setattr("peptide_extractor.llm.get_chat_model", MagicMock())
 
-    (succesful_screens, failed_screens, run_identifier) = run_relevance_screening(provider="google_genai", model_name="gemma-4-31b-it", batch_size=5)
+    (succesful_screens, failed_screens, run_identifier) = run_relevance_screening(
+        provider="google_genai", model_name="gemma-4-31b-it", batch_size=5
+    )
     assert len(succesful_screens) == 1
     assert len(failed_screens) == 2
     assert run_identifier is not None
@@ -189,7 +201,9 @@ def test_screen_papers_skips_failed_api_call(mock_llm):
     llm, structured_mock = mock_llm
     from peptide_extractor.relevance import screen_papers
 
-    engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False})
+    engine = create_engine(
+        "sqlite:///:memory:", connect_args={"check_same_thread": False}
+    )
     SQLModel.metadata.create_all(engine)
 
     with Session(engine) as session:
@@ -217,7 +231,10 @@ def test_screen_papers_skips_failed_api_call(mock_llm):
             is_relevant=True,
             confidence=0.95,
         )
-        structured_mock.invoke.side_effect = [RuntimeError("API Rate Limit Exceeded"), res2]
+        structured_mock.invoke.side_effect = [
+            RuntimeError("API Rate Limit Exceeded"),
+            res2,
+        ]
 
         controller = LLMController(
             llm=llm,
@@ -226,10 +243,7 @@ def test_screen_papers_skips_failed_api_call(mock_llm):
         )
 
         succesful_screens, _ = screen_papers(
-            classifier=controller,
-            batch_size=10,
-            session=session,
-            delay_seconds=0
+            classifier=controller, batch_size=10, session=session, delay_seconds=0
         )
 
         # Only paper2 should be in results
@@ -247,7 +261,9 @@ def test_screen_papers_skips_failed_api_call(mock_llm):
 def test_screen_papers(mock_llm):
     llm, structured_mock = mock_llm
 
-    engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False})
+    engine = create_engine(
+        "sqlite:///:memory:", connect_args={"check_same_thread": False}
+    )
     SQLModel.metadata.create_all(engine)
 
     with Session(engine) as session:
@@ -274,7 +290,7 @@ def test_screen_papers(mock_llm):
             abstract="Abstract 4.",
             is_open_access=True,
             status=PaperStatus.USABLE,
-            dataset_subset=DatasetSubset.GOLDEN_BENCHMARK
+            dataset_subset=DatasetSubset.GOLDEN_BENCHMARK,
         )
         session.add_all([paper1, paper2, paper3, paper4])
         session.commit()
@@ -294,9 +310,7 @@ def test_screen_papers(mock_llm):
 
         # By default screen all papers
         succesful_screens, _ = screen_papers(
-            classifier=controller,
-            session=session,
-            delay_seconds=0
+            classifier=controller, session=session, delay_seconds=0
         )
         assert len(succesful_screens) == 4
         assert succesful_screens[0][0].id == paper1.id
@@ -305,18 +319,20 @@ def test_screen_papers(mock_llm):
             classifier=controller,
             session=session,
             delay_seconds=0,
-            dataset_subset=DatasetSubset.GOLDEN_BENCHMARK
+            dataset_subset=DatasetSubset.GOLDEN_BENCHMARK,
         )
         assert len(screened_golden_dataset) == 1
         assert screened_golden_dataset[0][0].id == paper4.id
 
-        
+
 def test_get_paper_relevances_query():
-    engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False})
+    engine = create_engine(
+        "sqlite:///:memory:", connect_args={"check_same_thread": False}
+    )
     SQLModel.metadata.create_all(engine)
 
     with Session(engine) as session:
-        rec1 = save_paper_relevance(
+        save_paper_relevance(
             paper_id=1,
             detected_clues="['fiber']",
             explanation="Forms fibers",
@@ -327,7 +343,7 @@ def test_get_paper_relevances_query():
             model_name="gemma-4-31b-it",
             session=session,
         )
-        rec2 = save_paper_relevance(
+        save_paper_relevance(
             paper_id=1,
             detected_clues="[]",
             explanation="Not relevant",
@@ -338,7 +354,7 @@ def test_get_paper_relevances_query():
             model_name="llama3",
             session=session,
         )
-        rec3 = save_paper_relevance(
+        save_paper_relevance(
             paper_id=2,
             detected_clues="['hydrogel']",
             explanation="Forms hydrogel",
@@ -353,13 +369,11 @@ def test_get_paper_relevances_query():
         all_for_p1 = get_paper_relevances(paper_id=1, session=session)
         assert len(all_for_p1) == 2
 
-        relevant_p1 = get_paper_relevances(paper_id=1, is_relevant=True, session=session)
+        relevant_p1 = get_paper_relevances(
+            paper_id=1, is_relevant=True, session=session
+        )
         assert len(relevant_p1) == 1
         assert relevant_p1[0].provider == "google_genai"
 
         google_recs = get_paper_relevances(provider="google_genai", session=session)
         assert len(google_recs) == 2
-
-
-
-

@@ -1,14 +1,12 @@
 """Unit tests for Azure Blob Storage integration (azure_storage.py)."""
 
 import gzip
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 from azure.core.exceptions import ResourceExistsError, ResourceNotFoundError
 
 from peptide_extractor.azure_storage import (
-    build_blob_name,
     delete_blob,
     download_file,
     download_xml,
@@ -22,6 +20,7 @@ from peptide_extractor.azure_storage import (
 
 class TestAzureStorageHelpers:
     """Test helper functions in azure_storage."""
+
     # TODO update these for doi
 
     def test_extract_blob_name_from_url(self):
@@ -38,7 +37,10 @@ class TestAzureStorageHelpers:
 
     def test_extract_blob_name_with_custom_container(self):
         name = "/custom-container/xml/ncbi/PMC1234567.xml.gz"
-        assert extract_blob_name(name, container_name="custom-container") == "xml/ncbi/PMC1234567.xml.gz"
+        assert (
+            extract_blob_name(name, container_name="custom-container")
+            == "xml/ncbi/PMC1234567.xml.gz"
+        )
 
     def test_get_blob_service_client_missing_env(self, monkeypatch):
         monkeypatch.delenv("AZURE_STORAGE_CONNECTION_STRING", raising=False)
@@ -47,7 +49,9 @@ class TestAzureStorageHelpers:
 
     def test_get_blob_service_client_with_conn_str(self):
         fake_conn = "DefaultEndpointsProtocol=https;AccountName=test;AccountKey=fakekey==;EndpointSuffix=core.windows.net"
-        with patch("peptide_extractor.azure_storage.BlobServiceClient.from_connection_string") as mock_from_conn:
+        with patch(
+            "peptide_extractor.azure_storage.BlobServiceClient.from_connection_string"
+        ) as mock_from_conn:
             mock_client = MagicMock()
             mock_from_conn.return_value = mock_client
             client = get_blob_service_client(connection_string=fake_conn)
@@ -81,10 +85,13 @@ class TestUploadXML:
             client=mock_service,
             compress=True,
         )
-        
+
         clean_doi = "10.1186_1471-2164-15-123".replace("/", "_")
 
-        assert url == f"https://myaccount.blob.core.windows.net/paper-xmls/xml/{clean_doi}.xml.gz"
+        assert (
+            url
+            == f"https://myaccount.blob.core.windows.net/paper-xmls/xml/{clean_doi}.xml.gz"
+        )
         mock_container.create_container.assert_called_once()
 
         mock_blob.upload_blob.assert_called_once()
@@ -110,7 +117,7 @@ class TestUploadXML:
         )
 
         assert "pdf/10.1186_1471-2164-15-123.pdf" in url
-        #mock_container.get_blob_client.assert_called_once_with("pdf/10.1186_1471-2164-15-123.pdf")
+        # mock_container.get_blob_client.assert_called_once_with("pdf/10.1186_1471-2164-15-123.pdf")
         uploaded_bytes, kwargs = mock_blob.upload_blob.call_args
         assert uploaded_bytes[0] == dummy_pdf
         assert kwargs["content_settings"].content_type == "application/pdf"
@@ -118,7 +125,9 @@ class TestUploadXML:
 
     def test_upload_xml_container_already_exists(self, mock_azure_clients):
         mock_service, mock_container, _ = mock_azure_clients
-        mock_container.create_container.side_effect = ResourceExistsError("Container already exists")
+        mock_container.create_container.side_effect = ResourceExistsError(
+            "Container already exists"
+        )
 
         # Should not raise exception
         upload_xml(
@@ -147,7 +156,7 @@ class TestDownloadXML:
             client=mock_service,
             use_cache=True,
             cache_dir=tmp_path,
-            decompress=True
+            decompress=True,
         )
 
         assert result == sample_xml
@@ -174,11 +183,13 @@ class TestDownloadXML:
             client=mock_service,
             use_cache=True,
             cache_dir=tmp_path,
-            decompress=True
+            decompress=True,
         )
 
         assert result == sample_xml
-        mock_container.get_blob_client.assert_called_once_with("xml/ncbi/PMC77777.xml.gz")
+        mock_container.get_blob_client.assert_called_once_with(
+            "xml/ncbi/PMC77777.xml.gz"
+        )
 
         # Verify it was written to cache under xml/ncbi/
         cached_file = tmp_path / "xml" / "ncbi" / "PMC77777.xml.gz"
@@ -240,6 +251,7 @@ class TestPaperContentGetContent:
         with pytest.raises(ValueError, match="has no blob_url"):
             content.get_content()
 
+
 class TestDeleteBlob:
     """Tests for blob deletion functions."""
 
@@ -283,7 +295,9 @@ class TestDeleteBlob:
 
         assert result is True
         mock_service.get_container_client.assert_called_once_with("papers")
-        mock_container.get_blob_client.assert_called_once_with("xml/ncbi/PMC2791716.xml.gz")
+        mock_container.get_blob_client.assert_called_once_with(
+            "xml/ncbi/PMC2791716.xml.gz"
+        )
         mock_blob.delete_blob.assert_called_once_with(delete_snapshots="include")
         assert not cached_file.exists()
 
@@ -319,4 +333,3 @@ class TestDeleteBlob:
                 client=mock_service,
                 missing_ok=False,
             )
-

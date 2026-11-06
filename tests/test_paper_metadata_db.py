@@ -14,7 +14,9 @@ from peptide_extractor.db.paper_metadata import (
 @pytest.fixture
 def in_memory_engine():
     """Create an in-memory SQLite engine for testing."""
-    engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False})
+    engine = create_engine(
+        "sqlite:///:memory:", connect_args={"check_same_thread": False}
+    )
     SQLModel.metadata.create_all(engine)
     return engine
 
@@ -77,7 +79,9 @@ def test_get_paper_by_id(test_session):
 
 
 def test_get_paper_metadatas_by_status(test_session):
-    not_processed = get_paper_metadatas(status=PaperStatus.NOT_PROCESSED, session=test_session)
+    not_processed = get_paper_metadatas(
+        status=PaperStatus.NOT_PROCESSED, session=test_session
+    )
     assert len(not_processed) == 2
     titles = [p.title for p in not_processed]
     assert "Paper 1: Tetrapeptide Assembly" in titles
@@ -107,10 +111,14 @@ def test_get_paper_metadatas_with_subset(test_session):
 
 
 def test_get_paper_metadatas_pagination(test_session):
-    papers_page1 = get_paper_metadatas(status=PaperStatus.NOT_PROCESSED, limit=1, offset=0, session=test_session)
+    papers_page1 = get_paper_metadatas(
+        status=PaperStatus.NOT_PROCESSED, limit=1, offset=0, session=test_session
+    )
     assert len(papers_page1) == 1
 
-    papers_page2 = get_paper_metadatas(status=PaperStatus.NOT_PROCESSED, limit=1, offset=1, session=test_session)
+    papers_page2 = get_paper_metadatas(
+        status=PaperStatus.NOT_PROCESSED, limit=1, offset=1, session=test_session
+    )
     assert len(papers_page2) == 1
     assert papers_page1[0].id != papers_page2[0].id
 
@@ -119,7 +127,9 @@ def test_get_paper_metadatas_all(test_session):
     all_papers = get_paper_metadatas(session=test_session)
     assert len(all_papers) == 4
 
-    all_scraped = get_paper_metadatas(dataset_subset=DatasetSubset.SCRAPED, session=test_session)
+    all_scraped = get_paper_metadatas(
+        dataset_subset=DatasetSubset.SCRAPED, session=test_session
+    )
     assert len(all_scraped) == 3
 
 
@@ -140,7 +150,9 @@ def test_get_paper_metadatas_none_value(test_session):
 
 
 def test_get_paper_metadatas_invalid_column(test_session):
-    with pytest.raises(ValueError, match="has no attribute or column 'non_existent_column'"):
+    with pytest.raises(
+        ValueError, match="has no attribute or column 'non_existent_column'"
+    ):
         get_paper_metadatas(non_existent_column="test", session=test_session)
 
 
@@ -155,4 +167,3 @@ def test_update_paper_status(test_session):
     # Verify state in DB
     refreshed = get_paper_by_id(1, session=test_session)
     assert refreshed.status == PaperStatus.USABLE
-

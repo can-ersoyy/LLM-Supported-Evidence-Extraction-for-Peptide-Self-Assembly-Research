@@ -45,7 +45,9 @@ def test_llm_controller_classify_paper_title_abstract(mock_chat_model):
         system_prompt="System prompt",
     )
 
-    result = controller.classify_paper(title="Peptide Study", abstract="Forms nanofibers.")
+    result = controller.classify_paper(
+        title="Peptide Study", abstract="Forms nanofibers."
+    )
     assert result.is_relevant is True
     assert result.confidence == 0.9
     assert result.detected_clues == ["nanofiber"]
@@ -87,7 +89,9 @@ def test_llm_controller_dict_result_conversion(mock_chat_model):
         structured_output=RelevanceResult,
     )
 
-    result = controller.classify_paper(title="Amyloid Study", abstract="Forms amyloid fibrils.")
+    result = controller.classify_paper(
+        title="Amyloid Study", abstract="Forms amyloid fibrils."
+    )
     assert isinstance(result, RelevanceResult)
     assert result.is_relevant is True
     assert result.confidence == 0.92
@@ -136,7 +140,9 @@ def test_extract_peptides_with_curly_braces(mock_chat_model):
     assert result.entries == []
     structured.invoke.assert_called_once()
     called_messages = structured.invoke.call_args[0][0]
-    assert any("$$R\\hskip 2pt{\\mathrm{ = \\pi }}" in msg.content for msg in called_messages)
+    assert any(
+        "$$R\\hskip 2pt{\\mathrm{ = \\pi }}" in msg.content for msg in called_messages
+    )
 
 
 def test_classify_paper_with_curly_braces(mock_chat_model):
@@ -161,4 +167,3 @@ def test_classify_paper_with_curly_braces(mock_chat_model):
     )
     assert res.is_relevant is True
     structured.invoke.assert_called_once()
-

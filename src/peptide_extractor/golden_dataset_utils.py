@@ -1,3 +1,6 @@
+import logging
+
+logger = logging.getLogger(__name__)
 from peptide_extractor.db import get_session_context, init_db
 import csv
 from typing import List
@@ -6,9 +9,7 @@ from pathlib import Path
 
 
 GOLDEN_DATASET_CSV_PATH = (
-    Path(__file__).resolve().parent.parent.parent
-    / "data"
-    / "golden_dataset_final.csv"
+    Path(__file__).resolve().parent.parent.parent / "data" / "golden_dataset_final.csv"
 )
 
 
@@ -28,12 +29,13 @@ def get_golden_dataset_pmids(csv_path: Optional[Path | str] = None) -> List[str]
 
 
 # Pre-parsed list of golden dataset PubMed IDs
-#golden_dataset_pmids: List[str] = get_golden_dataset_pmids()
+# golden_dataset_pmids: List[str] = get_golden_dataset_pmids()
+
 
 def retrieve_golden_dataset(ncbi_provider, golden_dataset_pmids: List[str]):
     raw_records = ncbi_provider.search_by_ids(golden_dataset_pmids)
     golden_dataset_metadatas = ncbi_provider.parse_raw_search_records(raw_records)
-    print(f"Retrieved {golden_dataset_metadatas}")
+    logger.info(f"Retrieved {golden_dataset_metadatas}")
 
     init_db()
     with get_session_context() as session:

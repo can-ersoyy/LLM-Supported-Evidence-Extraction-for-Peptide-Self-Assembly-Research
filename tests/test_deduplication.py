@@ -11,7 +11,9 @@ from peptide_extractor.pipeline import deduplicate_by_doi
 @pytest.fixture
 def test_session():
     """Provide an in-memory SQLite database session for testing."""
-    engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False})
+    engine = create_engine(
+        "sqlite:///:memory:", connect_args={"check_same_thread": False}
+    )
     SQLModel.metadata.create_all(engine)
     with Session(engine) as session:
         yield session
@@ -80,6 +82,7 @@ def test_deduplicate_doi_duplicates(test_session):
     assert p2 not in remaining
     assert p3 not in remaining
 
+
 def test_deduplicate_doi_duplicates_normalize(test_session):
     """Same test with doi normalize"""
     p1 = PaperMetadata(
@@ -110,7 +113,7 @@ def test_deduplicate_doi_duplicates_normalize(test_session):
     test_session.commit()
     print(test_session.exec(select(PaperMetadata)).all())
     deleted = deduplicate_by_doi(session=test_session)
-    
+
     assert deleted == 2
     remaining = test_session.exec(select(PaperMetadata)).all()
     assert len(remaining) == 2
@@ -118,6 +121,7 @@ def test_deduplicate_doi_duplicates_normalize(test_session):
     assert p4 in remaining
     assert p2 not in remaining
     assert p3 not in remaining
+
 
 def test_empty_doi(test_session):
     """Removes empty by default"""
@@ -149,7 +153,7 @@ def test_empty_doi(test_session):
     test_session.commit()
     print(test_session.exec(select(PaperMetadata)).all())
     deleted = deduplicate_by_doi(session=test_session)
-    
+
     assert deleted == 2
     remaining = test_session.exec(select(PaperMetadata)).all()
     assert len(remaining) == 2
@@ -157,6 +161,7 @@ def test_empty_doi(test_session):
     assert p4 in remaining
     assert p2 not in remaining
     assert p3 not in remaining
+
 
 def test_empty_doi_2(test_session):
     """Same test with doi normalize"""
@@ -188,7 +193,7 @@ def test_empty_doi_2(test_session):
     test_session.commit()
     print(test_session.exec(select(PaperMetadata)).all())
     deleted = deduplicate_by_doi(session=test_session, remove_empty=False)
-    
+
     assert deleted == 1
     remaining = test_session.exec(select(PaperMetadata)).all()
     assert len(remaining) == 3

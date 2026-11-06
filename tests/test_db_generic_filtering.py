@@ -8,8 +8,6 @@ from peptide_extractor.db import (
     PaperRelevance,
     PaperStatus,
     get_paper_contents,
-    get_paper_metadatas,
-    get_paper_relevances,
     get_records,
 )
 
@@ -17,7 +15,9 @@ from peptide_extractor.db import (
 @pytest.fixture
 def test_engine_and_session():
     """Create an in-memory SQLite engine and populated session."""
-    engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False})
+    engine = create_engine(
+        "sqlite:///:memory:", connect_args={"check_same_thread": False}
+    )
     SQLModel.metadata.create_all(engine)
 
     with Session(engine) as session:

@@ -11,7 +11,9 @@ class PaperContent(SQLModel, table=True):
     __tablename__: str = "paper_content"
 
     id: Optional[int] = Field(default=None, primary_key=True)
-    paper_id: Optional[int] = Field(default=None, foreign_key="paper_metadata.id", index=True)
+    paper_id: Optional[int] = Field(
+        default=None, foreign_key="paper_metadata.id", index=True
+    )
 
     source: Optional[str] = Field(default=None, description="Source of the content.")
 
@@ -21,7 +23,10 @@ class PaperContent(SQLModel, table=True):
         sa_column=Column(String, nullable=True),
         description="Azure Blob Storage URL or path to the full text content.",
     )
-    pdf_url: Optional[str] = Field(default=None, description="PDF URL of the content. Should be thought of as a backup in case xml doesn't exist")
+    pdf_url: Optional[str] = Field(
+        default=None,
+        description="PDF URL of the content. Should be thought of as a backup in case xml doesn't exist",
+    )
 
     paper: Optional["PaperMetadata"] = Relationship(back_populates="contents")
 
@@ -35,7 +40,7 @@ class PaperContent(SQLModel, table=True):
             return download_xml(self.blob_url, use_cache=use_cache)
         elif self.format == "pdf":
             pass
-            #return download_pdf(self.blob_url, use_cache=use_cache)
+            # return download_pdf(self.blob_url, use_cache=use_cache)
         else:
             raise ValueError(f"Unsupported format: {self.format}")
 
@@ -54,6 +59,7 @@ def get_paper_contents(
         offset=offset,
         **filters,
     )
+
 
 def get_paper_content_by_paper_id(
     paper_id: int,

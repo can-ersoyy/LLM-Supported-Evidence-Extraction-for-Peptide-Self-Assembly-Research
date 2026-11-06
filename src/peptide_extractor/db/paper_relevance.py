@@ -1,6 +1,6 @@
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, List, Optional
-from sqlmodel import Column, DateTime, Field, Relationship, SQLModel, Session, Text, select
+from sqlmodel import Column, DateTime, Field, Relationship, SQLModel, Session, Text
 
 from peptide_extractor.db.database import get_records, get_session_context
 from peptide_extractor.utils import get_utc_now
@@ -13,15 +13,32 @@ class PaperRelevance(SQLModel, table=True):
     __tablename__: str = "paper_relevance"
 
     id: Optional[int] = Field(default=None, primary_key=True)
-    paper_id: Optional[int] = Field(default=None, foreign_key="paper_metadata.id", index=True)
+    paper_id: Optional[int] = Field(
+        default=None, foreign_key="paper_metadata.id", index=True
+    )
 
-    detected_clues: Optional[str] = Field(sa_column=Column(Text, nullable=True), description="list of detected clues")
-    explanation: Optional[str] = Field(sa_column=Column(Text, nullable=True), description="Justification focusing on experimental conditions")
-    is_relevant: Optional[bool] = Field(index=True, description="True if experimental self-assembly data is reported or hinted at")
-    confidence: Optional[float] = Field(description="Confidence score between 0.0 and 1.0")
+    detected_clues: Optional[str] = Field(
+        sa_column=Column(Text, nullable=True), description="list of detected clues"
+    )
+    explanation: Optional[str] = Field(
+        sa_column=Column(Text, nullable=True),
+        description="Justification focusing on experimental conditions",
+    )
+    is_relevant: Optional[bool] = Field(
+        index=True,
+        description="True if experimental self-assembly data is reported or hinted at",
+    )
+    confidence: Optional[float] = Field(
+        description="Confidence score between 0.0 and 1.0"
+    )
 
-    provider: str = Field(index=True, description="LLM provider name: 'google_genai', 'ollama', etc.")
-    model_name: str = Field(index=True, description="LLM model name: e.g. 'gemma-4-31b-it', 'gemini-3.5-flash'")
+    provider: str = Field(
+        index=True, description="LLM provider name: 'google_genai', 'ollama', etc."
+    )
+    model_name: str = Field(
+        index=True,
+        description="LLM model name: e.g. 'gemma-4-31b-it', 'gemini-3.5-flash'",
+    )
 
     run_identifier: Optional[int] = Field(default=None, index=True)
 
@@ -50,6 +67,7 @@ def save_paper_relevance(
     session: Optional[Session] = None,
 ) -> PaperRelevance:
     """Save a PaperRelevance database record."""
+
     def _save(s: Session) -> PaperRelevance:
         record = PaperRelevance(
             paper_id=paper_id,
@@ -86,4 +104,3 @@ def get_paper_relevances(
         offset=offset,
         **filters,
     )
-

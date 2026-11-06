@@ -1,9 +1,10 @@
+import logging
+
+logger = logging.getLogger(__name__)
 from peptide_extractor.utils import convert_pmc_to_pmid_batch
 from peptide_extractor.db.raw_provider_record import save_raw_provider_record
 from peptide_extractor.db.raw_provider_record import RawProviderRecord
 from peptide_extractor.utils import doi_to_filename
-from azure.storage.blob._shared import base_client
-from peptide_extractor.azure_storage import DEFAULT_CONTAINER_NAME
 from abc import ABC, abstractmethod
 from typing import List, Optional, Sequence, Tuple
 
@@ -19,7 +20,6 @@ import xml.etree.ElementTree as ET
 
 
 class BaseProvider(ABC):
-
     def __init__(self, api_key: Optional[str] = None, batch_size: int = 100):
         self.api_key = api_key
         self.batch_size = batch_size
@@ -35,18 +35,21 @@ class BaseProvider(ABC):
         pass
 
     @abstractmethod
-    def parse_raw_search_records(self, raw_records: List[RawProviderRecord]) -> List[PaperMetadata]:
+    def parse_raw_search_records(
+        self, raw_records: List[RawProviderRecord]
+    ) -> List[PaperMetadata]:
         """Parse a list of RawProviderRecords into PaperMetadata instances."""
         pass
 
     @abstractmethod
-    def fetch(self, paper_metadatas: List[PaperMetadata], **kwargs) -> List[PaperContent]:
+    def fetch(
+        self, paper_metadatas: List[PaperMetadata], **kwargs
+    ) -> List[PaperContent]:
         """Fetch full-text content for the given paper metadata instances."""
         pass
 
 
 class NCBIProvider(BaseProvider):
-
     BASE_URL = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/"
 
     def __init__(self, api_key: Optional[str] = None, batch_size: int = 100):
@@ -55,93 +58,101 @@ class NCBIProvider(BaseProvider):
     def extract_match_count(self, response):
         obj = json.loads(response)
         return obj["esearchresult"]["count"]
-    
+
     def extract_id_list(self, response):
         obj = json.loads(response)
         return obj["esearchresult"]["idlist"]
-    
 
     def search_by_query(self, query: str, db="pubmed") -> List[RawProviderRecord]:
         """
-        The usage of efetch here is to retrieve the abstract and title of the 
-        papers for metadata object before retrieving the fulltext. Hence db=pubmed 
-        """    
-        
+        The usage of efetch here is to retrieve the abstract and title of the
+        papers for metadata object before retrieving the fulltext. Hence db=pubmed
+        """
+
         results: list[RawProviderRecord] = []
         params = {
-            "term":query,
-            "retmax":1,
+            "term": query,
+            "retmax": 1,
             "db": db,
             "retmode": "json",
-            "api_key": self.api_key
+            "api_key": self.api_key,
         }
-        
+
         # initial request to retrieve query match count
         try:
             response = requests.get(f"{self.BASE_URL}esearch.fcgi", params=params)
             response.raise_for_status()
         except Exception as e:
-            print(f"Error: {e}")
+            logger.info(f"Error: {e}")
             return []
-        
+
         matches = int(self.extract_match_count(response.content))
         time.sleep(0.1)
 
         for index_counter in range(0, matches, self.batch_size):
-
             try:
-
                 params = {
-                    "term":query,
-                    "retmax":1,
+                    "term": query,
+                    "retmax": 1,
                     "db": db,
                     "retmode": "json",
-                    "api_key": self.api_key
+                    "api_key": self.api_key,
                 }
 
                 params["retstart"] = index_counter
                 params["retmax"] = self.batch_size
 
-                try: 
-                    response = requests.get(f"{self.BASE_URL}esearch.fcgi", params=params)
+                try:
+                    response = requests.get(
+                        f"{self.BASE_URL}esearch.fcgi", params=params
+                    )
                     response.raise_for_status()
-                    #print(f"Response for batch {index_counter} retreived: {response.content}")
+                    # logger.info(f"Response for batch {index_counter} retreived: {response.content}")
                 except Exception as e:
-                    print(f"Error: {e}")
+                    logger.info(f"Error: {e}")
                     continue
 
                 time.sleep(0.2)
                 id_list = self.extract_id_list(response.content)
-                print(id_list)
+                logger.info(id_list)
 
-        
                 if not id_list:
                     continue
 
                 if db == "pmc":
-                    formatted_pmcids = [f"PMC{i}" if not str(i).startswith("PMC") else str(i) for i in id_list]
-                    id_map = convert_pmc_to_pmid_batch(formatted_pmcids, self.api_key) # since db is pmc, returned ids are pmc and need to be turned into pmid before using pubmed esearch
-                    
-                    pmid_list = [id_map[pid]['pmid'] for pid in formatted_pmcids if id_map[pid]['pmid']]
-                    
+                    formatted_pmcids = [
+                        f"PMC{i}" if not str(i).startswith("PMC") else str(i)
+                        for i in id_list
+                    ]
+                    id_map = convert_pmc_to_pmid_batch(
+                        formatted_pmcids, self.api_key
+                    )  # since db is pmc, returned ids are pmc and need to be turned into pmid before using pubmed esearch
+
+                    pmid_list = [
+                        id_map[pid]["pmid"]
+                        for pid in formatted_pmcids
+                        if id_map[pid]["pmid"]
+                    ]
+
                     if not pmid_list:
                         continue
 
                     id_list = pmid_list
-                
 
                 params = {
-                    "db": "pubmed", # we always want to search here from pubmed since pmc returns fulltext and not only abstract
+                    "db": "pubmed",  # we always want to search here from pubmed since pmc returns fulltext and not only abstract
                     "retmode": "xml",
                     "api_key": self.api_key,
-                    "id": ",".join(id_list)
+                    "id": ",".join(id_list),
                 }
 
                 try:
-                    fetch_res = requests.get(f"{self.BASE_URL}efetch.fcgi", params=params)
+                    fetch_res = requests.get(
+                        f"{self.BASE_URL}efetch.fcgi", params=params
+                    )
                     fetch_res.raise_for_status()
                 except Exception as e:
-                    print(f"Error: {e}")
+                    logger.info(f"Error: {e}")
                     continue
 
                 time.sleep(0.2)
@@ -150,16 +161,16 @@ class NCBIProvider(BaseProvider):
                 for article_elem in root:
                     xml_str = ET.tostring(article_elem, encoding="unicode")
                     record = RawProviderRecord(
-                        provider="ncbi",
-                        search_query=query,
-                        raw_data={"xml": xml_str}
+                        provider="ncbi", search_query=query, raw_data={"xml": xml_str}
                     )
                     # we need to save the record to the database as a backup for long tasks
                     save_raw_provider_record(record)
                     results.append(record)
-            
+
             except Exception as e:
-                print(f"Error processing batch {index_counter}: {e}. Skipping it.")
+                logger.info(
+                    f"Error processing batch {index_counter}: {e}. Skipping it."
+                )
                 continue
 
         return results
@@ -172,7 +183,7 @@ class NCBIProvider(BaseProvider):
     ) -> List[RawProviderRecord]:
         results: list[RawProviderRecord] = []
         num_records = len(id_list)
-    
+
         for i in range(0, num_records, self.batch_size):
             batch = id_list[i : i + self.batch_size]
             cleaned_batch = [str(x).strip() for x in batch if str(x).strip()]
@@ -185,11 +196,11 @@ class NCBIProvider(BaseProvider):
                 "api_key": self.api_key,
                 "id": ",".join(cleaned_batch),
             }
-    
+
             fetch_res = requests.get(f"{self.BASE_URL}efetch.fcgi", params=params)
             fetch_res.raise_for_status()
             time.sleep(0.2)
-    
+
             root = ET.fromstring(fetch_res.content)
             for article_elem in root:
                 xml_str = ET.tostring(article_elem, encoding="unicode")
@@ -199,7 +210,7 @@ class NCBIProvider(BaseProvider):
                     raw_data={"xml": xml_str},
                 )
                 results.append(record)
-    
+
         return results
 
     def _parse_xml(self, xml_content: str | ET.Element) -> dict:
@@ -212,12 +223,18 @@ class NCBIProvider(BaseProvider):
         # 1. Title
         title_node = elem.find(".//MedlineCitation/Article/ArticleTitle")
         if title_node is None:
-            title_node = elem.find(".//ArticleTitle") or elem.find(".//title-group/article-title")
+            title_node = elem.find(".//ArticleTitle") or elem.find(
+                ".//title-group/article-title"
+            )
         title = "".join(title_node.itertext()).strip() if title_node is not None else ""
         title = " ".join(title.split())
 
         # 2. Abstract (supports structured abstracts with Label attributes and handles nested tags)
-        abstract_nodes = elem.findall(".//AbstractText") or elem.findall(".//abstract/p") or elem.findall(".//abstract/sec")
+        abstract_nodes = (
+            elem.findall(".//AbstractText")
+            or elem.findall(".//abstract/p")
+            or elem.findall(".//abstract/sec")
+        )
         abstract_parts = []
         for node in abstract_nodes:
             label = node.get("Label")
@@ -241,7 +258,11 @@ class NCBIProvider(BaseProvider):
             if id_type and aid.text:
                 id_map[id_type.lower()] = aid.text.strip()
 
-        pmid = elem.findtext(".//MedlineCitation/PMID") or id_map.get("pubmed") or id_map.get("pmid")
+        pmid = (
+            elem.findtext(".//MedlineCitation/PMID")
+            or id_map.get("pubmed")
+            or id_map.get("pmid")
+        )
         doi = id_map.get("doi")
         pmcid = id_map.get("pmc") or id_map.get("pmcid")
         if pmcid:
@@ -257,7 +278,9 @@ class NCBIProvider(BaseProvider):
             "pmcid": pmcid,
         }
 
-    def parse_raw_search_records(self, raw_records: List[RawProviderRecord]) -> List[PaperMetadata]:
+    def parse_raw_search_records(
+        self, raw_records: List[RawProviderRecord]
+    ) -> List[PaperMetadata]:
         paper_metadatas: List[PaperMetadata] = []
 
         for raw_record in raw_records:
@@ -302,24 +325,28 @@ class NCBIProvider(BaseProvider):
                 status=PaperStatus.NOT_PROCESSED,
                 is_open_access=is_open_access,
                 search_query=raw_record.search_query,
-                provider="ncbi"
+                provider="ncbi",
             )
 
             paper_metadatas.append(paper_metadata)
 
         return paper_metadatas
 
-    def fetch(self, paper_metadatas: Sequence[PaperMetadata], db = "pmc", batch_size=10) -> Tuple[List[PaperContent], List[int], List[int]]:
+    def fetch(
+        self, paper_metadatas: Sequence[PaperMetadata], db="pmc", batch_size=10
+    ) -> Tuple[List[PaperContent], List[int], List[int]]:
         num_records = len(paper_metadatas)
         pmcid_list = [paper.pmcid for paper in paper_metadatas]
-        
+
         succesful_paper_ids: list[int] = []
         failed_paper_ids: list[int] = []
         paper_contents: List[PaperContent] = []
 
         for i in range(0, num_records, batch_size):
             batch_pmcids = pmcid_list[i : i + batch_size]
-            valid_pmcids = [str(x).strip() for x in batch_pmcids if x and str(x).strip()]
+            valid_pmcids = [
+                str(x).strip() for x in batch_pmcids if x and str(x).strip()
+            ]
             if not valid_pmcids:
                 continue
 
@@ -332,21 +359,33 @@ class NCBIProvider(BaseProvider):
 
             response = requests.get(f"{self.BASE_URL}efetch.fcgi", params=params)
             response.raise_for_status()
-            time.sleep(0.2) 
+            time.sleep(0.2)
 
             root = ET.fromstring(response.content)
-            print("inside")
+            logger.info("inside")
 
             for article_elem in root.findall("article"):
-
                 body = article_elem.find("body")
-                if body != None:
-                    pmcid_node = article_elem.find(".//front/article-meta/article-id[@pub-id-type='pmcid']")
-                    pmcid_text = pmcid_node.text.strip() if pmcid_node is not None and pmcid_node.text else None
+                if body is not None:
+                    pmcid_node = article_elem.find(
+                        ".//front/article-meta/article-id[@pub-id-type='pmcid']"
+                    )
+                    pmcid_text = (
+                        pmcid_node.text.strip()
+                        if pmcid_node is not None and pmcid_node.text
+                        else None
+                    )
                     if pmcid_text and not pmcid_text.upper().startswith("PMC"):
                         pmcid_text = f"PMC{pmcid_text}"
 
-                    paper_metadata = next((p for p in paper_metadatas[i:i+batch_size] if p.pmcid == pmcid_text), None)
+                    paper_metadata = next(
+                        (
+                            p
+                            for p in paper_metadatas[i : i + batch_size]
+                            if p.pmcid == pmcid_text
+                        ),
+                        None,
+                    )
                     if paper_metadata:
                         clean_doi = doi_to_filename(paper_metadata.doi)
                         xml_str = ET.tostring(article_elem, encoding="unicode")
@@ -365,27 +404,29 @@ class NCBIProvider(BaseProvider):
                         paper_contents.append(paper_content)
                         succesful_paper_ids.append(paper_metadata.id)
 
-        failed_paper_ids = [paper.id for paper in paper_metadatas if paper.id not in succesful_paper_ids]
-        
+        failed_paper_ids = [
+            paper.id for paper in paper_metadatas if paper.id not in succesful_paper_ids
+        ]
+
         return paper_contents, succesful_paper_ids, failed_paper_ids
 
-class ScopusProvider(BaseProvider):
 
+class ScopusProvider(BaseProvider):
     BASE_URL = "https://api.elsevier.com/content/search/scopus"
 
     def __init__(self, api_key: Optional[str] = None, batch_size: int = 25):
-            super().__init__(api_key, batch_size)
+        super().__init__(api_key, batch_size)
 
     def search_by_query(self, query):
-        
+
         results: List[RawProviderRecord] = []
 
         params = {
-            "query" : query,
-            "apiKey" : self.api_key,
-            "contentType" : "json",
+            "query": query,
+            "apiKey": self.api_key,
+            "contentType": "json",
             "start": 0,
-            "count": self.batch_size
+            "count": self.batch_size,
         }
 
         response = requests.get(self.BASE_URL, params=params)
@@ -394,9 +435,11 @@ class ScopusProvider(BaseProvider):
 
         data = response.json()
         count = data.get("search-results", {}).get("opensearch:totalResults", 0)
-        
+
         for page_number in range(0, int(count), self.batch_size):
-            print(f"receving the {page_number}th to {page_number+self.batch_size} results")
+            logger.info(
+                f"receving the {page_number}th to {page_number + self.batch_size} results"
+            )
             params["start"] = page_number
             response = requests.get(self.BASE_URL, params=params)
             response.raise_for_status()
@@ -408,23 +451,23 @@ class ScopusProvider(BaseProvider):
             for item in items:
                 results.append(
                     RawProviderRecord(
-                        provider="scopus",
-                        search_query=query,
-                        raw_data=item
+                        provider="scopus", search_query=query, raw_data=item
                     )
                 )
-        
+
         return results
 
     def search_by_ids():
         pass
 
-    def parse_raw_search_records(self, raw_records: List[RawProviderRecord])-> List[PaperMetadata]:
+    def parse_raw_search_records(
+        self, raw_records: List[RawProviderRecord]
+    ) -> List[PaperMetadata]:
         paper_metadatas = []
 
         for raw_record in raw_records:
             data = raw_record.raw_data
-            
+
             doi = data.get("prism:doi", "")
             pmid = data.get("pubmed-id", "")
             title = data.get("dc:title", "")
@@ -438,7 +481,7 @@ class ScopusProvider(BaseProvider):
                 status=PaperStatus.NOT_PROCESSED,
                 is_open_access=True,
                 search_query=raw_record.search_query,
-                provider="scopus"
+                provider="scopus",
             )
 
             paper_metadatas.append(paper_metadata)
@@ -448,27 +491,29 @@ class ScopusProvider(BaseProvider):
     def fetch():
         pass
 
-class SemanticScholarProvider():
+
+class SemanticScholarProvider:
     """This is not a proper provider and is intended to be used for utility functions like finding abstracts of papers."""
 
     def __init__(self):
         pass
 
     def get_abstract_by_doi(self, doi: str) -> str | None:
-        BASE_URL="https://api.semanticscholar.org/graph/v1/paper/DOI:"
+        BASE_URL = "https://api.semanticscholar.org/graph/v1/paper/DOI:"
 
         url = f"{BASE_URL}{doi}?fields=abstract"
         response = requests.get(url)
         response.raise_for_status()
-        
+
         data = response.json()
         abstract = data.get("abstract", None)
         return None if abstract == "None" or abstract == "" else abstract
-    
-class OpenAlexProvider():
+
+
+class OpenAlexProvider:
     """This is not a proper provider and is intended to be used for utility functions like finding abstracts of papers."""
 
-    BASE_URL="https://api.openalex.org/works/"
+    BASE_URL = "https://api.openalex.org/works/"
 
     def __init__(self, api_key):
         self.api_key = api_key
@@ -489,55 +534,53 @@ class OpenAlexProvider():
         tokens.sort(key=lambda item: item[0])
         return " ".join(word for _, word in tokens)
 
-    def get_abstract_by_doi(self, doi:str) -> str | None:
+    def get_abstract_by_doi(self, doi: str) -> str | None:
         url = f"{self.BASE_URL}https://doi.org/{doi}?select=abstract_inverted_index"
 
-        params = {
-            "api_key": self.api_key
-        }
+        params = {"api_key": self.api_key}
         response = requests.get(url, params)
         response.raise_for_status()
         data = response.json()
         abstract_list = data.get("abstract_inverted_index", {})
-        
+
         abstract = self.reconstruct_abstract(abstract_list)
         return None if abstract == "None" or abstract == "" else abstract
 
-    def fetch(self, paper_metadata: PaperMetadata, download_pdf: bool = True) -> PaperContent:
+    def fetch(
+        self, paper_metadata: PaperMetadata, download_pdf: bool = True
+    ) -> PaperContent:
 
         url = f"{self.BASE_URL}https://doi.org/{paper_metadata.doi}"
 
-        params = {
-            "api_key": self.api_key
-        }
+        params = {"api_key": self.api_key}
 
         data = None
-        try: 
+        try:
             response = requests.get(url, params)
             response.raise_for_status()
             data = response.json()
         except Exception as e:
-            print(f"Failed to retrieve paper {paper_metadata.doi}: {e}")
+            logger.info(f"Failed to retrieve paper {paper_metadata.doi}: {e}")
             return None
 
         primary_location = data.get("primary_location", {})
         pdf_url = primary_location.get("pdf_url", None)
 
-        if pdf_url == None:
+        if pdf_url is None:
             return
-        
-        if download_pdf == True:
+
+        if download_pdf:
             pdf_content = None
-            try: 
+            try:
                 response = requests.get(pdf_url)
                 response.raise_for_status()
                 pdf_content = response.content
             except Exception as e:
-                print(f"Failed to retrieve pdf {pdf_url}: {e}")
+                logger.info(f"Failed to retrieve pdf {pdf_url}: {e}")
                 return None
 
             clean_doi = doi_to_filename(paper_metadata.doi)
-            
+
             blob_url = upload_pdf(
                 pdf_content=pdf_content,
                 doi=clean_doi,
@@ -548,12 +591,12 @@ class OpenAlexProvider():
                 paper=paper_metadata,
                 paper_id=paper_metadata.id,
                 format="pdf",
-                source="openalex"
+                source="openalex",
             )
             return paper_content
-        
+
         return None
-        
+
 
 """
 class EuropePMCProvider(BaseProvider):
@@ -608,7 +651,7 @@ class EuropePMCProvider(BaseProvider):
 
                 cursor = next_cursor
 
-        print(f"dedup count: {len(process_duplicates_by_field(results, 'provider_id'))}")
+        logger.info(f"dedup count: {len(process_duplicates_by_field(results, 'provider_id'))}")
 
         return results
 """

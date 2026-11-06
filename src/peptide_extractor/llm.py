@@ -1,13 +1,14 @@
+import logging
+
+logger = logging.getLogger(__name__)
 from typing import Tuple
-from peptide_extractor.db import PeptideEntry
 from typing import List
 import os
-from typing import Any, Dict, Optional, Type, Union
+from typing import Any, Optional, Type, Union
 
 from dotenv import find_dotenv, load_dotenv
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
-from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel
 
 from peptide_extractor.db.paper_metadata import PaperMetadata
@@ -17,18 +18,19 @@ load_dotenv(find_dotenv(usecwd=True))
 import sys
 from langchain_core.callbacks import BaseCallbackHandler
 
+
 class StreamingTokenPrinter(BaseCallbackHandler):
     """Streams LLM tokens to stdout as they are generated."""
+
     def on_llm_start(self, *args, **kwargs) -> None:
-        print("\n--- [Streaming Tokens] ---", flush=True)
+        logger.info("\n--- [Streaming Tokens] ---")
 
     def on_llm_new_token(self, token: str, **kwargs) -> None:
         sys.stdout.write(token)
         sys.stdout.flush()
 
     def on_llm_end(self, *args, **kwargs) -> None:
-        print("\n--- [End of Stream] ---\n", flush=True)
-
+        logger.info("\n--- [End of Stream] ---\n")
 
 
 def get_chat_model(
@@ -72,11 +74,12 @@ def get_chat_model(
         target_model = model_name
         return ChatOllama(
             base_url=base_url,
-            model=target_model, 
+            model=target_model,
             temperature=temperature,
             num_ctx=32000,
             num_predict=5000,
-            **kwargs)
+            **kwargs,
+        )
 
     elif provider_clean in ("open_router", "openrouter", "open-router"):
         try:
@@ -115,7 +118,7 @@ class LLMController:
         llm: Optional[BaseChatModel] = None,
         temperature: float = 0.0,
         api_key: Optional[str] = None,
-        base_url: Optional[str] = None, # used for remote llm connection via ollama
+        base_url: Optional[str] = None,  # used for remote llm connection via ollama
         stream: bool = False,
         **kwargs: Any,
     ):
@@ -123,8 +126,7 @@ class LLMController:
         self.system_prompt = system_prompt
         self.structured_output = structured_output
         self.model_name = model_name or (
-            getattr(llm, "model_name", None)
-            or getattr(llm, "model", None)
+            getattr(llm, "model_name", None) or getattr(llm, "model", None)
         )
 
         self.llm = llm or get_chat_model(
@@ -139,14 +141,22 @@ class LLMController:
 
         if self.structured_output and provider != "ollama":
             try:
-                self.structured_llm = self.llm.with_structured_output(self.structured_output, method="json_mode")
+                self.structured_llm = self.llm.with_structured_output(
+                    self.structured_output, method="json_mode"
+                )
             except Exception:
-                self.structured_llm = self.llm.with_structured_output(self.structured_output)
+                self.structured_llm = self.llm.with_structured_output(
+                    self.structured_output
+                )
         elif self.structured_output and provider == "ollama":
             try:
-                self.structured_llm = self.llm.with_structured_output(self.structured_output, method="json_schema")
+                self.structured_llm = self.llm.with_structured_output(
+                    self.structured_output, method="json_schema"
+                )
             except Exception:
-                self.structured_llm = self.llm.with_structured_output(self.structured_output)
+                self.structured_llm = self.llm.with_structured_output(
+                    self.structured_output
+                )
         else:
             self.structured_llm = self.llm
 
@@ -161,7 +171,9 @@ class LLMController:
             abstract_text = title.abstract or "No abstract provided."
         else:
             paper_title = title
-            abstract_text = abstract if abstract and abstract.strip() else "No abstract provided."
+            abstract_text = (
+                abstract if abstract and abstract.strip() else "No abstract provided."
+            )
 
         user_content = (
             f"Here is the title and abstract of a paper:\n\n"
@@ -180,13 +192,11 @@ class LLMController:
         return res
 
     def bulk_classify_paper(
-        self,
-        id_title_abstract_pairs: List[Tuple[int, str, str]],
-        stream: bool = True
+        self, id_title_abstract_pairs: List[Tuple[int, str, str]], stream: bool = True
     ):
 
         prompt_strings = ""
-        for (id,title,abstract) in id_title_abstract_pairs:
+        for id, title, abstract in id_title_abstract_pairs:
             prompt_strings += "-------------------------------------\n"
             prompt_strings += f"ID: {id}\n"
             prompt_strings += f"Title: {title}\n"
@@ -195,10 +205,8 @@ class LLMController:
 
         user_content: str = (
             f"Here are title and abstracts of {len(id_title_abstract_pairs)} papers. Work on each pair of title/abstract seperately.",
-            prompt_strings
+            prompt_strings,
         )
-
-        
 
         messages: List[BaseMessage] = []
         if self.system_prompt:
@@ -232,17 +240,19 @@ class LLMController:
         else:
             res = self.structured_llm.invoke(messages)
 
-        print(f"LLM output: {res}")
+        logger.info(f"LLM output: {res}")
         if isinstance(res, dict) and self.structured_output:
             return self.structured_output(**res)
         return res
-    
+
     def evaluate_faithfullness(self, field_value: str, evidence: str) -> bool:
         """Evaluate if the field value is faithful to the evidence."""
         messages: List[BaseMessage] = []
         if self.system_prompt:
             messages.append(SystemMessage(content=self.system_prompt))
-        messages.append(HumanMessage(content=f"Field value: {field_value}\n\nEvidence: {evidence}"))
+        messages.append(
+            HumanMessage(content=f"Field value: {field_value}\n\nEvidence: {evidence}")
+        )
 
         res = self.structured_llm.invoke(messages)
         if isinstance(res, dict) and self.structured_output:
@@ -254,12 +264,15 @@ class LLMController:
         messages: List[BaseMessage] = []
         if self.system_prompt:
             messages.append(SystemMessage(content=self.system_prompt))
-        messages.append(HumanMessage(content=f"""Following is a list of three item tuples (field, value, quote). Check if the value for each tuple is grounded in the corresponding quote. Return a list of booleans indicating whether each value is grounded. 
+        messages.append(
+            HumanMessage(
+                content=f"""Following is a list of three item tuples (field, value, quote). Check if the value for each tuple is grounded in the corresponding quote. Return a list of booleans indicating whether each value is grounded.
         {field_value_quote_list}
-        """))
+        """
+            )
+        )
 
         res = self.structured_llm.invoke(messages)
         if isinstance(res, dict) and self.structured_output:
             return self.structured_output(**res)
         return res
-

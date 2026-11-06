@@ -1,14 +1,16 @@
 from peptide_extractor.db.raw_provider_record import RawProviderRecord
-import json
 import xml.etree.ElementTree as ET
 from unittest.mock import MagicMock, patch
 
 import pytest
 import requests
 
-from peptide_extractor.db.paper_metadata import DatasetSubset, PaperMetadata, PaperStatus
+from peptide_extractor.db.paper_metadata import (
+    DatasetSubset,
+    PaperMetadata,
+    PaperStatus,
+)
 from peptide_extractor.providers import NCBIProvider
-
 
 
 class TestNCBIProviderHelpers:
@@ -43,9 +45,16 @@ class TestNCBIProviderXMLParsing:
         assert parsed["pmid"] == "31000001"
         assert parsed["doi"] == "10.1000/182"
         assert parsed["pmcid"] == "PMC70001"
-        assert "Self-Assembly of Tetrapeptides: A Structural Analysis" in parsed["title"]
-        assert "BACKGROUND: Short peptides are capable of forming diverse nanostructures." in parsed["abstract"]
-        assert "CONCLUSIONS: Valuable for biomaterials applications." in parsed["abstract"]
+        assert (
+            "Self-Assembly of Tetrapeptides: A Structural Analysis" in parsed["title"]
+        )
+        assert (
+            "BACKGROUND: Short peptides are capable of forming diverse nanostructures."
+            in parsed["abstract"]
+        )
+        assert (
+            "CONCLUSIONS: Valuable for biomaterials applications." in parsed["abstract"]
+        )
 
     def test_parse_xml_from_element(self, ncbi_provider, sample_pubmed_xml):
         root = ET.fromstring(sample_pubmed_xml)
@@ -56,7 +65,10 @@ class TestNCBIProviderXMLParsing:
         assert parsed["doi"] == "10.1000/183"
         assert parsed["pmcid"] == "PMC70002"
         assert parsed["title"] == "Hydrogel Formation in Diphenylalanine Derivatives"
-        assert parsed["abstract"] == "Diphenylalanine motifs readily form hydrogels under physiological conditions."
+        assert (
+            parsed["abstract"]
+            == "Diphenylalanine motifs readily form hydrogels under physiological conditions."
+        )
 
     def test_parse_xml_pmc_format_fallback(self, ncbi_provider, sample_pmc_xml):
         root = ET.fromstring(sample_pmc_xml)
@@ -67,7 +79,9 @@ class TestNCBIProviderXMLParsing:
         assert parsed["doi"] == "10.1000/184"
         assert parsed["pmcid"] == "PMC70003"
         assert parsed["title"] == "Designed self-assembling peptide hydrogels"
-        assert parsed["abstract"] == "This is a paragraph-based abstract from PMC format."
+        assert (
+            parsed["abstract"] == "This is a paragraph-based abstract from PMC format."
+        )
 
     def test_parse_xml_pmcid_normalization_variants(self, ncbi_provider):
         xml_template = """
@@ -77,7 +91,9 @@ class TestNCBIProviderXMLParsing:
         </PubmedArticle>
         """
 
-        parsed_1 = ncbi_provider._parse_xml(xml_template.format(pmc_val="pmc-id: 12345;"))
+        parsed_1 = ncbi_provider._parse_xml(
+            xml_template.format(pmc_val="pmc-id: 12345;")
+        )
         assert parsed_1["pmcid"] == "PMC12345"
 
         parsed_2 = ncbi_provider._parse_xml(xml_template.format(pmc_val="PMC99999"))
@@ -212,10 +228,11 @@ class TestNCBIProviderParseRawSearchRecords:
 class TestNCBIProviderSearchByQuery:
     """Tests for search_by_query method in NCBIProvider."""
 
+    @patch("peptide_extractor.providers.save_raw_provider_record")
     @patch("peptide_extractor.providers.time.sleep")
     @patch("peptide_extractor.providers.requests.get")
     def test_search_by_query_success(
-        self, mock_get, mock_sleep, ncbi_provider, sample_pubmed_xml
+        self, mock_get, mock_sleep, mock_save, ncbi_provider, sample_pubmed_xml
     ):
         # 1. Initial count request
         resp_count = MagicMock()
@@ -273,10 +290,11 @@ class TestNCBIProviderSearchByQuery:
         assert results == []
         assert mock_get.call_count == 1
 
+    @patch("peptide_extractor.providers.save_raw_provider_record")
     @patch("peptide_extractor.providers.time.sleep")
     @patch("peptide_extractor.providers.requests.get")
     def test_search_by_query_pagination_multiple_batches(
-        self, mock_get, mock_sleep, sample_pubmed_xml
+        self, mock_get, mock_sleep, mock_save, sample_pubmed_xml
     ):
         provider = NCBIProvider(api_key="key", batch_size=2)
 
@@ -337,6 +355,7 @@ class TestNCBIProviderSearchByQuery:
         assert results == []
         # Count check + ID search, but NO efetch call
         assert mock_get.call_count == 2
+
 
 class TestNCBIProviderSearchByIds:
     """Tests for search_by_ids method in NCBIProvider."""
@@ -400,7 +419,7 @@ class TestNCBIProviderSearchByIds:
         mock_fetch.raise_for_status = MagicMock()
         mock_get.return_value = mock_fetch
 
-        results = provider.search_by_ids(["  12345  ", "", "  ", "67890"])
+        provider.search_by_ids(["  12345  ", "", "  ", "67890"])
         assert mock_get.call_count == 1
         assert mock_get.call_args.kwargs["params"]["id"] == "12345,67890"
 
@@ -416,7 +435,7 @@ class TestNCBIProviderSearchByIds:
         mock_fetch.raise_for_status = MagicMock()
         mock_get.return_value = mock_fetch
 
-        results = provider.search_by_ids(["", "  ", "12345"])
+        provider.search_by_ids(["", "  ", "12345"])
         assert mock_get.call_count == 1
         assert mock_get.call_args.kwargs["params"]["id"] == "12345"
 
@@ -483,7 +502,10 @@ class TestNCBIProviderFetch:
 
         assert len(contents) == 1
         assert contents[0].paper_id == 42
-        assert contents[0].blob_url == "https://myaccount.blob.core.windows.net/paper-xmls/xml/10_1021_acs_nano_1c01792.xml.gz"
+        assert (
+            contents[0].blob_url
+            == "https://myaccount.blob.core.windows.net/paper-xmls/xml/10_1021_acs_nano_1c01792.xml.gz"
+        )
         assert contents[0].format == "xml"
         assert successful_ids == [42]
         assert failed_ids == []
@@ -503,7 +525,9 @@ class TestNCBIProviderFetch:
             dataset_subset=DatasetSubset.SCRAPED,
         )
 
-        contents, successful_ids, failed_ids = ncbi_provider.fetch([paper_without_pmcid])
+        contents, successful_ids, failed_ids = ncbi_provider.fetch(
+            [paper_without_pmcid]
+        )
 
         assert contents == []
         assert successful_ids == []

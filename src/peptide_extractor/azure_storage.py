@@ -4,6 +4,9 @@ Handles uploading and downloading of full-text scientific paper XMLs,
 transparently applying gzip compression to minimize bandwidth and storage costs.
 """
 
+import logging
+
+logger = logging.getLogger(__name__)
 import gzip
 import os
 from pathlib import Path
@@ -196,6 +199,7 @@ def upload_xml(
         content_type="application/xml",
     )
 
+
 def upload_pdf(
     pdf_content: bytes,
     doi: str,
@@ -208,9 +212,9 @@ def upload_pdf(
     """
     Uploads a PDF file to Azure Blob Storage.
     """
-    if compress == True:
+    if compress:
         raise ValueError("PDFs should not be compressed")
-    
+
     return upload_file(
         content=pdf_content,
         filename_or_id=doi,
@@ -248,7 +252,7 @@ def download_file(
     if use_cache:
         cached_file = target_cache_dir / blob_name
         if cached_file.exists():
-            print("Reading file from cache!")
+            logger.info("Reading file from cache!")
             return cached_file.read_bytes()
 
     # 2. Download from Azure Blob Storage
@@ -275,7 +279,7 @@ def download_xml(
     client: Optional[BlobServiceClient] = None,
     use_cache: bool = True,
     cache_dir: Optional[Path] = None,
-    decompress: bool = False, # added this because of the decompress behaviour where gzip files automatically get decompressed so no need to do it again
+    decompress: bool = False,  # added this because of the decompress behaviour where gzip files automatically get decompressed so no need to do it again
 ) -> str:
     """Download and decompress a paper XML from Azure Blob Storage or local cache.
 
@@ -299,6 +303,7 @@ def download_xml(
     if decompress:
         return gzip.decompress(raw_data).decode("utf-8")
     return raw_data.decode("utf-8")
+
 
 def delete_blob(
     blob_url_or_name: str,

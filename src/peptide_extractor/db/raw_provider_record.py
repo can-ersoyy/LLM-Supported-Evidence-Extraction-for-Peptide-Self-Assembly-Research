@@ -10,15 +10,26 @@ from sqlmodel import SQLModel
 
 class RawProviderRecord(SQLModel, table=True):
     __tablename__: str = "raw_provider_records"
-    
+
     id: Optional[int] = Field(default=None, primary_key=True)
     """Raw record representation straight from external provider APIs (e.g., NCBI PMC, Europe PMC)."""
-    provider: Optional[str] = Field(default=None, description="Provider source identifier (e.g. 'ncbi', 'europe_pmc')")
-    search_query: Optional[str] = Field(default=None, description="The query term that matched this paper")
-    raw_data: dict[str, Any] = Field(default={}, sa_column=Column(JSON), description="Complete unmodified JSON payload from provider, this will be used later for processing...")
+    provider: Optional[str] = Field(
+        default=None,
+        description="Provider source identifier (e.g. 'ncbi', 'europe_pmc')",
+    )
+    search_query: Optional[str] = Field(
+        default=None, description="The query term that matched this paper"
+    )
+    raw_data: dict[str, Any] = Field(
+        default={},
+        sa_column=Column(JSON),
+        description="Complete unmodified JSON payload from provider, this will be used later for processing...",
+    )
 
 
-def save_raw_provider_record(record: RawProviderRecord, session: Optional[Session] = None):
+def save_raw_provider_record(
+    record: RawProviderRecord, session: Optional[Session] = None
+):
     def _save(s: Session) -> RawProviderRecord:
         s.add(record)
         s.commit()
@@ -29,4 +40,3 @@ def save_raw_provider_record(record: RawProviderRecord, session: Optional[Sessio
         return _save(session)
     with get_session_context() as s:
         return _save(s)
-    
