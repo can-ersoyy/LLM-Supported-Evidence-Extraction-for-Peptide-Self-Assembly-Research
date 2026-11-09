@@ -430,13 +430,18 @@ if __name__ == "__main__":
 
     load_env()
 
+    log_level = logging.INFO
+    logging.basicConfig(
+        level=log_level,
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+        force=True,
+    )
+
     ncbi_api_key = os.getenv("NCBI_API_KEY")
 
     scopus_api_key = os.getenv("SCOPUS_API_KEY")
 
     open_alex_api_key = os.getenv("OPEN_ALEX_API_KEY")
-
-    print(ncbi_api_key)
 
     ncbi_provider = NCBIProvider(api_key=ncbi_api_key, batch_size=100)
 
@@ -488,13 +493,13 @@ if __name__ == "__main__":
 
     #
 
-    # success, fails, identifier = run_bulk_relevance_screening("gemini-3.5-flash-lite", "google", delay_seconds=4, batch_size=10, search_query=NCBI_SEARCH_QUERIES_V3, limit=5000, offset=5000)
+    success, fails, identifier = run_bulk_relevance_screening("gemini-3.5-flash-lite", "google", delay_seconds=4, batch_size=10, search_query=NCBI_SEARCH_QUERIES_V3, limit=5000, offset=5000)
 
     #
 
     end_time = time.time()
 
-    # print(f"Relevance Success: {success}, Fails: {fails}, Identifier: {identifier}, Time: {end_time - start_time}")
+    print(f"Relevance Success: {success}, Fails: {fails}, Identifier: {identifier}, Time: {end_time - start_time}")
 
     # 6. Fetch fulltexts
 
