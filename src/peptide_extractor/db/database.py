@@ -1,15 +1,14 @@
+from peptide_extractor.env import load_env
 import os
 from collections.abc import Generator
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, List, Optional, Type, TypeVar, Union, overload
 
-from dotenv import find_dotenv, load_dotenv
 from sqlmodel import Session, SQLModel, create_engine, select
 from sqlalchemy.engine import Engine
 
-# Load environment variables
-load_dotenv(find_dotenv(usecwd=True))
+load_env()
 
 # Default SQLite database path in project's data directory
 DEFAULT_DB_PATH = (

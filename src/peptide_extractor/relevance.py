@@ -1,17 +1,15 @@
+from peptide_extractor.env import load_env
 from peptide_extractor.schemas import BulkRelevanceResults
 from peptide_extractor.llm import LLMController
 from peptide_extractor.schemas import RelevanceResult
 import logging
 import time
 from typing import Any, List, Optional
-from dotenv import find_dotenv, load_dotenv
 from sqlmodel import Session
 
 logger = logging.getLogger(__name__)
 
-# Load environment variables from .env
-load_dotenv(find_dotenv(usecwd=True))
-
+load_env()
 
 from peptide_extractor.db.paper_metadata import (
     PaperMetadata,

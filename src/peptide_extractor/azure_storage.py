@@ -15,10 +15,9 @@ from urllib.parse import urlparse
 
 from azure.core.exceptions import ResourceExistsError, ResourceNotFoundError
 from azure.storage.blob import BlobServiceClient, ContentSettings
-from dotenv import find_dotenv, load_dotenv
+from peptide_extractor.env import load_env
 
-# Load environment variables from .env
-load_dotenv(find_dotenv(usecwd=True))
+load_env()
 
 DEFAULT_CONTAINER_NAME = os.getenv("AZURE_STORAGE_CONTAINER", "papers")
 DEFAULT_CACHE_DIR = Path(__file__).resolve().parent.parent.parent / "data" / "cache"

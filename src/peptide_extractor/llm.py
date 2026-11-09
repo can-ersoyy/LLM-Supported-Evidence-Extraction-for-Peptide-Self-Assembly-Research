@@ -1,3 +1,4 @@
+from peptide_extractor.env import load_env
 import logging
 
 logger = logging.getLogger(__name__)
@@ -6,14 +7,13 @@ from typing import List
 import os
 from typing import Any, Optional, Type, Union
 
-from dotenv import find_dotenv, load_dotenv
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 from pydantic import BaseModel
 
 from peptide_extractor.db.paper_metadata import PaperMetadata
 
-load_dotenv(find_dotenv(usecwd=True))
+load_env()
 
 import sys
 from langchain_core.callbacks import BaseCallbackHandler
