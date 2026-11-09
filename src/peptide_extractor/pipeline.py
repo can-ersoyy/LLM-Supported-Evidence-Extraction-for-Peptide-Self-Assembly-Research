@@ -422,14 +422,13 @@ def run_evaluation(session: Optional[Session] = None, save: bool = True, **kwarg
     with get_session_context() as s:
         return _evaluate(s)
 
+
 # Not removing this for development/testing purposes
 if __name__ == "__main__":
     from peptide_extractor.env import load_env
     import os
 
     load_env()
-
-    
 
     ncbi_api_key = os.getenv("NCBI_API_KEY")
 
@@ -443,46 +442,37 @@ if __name__ == "__main__":
 
     open_alex_provider = OpenAlexProvider(api_key=open_alex_api_key)
 
-    
-    
+    # paper_content = get_paper_content_by_paper_id(14554)
 
-    #paper_content = get_paper_content_by_paper_id(14554)
+    # fulltext = extraction_ready_string_from_xml(paper_content.get_content())
 
-    #fulltext = extraction_ready_string_from_xml(paper_content.get_content())
-
-    #print(fulltext)
+    # print(fulltext)
 
     #
 
     # 1. Run query search
 
-    #retrive_ncbi_by_query(ncbi_provider, db="pmc", query_list=NCBI_SEARCH_QUERIES_V3)
-
-    
+    # retrive_ncbi_by_query(ncbi_provider, db="pmc", query_list=NCBI_SEARCH_QUERIES_V3)
 
     # 2. Deduplicate by doi (+ normalize doi and remove empty)
 
-    #removed = deduplicate_by_doi()
+    # removed = deduplicate_by_doi()
 
-    #print(f"Removed {removed} papers with duplicate doi")
-
-    
+    # print(f"Removed {removed} papers with duplicate doi")
 
     # 3. Find abstracts by doi
 
-    #find_abstracts_by_doi(open_alex_api_key)
-
-    
+    # find_abstracts_by_doi(open_alex_api_key)
 
     # 4. Remove papers with empty abstract or title
 
-    #removed = remove_empty_abstract_title_papers()
+    # removed = remove_empty_abstract_title_papers()
 
-    #print(f"Removed {removed} papers with empty abstract or title")
+    # print(f"Removed {removed} papers with empty abstract or title")
 
     # 5. Run relevance screening
 
-    #from peptide_extractor.scratchpad import papers_to_relevance_check
+    # from peptide_extractor.scratchpad import papers_to_relevance_check
 
     start_time = time.time()
 
@@ -490,7 +480,7 @@ if __name__ == "__main__":
 
     ## doing relevance in batches
 
-    #success, fails, identifier = run_bulk_relevance_screening("gemma4:26b", "ollama", delay_seconds=1, batch_size=3, id=papers_to_relevance_check)
+    # success, fails, identifier = run_bulk_relevance_screening("gemma4:26b", "ollama", delay_seconds=1, batch_size=3, id=papers_to_relevance_check)
 
     #
 
@@ -498,40 +488,36 @@ if __name__ == "__main__":
 
     #
 
-    #success, fails, identifier = run_bulk_relevance_screening("gemini-3.5-flash-lite", "google", delay_seconds=4, batch_size=10, search_query=NCBI_SEARCH_QUERIES_V3, limit=5000, offset=5000)
+    # success, fails, identifier = run_bulk_relevance_screening("gemini-3.5-flash-lite", "google", delay_seconds=4, batch_size=10, search_query=NCBI_SEARCH_QUERIES_V3, limit=5000, offset=5000)
 
     #
 
     end_time = time.time()
 
-    #print(f"Relevance Success: {success}, Fails: {fails}, Identifier: {identifier}, Time: {end_time - start_time}")
+    # print(f"Relevance Success: {success}, Fails: {fails}, Identifier: {identifier}, Time: {end_time - start_time}")
 
     # 6. Fetch fulltexts
 
-    #fetch_paper_fulltexts(ncbi_provider=ncbi_provider, open_alex_provider=open_alex_provider, search_query=NCBI_SEARCH_QUERIES_V3, status=PaperStatus.USABLE)
+    # fetch_paper_fulltexts(ncbi_provider=ncbi_provider, open_alex_provider=open_alex_provider, search_query=NCBI_SEARCH_QUERIES_V3, status=PaperStatus.USABLE)
 
-    #from peptide_extractor.scratchpad import papers_to_extract_2
-
-    
+    # from peptide_extractor.scratchpad import papers_to_extract_2
 
     # 7. Run extraction
 
-    #start_time = time.time()
+    # start_time = time.time()
 
-    #fails, identifier = run_peptide_extraction(provider="google", model_name="gemini-3.5-flash-lite", delay_seconds=4, id=[130,257,941,958,1074, 1576,2222,2253,2530,2631,2722,2841,2914,2986,3014, 3284, 3659, 4004, 4138, 4207, 4366, 4592, 4788, 4936, 4943, 5068, 5090, 5141, 5393, 5541, 5969, 6013, 6174, 6259, 6473, 6486, 6487, 6662], limit=450, offset=0)
+    # fails, identifier = run_peptide_extraction(provider="google", model_name="gemini-3.5-flash-lite", delay_seconds=4, id=[130,257,941,958,1074, 1576,2222,2253,2530,2631,2722,2841,2914,2986,3014, 3284, 3659, 4004, 4138, 4207, 4366, 4592, 4788, 4936, 4943, 5068, 5090, 5141, 5393, 5541, 5969, 6013, 6174, 6259, 6473, 6486, 6487, 6662], limit=450, offset=0)
 
-    #end_time = time.time()
+    # end_time = time.time()
 
-    #print(f"Extraction failed for papers with IDs: {fails}, Identifier: {identifier}, Time: {end_time - start_time}")
-
-    
+    # print(f"Extraction failed for papers with IDs: {fails}, Identifier: {identifier}, Time: {end_time - start_time}")
 
     # 8. Run evaluation
 
-    #start_time = time.time()
+    # start_time = time.time()
 
-    #fails, identifier = run_evaluation(run_identifier=123)
+    # fails, identifier = run_evaluation(run_identifier=123)
 
-    #end_time = time.time()
+    # end_time = time.time()
 
-    #print(f"Evaluation failed for papers with IDs: {fails}, Identifier: {identifier}, Time: {end_time - start_time}")
+    # print(f"Evaluation failed for papers with IDs: {fails}, Identifier: {identifier}, Time: {end_time - start_time}")
