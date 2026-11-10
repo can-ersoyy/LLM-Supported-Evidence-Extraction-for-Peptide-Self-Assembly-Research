@@ -66,4 +66,5 @@ def get_paper_content_by_paper_id(
     session: Optional[Session] = None,
 ) -> Optional[PaperContent]:
     """Retrieve a PaperContent record by paper ID."""
-    return get_records(PaperContent, paper_id=paper_id, session=session)[0]
+    records = get_records(PaperContent, paper_id=paper_id, session=session)
+    return records[0] if records else None

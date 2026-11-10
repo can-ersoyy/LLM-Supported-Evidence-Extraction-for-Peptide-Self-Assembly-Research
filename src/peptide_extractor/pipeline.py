@@ -271,6 +271,7 @@ def fetch_paper_fulltexts(
     session: Optional[Session] = None,
     ncbi_provider: NCBIProvider = None,
     open_alex_provider: OpenAlexProvider = None,
+    skip_existing_content: bool = True,
     **kwargs,
 ):
     """Retrieve fulltexts according to db query"""
@@ -283,7 +284,13 @@ def fetch_paper_fulltexts(
         fail_count = 0
 
         for paper in papers_to_retrieve:
-            paper_content: Optional[PaperContent] = None
+            paper_content: Optional[PaperContent] = get_paper_content_by_paper_id(
+                paper.id, session
+            )
+
+            if skip_existing_content and paper_content is not None:
+                logger.info(f"Paper {paper.id} already has content")
+                continue
 
             # normally it is better to batch retrieve from pubmed but for now just singular fetch
             try:
@@ -353,6 +360,7 @@ def run_peptide_extraction(
                     entries = run_extraction(
                         extraction_ready_string, provider, model_name
                     ).entries
+
                     db_entries = [
                         peptide_llm_entry_to_peptide_entry(
                             entry,
@@ -477,9 +485,7 @@ if __name__ == "__main__":
 
     # 5. Run relevance screening
 
-    # from peptide_extractor.scratchpad import papers_to_relevance_check
-
-    start_time = time.time()
+    # start_time = time.time()
 
     #
 
@@ -493,29 +499,43 @@ if __name__ == "__main__":
 
     #
 
-    success, fails, identifier = run_bulk_relevance_screening("gemini-3.5-flash-lite", "google", delay_seconds=4, batch_size=10, search_query=NCBI_SEARCH_QUERIES_V3, limit=5000, offset=5000)
+    # success, fails, identifier = run_bulk_relevance_screening("gemini-3.5-flash-lite", "google", delay_seconds=4, batch_size=10, search_query=NCBI_SEARCH_QUERIES_V3, limit=5000, offset=5000)
 
     #
+    # success, fails, identifier = run_bulk_relevance_screening("gemini-3.1-flash-lite", "google", delay_seconds=4, batch_size=10, search_query=papers_with_relevance_conflict, limit=400, offset=0)
 
-    end_time = time.time()
+    # end_time = time.time()
 
-    print(f"Relevance Success: {success}, Fails: {fails}, Identifier: {identifier}, Time: {end_time - start_time}")
-
+    # print(f"Relevance Success: {success}, Fails: {fails}, Identifier: {identifier}, Time: {end_time - start_time}")
+    from peptide_extractor.scratchpad import papers_with_relevance_conflict
     # 6. Fetch fulltexts
 
-    # fetch_paper_fulltexts(ncbi_provider=ncbi_provider, open_alex_provider=open_alex_provider, search_query=NCBI_SEARCH_QUERIES_V3, status=PaperStatus.USABLE)
+    # fetch_paper_fulltexts(
+    #    ncbi_provider=ncbi_provider,
+    #    open_alex_provider=open_alex_provider,
+    #    id=papers_with_relevance_conflict,
+    # )
 
     # from peptide_extractor.scratchpad import papers_to_extract_2
 
     # 7. Run extraction
 
-    # start_time = time.time()
+    start_time = time.time()
 
-    # fails, identifier = run_peptide_extraction(provider="google", model_name="gemini-3.5-flash-lite", delay_seconds=4, id=[130,257,941,958,1074, 1576,2222,2253,2530,2631,2722,2841,2914,2986,3014, 3284, 3659, 4004, 4138, 4207, 4366, 4592, 4788, 4936, 4943, 5068, 5090, 5141, 5393, 5541, 5969, 6013, 6174, 6259, 6473, 6486, 6487, 6662], limit=450, offset=0)
+    fails, identifier = run_peptide_extraction(
+        provider="google",
+        model_name="gemini-3.5-flash-lite",
+        delay_seconds=4,
+        id=papers_with_relevance_conflict,
+        limit=400,
+        offset=0,
+    )
 
-    # end_time = time.time()
+    end_time = time.time()
 
-    # print(f"Extraction failed for papers with IDs: {fails}, Identifier: {identifier}, Time: {end_time - start_time}")
+    print(
+        f"Extraction failed for papers with IDs: {fails}, Identifier: {identifier}, Time: {end_time - start_time}"
+    )
 
     # 8. Run evaluation
 
