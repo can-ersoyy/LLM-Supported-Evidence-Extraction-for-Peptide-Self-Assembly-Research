@@ -22,9 +22,6 @@ class PaperStatus(str, Enum):
     )
     DISCARD = "discard"  # after checks (title, abstract etc.) decided it is not usable and no full text retrieval is needed
     USABLE = "usable"  # after checks (title, abstract etc.) decided to retrieve full text and further processing
-    PROCESSED = (
-        "processed"  # final state if the paper is used in the extraction pipeline
-    )
 
 
 class PaperMetadata(SQLModel, table=True):
