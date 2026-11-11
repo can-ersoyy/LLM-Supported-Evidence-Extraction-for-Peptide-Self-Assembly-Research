@@ -3,6 +3,8 @@ This file will include evaluation methods for extraction entries
 Main idea with evaluation is to check if extracted information exists in fulltext
 """
 
+from typing import TYPE_CHECKING, Optional
+import json
 import logging
 
 logger = logging.getLogger(__name__)
@@ -13,10 +15,11 @@ from peptide_extractor.db.peptide_entry import PeptideConjugateMixture
 from pydantic import Field
 from pydantic import BaseModel
 from peptide_extractor.db.extraction_evaluation import ExtractionEvaluation
-from peptide_extractor.llm import LLMController
-import json
 from peptide_extractor.db import PeptideEntry
 from rapidfuzz import fuzz
+
+if TYPE_CHECKING:
+    from peptide_extractor.llm import LLMController
 
 
 def check_values_in_fulltext(evidence: str, fulltext: str):
@@ -88,9 +91,18 @@ class GroundnessVerdict(BaseModel):
 
 # TODO: implement groundness/faithfulness checks for evidence span with locations
 def groundness_check_llm(
-    field_value_quote_list: list, model: LLMController = None
+    field_value_quote_list: list, model: Optional["LLMController"] = None
 ) -> GroundnessVerdict:
-    # model = LLMController(provider="google-genai", model_name="gemini-3.5-flash-lite", system_prompt=GROUNDNESS_CHECK_SYSTEM_PROMPT, structured_output=GroundnessVerdict) if model is None else model
+    if model is None:
+        from peptide_extractor.llm import LLMController
+
+        model = LLMController(
+            provider="ollama",
+            model_name="mistral-small3.2:latest",
+            system_prompt=GROUNDNESS_CHECK_SYSTEM_PROMPT,
+            structured_output=GroundnessVerdict,
+            base_url="http://localhost:11435",
+        )
     return model.evaluate_groundness(field_value_quote_list)
 
 
@@ -148,18 +160,10 @@ DEFAULT_STRUCTURAL_FIELDS = [
 
 
 def evaluate_extraction(
-    extraction: PeptideEntry, fulltext: str
+    extraction: PeptideEntry,
+    fulltext: str,
+    model: Optional["LLMController"] = None,
 ) -> ExtractionEvaluation:
-    # model = LLMController(provider="google-genai", model_name="gemini-3.5-flash-lite", system_prompt=JUDGE_SYSTEM_PROMPT, structured_output=FaithfulnessVerdict)
-    model = LLMController(
-        provider="ollama",
-        model_name="mistral-small3.2:latest",
-        system_prompt=GROUNDNESS_CHECK_SYSTEM_PROMPT,
-        structured_output=GroundnessVerdict,
-        base_url="http://localhost:11435",
-    )
-    # model = LLMController(provider="ollama", model_name="gemma4:12b", system_prompt=GROUNDNESS_CHECK_SYSTEM_PROMPT, structured_output=GroundnessVerdict, base_url="http://localhost:11435")
-
     active_evidence_fields = list(EVIDENCE_SPAN_FIELDS)
 
     # Conditional: conjugate_partner only expects a value/evidence if it's a conjugate or mixture
@@ -186,14 +190,14 @@ def evaluate_extraction(
             groundness_rate=0.0,
             # faithfulness_rate=0.0,
             completeness_rate=completeness_rate,
-            extraction=extraction,
+            peptide_entry_id=getattr(extraction, "id", None),
         )
 
     extracted_evidence_fields = [
         f for f in active_evidence_fields if getattr(extraction, f) is not None
     ]
 
-    grounded_fields = []
+    grounded_fields = set()
 
     ## 1. Check fields that use EvidenceSpan
     # for field in extracted_evidence_fields:
@@ -222,30 +226,41 @@ def evaluate_extraction(
 
         field_value_quote_list.append((field, getattr(extraction, field), quote_text))
 
-    grounded_dict = groundness_check_llm(field_value_quote_list, model)
-    logger.info(f"Grounded: {grounded_dict}")
+    if field_value_quote_list:
+        grounded_dict = groundness_check_llm(field_value_quote_list, model)
+        logger.info(f"Grounded: {grounded_dict}")
 
-    for field, grounded in grounded_dict.field_verdict.items():
-        if grounded:
-            grounded_fields.append(field)
+        queried_span_fields = {field for field, _, _ in field_value_quote_list}
+        field_lookup = {f.lower(): f for f in queried_span_fields}
+
+        for field, grounded in grounded_dict.field_verdict.items():
+            canonical_field = field_lookup.get(field.lower())
+            if canonical_field and grounded:
+                grounded_fields.add(canonical_field)
 
     # 2. Check Verbatim Fields directly on their value
     for field in VERBATIM_FIELDS:
         val = getattr(extraction, field)
         if val and str(val).strip():
-            extracted_evidence_fields.append(field)
+            if field not in extracted_evidence_fields:
+                extracted_evidence_fields.append(field)
             if groundness_check(str(val).strip(), fulltext):
-                grounded_fields.append(field)
+                grounded_fields.add(field)
 
     # 3. Check detection_method (seperate format)
     if extraction.detection_method and extraction.detection_method.strip():
-        extracted_evidence_fields.append("detection_method")
+        if "detection_method" not in extracted_evidence_fields:
+            extracted_evidence_fields.append("detection_method")
         if check_detection_methods_grounding(extraction.detection_method, fulltext):
-            grounded_fields.append("detection_method")
+            grounded_fields.add("detection_method")
 
-    total_checkable = len(extracted_evidence_fields)
+    checkable_fields_set = set(extracted_evidence_fields)
+    total_checkable = len(checkable_fields_set)
+    valid_grounded = grounded_fields.intersection(checkable_fields_set)
     groundness_rate = (
-        (len(grounded_fields) / total_checkable) if total_checkable > 0 else 0.0
+        min(1.0, len(valid_grounded) / total_checkable)
+        if total_checkable > 0
+        else 0.0
     )
 
     # faithfulness_count = 0
@@ -271,4 +286,5 @@ def evaluate_extraction(
         groundness_rate=groundness_rate,
         # faithfulness_rate=f'{faithfulness_rate:.1%}',
         completeness_rate=completeness_rate,
+        peptide_entry_id=getattr(extraction, "id", None),
     )
