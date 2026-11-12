@@ -4,7 +4,11 @@ from peptide_extractor.evaluation import evaluate_extraction
 from peptide_extractor.db.peptide_entry import PeptideEntry
 from peptide_extractor.db import peptide_llm_entry_to_peptide_entry
 from peptide_extractor.extraction import run_extraction
-from peptide_extractor.parsers import extraction_ready_string_from_xml
+from peptide_extractor.parsers import (
+    extraction_ready_string_from_pdf,
+    extraction_ready_string_from_xml,
+    to_extraction_ready_string,
+)
 from peptide_extractor.db.paper_content import get_paper_content_by_paper_id
 from peptide_extractor.db import PaperContent
 from peptide_extractor.utils import normalize_database_dois
@@ -351,9 +355,15 @@ def run_peptide_extraction(
                 paper_fulltext = paper_content.get_content()
 
                 if paper_content.format == "pdf":
-                    pass
+                    extraction_ready_string = extraction_ready_string_from_pdf(
+                        paper_fulltext
+                    )
                 elif paper_content.format == "xml":
                     extraction_ready_string = extraction_ready_string_from_xml(
+                        paper_fulltext
+                    )
+                else:
+                    extraction_ready_string = to_extraction_ready_string(
                         paper_fulltext
                     )
                     logger.info(f"Extraction Ready String: {extraction_ready_string}")
