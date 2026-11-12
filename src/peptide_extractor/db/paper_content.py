@@ -1,4 +1,4 @@
-from typing import TYPE_CHECKING, Any, List, Optional
+from typing import TYPE_CHECKING, Any, List, Optional, Union
 from sqlmodel import Column, Field, Relationship, SQLModel, Session, String
 
 from peptide_extractor.db.database import get_records
@@ -30,17 +30,19 @@ class PaperContent(SQLModel, table=True):
 
     paper: Optional["PaperMetadata"] = Relationship(back_populates="contents")
 
-    def get_content(self, use_cache: bool = True) -> str:
-        """Download and return the XML content from Azure Blob Storage or cache."""
+    def get_content(self, use_cache: bool = True) -> Union[str, bytes]:
+        """Download and return the XML content (str) or PDF bytes from Azure Blob Storage or cache."""
         if not self.blob_url:
             raise ValueError(f"PaperContent {self.id} has no blob_url.")
-        from peptide_extractor.azure_storage import download_xml
 
         if self.format == "xml":
+            from peptide_extractor.azure_storage import download_xml
+
             return download_xml(self.blob_url, use_cache=use_cache)
         elif self.format == "pdf":
-            pass
-            # return download_pdf(self.blob_url, use_cache=use_cache)
+            from peptide_extractor.azure_storage import download_pdf
+
+            return download_pdf(self.blob_url, use_cache=use_cache)
         else:
             raise ValueError(f"Unsupported format: {self.format}")
 

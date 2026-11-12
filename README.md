@@ -49,3 +49,12 @@ Execute the CLI by passing the config file path:
 ```bash
 uv run src/peptide_extractor/cli.py run_pipeline --config config.yaml
 ```
+
+## Full-Text Preprocessing & GROBID Setup
+
+The pipeline supports both **JATS XML** and **scholarly PDFs**:
+- **JATS XML**: Processed directly via PubMed Central into the unified object tree.
+- **PDFs**: Processed into TEI XML using [GROBID](https://grobid.readthedocs.io/), or a lightweight zero-daemon fallback (`pdftotext`/`pypdf`). Both XML formats produce a unified tree of citation-grounded nodes (`sec-0/p-0/s-0`, `sec-1/table-0/row-0`).
+
+For instructions on running GROBID via Docker and configuring it in the pipeline, see [docs/grobid_setup.md](docs/grobid_setup.md).
+
