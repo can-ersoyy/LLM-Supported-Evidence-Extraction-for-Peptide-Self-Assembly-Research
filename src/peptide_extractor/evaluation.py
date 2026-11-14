@@ -134,6 +134,7 @@ EVIDENCE_SPAN_FIELDS = [
     "solution",
     "solvent",
     "incubation_period",
+    "chirality",
 ]
 
 VERBATIM_FIELDS = [
@@ -170,7 +171,7 @@ def evaluate_extraction(
     if not is_pure_peptide and extraction.conjugate_partner:
         active_evidence_fields.append("conjugate_partner")
 
-    total_possible_fields = 15 if is_pure_peptide else 16
+    total_possible_fields = 16 if is_pure_peptide else 17
     present_fields_count = sum(
         1
         for f in active_evidence_fields + VERBATIM_FIELDS + DEFAULT_STRUCTURAL_FIELDS
