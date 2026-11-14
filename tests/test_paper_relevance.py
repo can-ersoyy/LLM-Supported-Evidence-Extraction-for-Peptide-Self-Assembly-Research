@@ -14,10 +14,10 @@ from peptide_extractor.db.paper_relevance import (
 )
 from peptide_extractor.llm import LLMController, get_chat_model
 from peptide_extractor.relevance import (
-    SYSTEM_PROMPT_GOLDEN_BENCHMARK,
     RelevanceResult,
     screen_papers,
 )
+from peptide_extractor.old_prompts import RELEVANCE_SYSTEM_PROMPT_GOLDEN_BENCHMARK as SYSTEM_PROMPT_GOLDEN_BENCHMARK
 
 
 @pytest.fixture

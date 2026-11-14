@@ -6,6 +6,7 @@ from dotenv import find_dotenv, load_dotenv
 
 root = Path(__file__).resolve().parent.parent.parent
 
+
 def load_env() -> None:
     env_file = root / ".env"
     if env_file.exists():

@@ -19,6 +19,31 @@ from peptide_extractor.db import PeptideEntry
 from rapidfuzz import fuzz
 
 
+JUDGE_SYSTEM_PROMPT = """
+You are a scientific data verification auditor.
+Your task is to determine whether an extracted experimental property value is faithfully supported by the provided verbatim quote from a paper.
+
+Rules:
+1. Set `is_faithful` to True if the quote directly states or unambiguously implies this value for the specified field.
+2. Set `is_faithful` to False if the quote says something different, mentions a different peptide, or does not support the value.
+3. Provide a concise explanation in `reason`.
+"""
+
+
+GROUNDNESS_CHECK_SYSTEM_PROMPT = """
+You are a scientific data verification auditor.
+Your task is to determine whether an extracted experimental property value is faithfully supported by the provided verbatim quote from a paper.
+You should return a dictionary of field names and their corresponding verdicts, with True if the value is grounded in the evidence and False otherwise.
+
+Example:
+Input: [("temperature", "25", "The incubation was carried out at 25°C."), ("pH", "7.0", "The incubation was carried out at pH 7.0.")]
+Output: {"temperature": True, "pH": True}
+
+Input: [("temperature", "37", "The incubation was carried out at 25°C."), ("pH", "7.0", "The incubation was carried out at pH 7.0.")]
+Output: {"temperature": False, "pH": True}
+"""
+
+
 def check_values_in_fulltext(evidence: str, fulltext: str):
     found_in_text = evidence in fulltext
 
@@ -43,17 +68,6 @@ def search_fuzzy(evidence: str, fulltext: str, threshold: float = 90.0) -> bool:
     return found
 
 
-JUDGE_SYSTEM_PROMPT = """
-You are a scientific data verification auditor.
-Your task is to determine whether an extracted experimental property value is faithfully supported by the provided verbatim quote from a paper.
-
-Rules:
-1. Set `is_faithful` to True if the quote directly states or unambiguously implies this value for the specified field.
-2. Set `is_faithful` to False if the quote says something different, mentions a different peptide, or does not support the value.
-3. Provide a concise explanation in `reason`.
-"""
-
-
 def groundness_check(field_evidence, fulltext) -> bool:
     """Check if the field value is grounded in the evidence span"""
 
@@ -64,20 +78,6 @@ def groundness_check(field_evidence, fulltext) -> bool:
         return True
 
     return False
-
-
-GROUNDNESS_CHECK_SYSTEM_PROMPT = """
-You are a scientific data verification auditor.
-Your task is to determine whether an extracted experimental property value is faithfully supported by the provided verbatim quote from a paper.
-You should return a dictionary of field names and their corresponding verdicts, with True if the value is grounded in the evidence and False otherwise.
-
-Example:
-Input: [("temperature", "25", "The incubation was carried out at 25°C."), ("pH", "7.0", "The incubation was carried out at pH 7.0.")]
-Output: {"temperature": True, "pH": True}
-
-Input: [("temperature", "37", "The incubation was carried out at 25°C."), ("pH", "7.0", "The incubation was carried out at pH 7.0.")]
-Output: {"temperature": False, "pH": True}
-"""
 
 
 class GroundnessVerdict(BaseModel):
