@@ -27,6 +27,7 @@ class PaperContent(SQLModel, table=True):
         default=None,
         description="PDF URL of the content. Should be thought of as a backup in case xml doesn't exist",
     )
+    run_identifier: Optional[int] = Field(default=None, index=True)
 
     paper: Optional["PaperMetadata"] = Relationship(back_populates="contents")
 

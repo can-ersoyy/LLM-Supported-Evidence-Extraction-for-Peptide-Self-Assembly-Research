@@ -21,8 +21,24 @@ from sqlmodel import Session
 from peptide_extractor.db import get_session_context, init_db
 
 import logging
+from peptide_extractor.logging_utils import (
+    step_logger,
+    is_file_logging_enabled,
+    LOG_TO_FILE as _DEFAULT_LOG_TO_FILE,
+)
 
 logger = logging.getLogger(__name__)
+
+# Set this variable to True (or pass log_to_file=True) to store logs in docs/logs/[step]/{run_identifier}.log
+LOG_TO_FILE: bool = _DEFAULT_LOG_TO_FILE
+
+
+def _is_logging_active(step: str, log_to_file: Optional[bool] = None) -> bool:
+    if log_to_file is not None:
+        return bool(log_to_file)
+    if LOG_TO_FILE:
+        return True
+    return is_file_logging_enabled(step=step)
 
 
 # maps peptide length to structure name or self-assembly keyword, includes open-access, english and non review article filters, only title and abstract
@@ -46,44 +62,76 @@ def retrive_ncbi_by_query(
     save=True,
     db="pubmed",
     delete_raw_records=True,
+    run_identifier: Optional[int] = None,
+    log_to_file: Optional[bool] = None,
 ):
     """Wrapper method for doing query search on pubmed/pmc from ncbi provider."""
-    raw_records = []
-    for query in query_list:
-        logger.info(f"Query: {query}")
-        raw_records.extend(ncbi_provider.search_by_query(query, db=db))
-    ncbi_metadatas = ncbi_provider.parse_raw_search_records(raw_records)
+    if run_identifier is None:
+        run_identifier = int(time.time())
 
-    if save:
-        init_db()
-        with get_session_context() as session:
-            session.add_all(ncbi_metadatas)
-            session.commit()
+    with step_logger(
+        "search",
+        run_identifier,
+        enabled=_is_logging_active("search", log_to_file),
+    ):
+        raw_records = []
+        for query in query_list:
+            logger.info(f"Query: {query}")
+            raw_records.extend(ncbi_provider.search_by_query(query, db=db))
+        ncbi_metadatas = ncbi_provider.parse_raw_search_records(raw_records)
 
-        if (
-            delete_raw_records
-        ):  # cleanup since raw records are only needed before storing metadata
+        for metadata in ncbi_metadatas:
+            metadata.run_identifier = run_identifier
+
+        if save:
             init_db()
             with get_session_context() as session:
-                for record in raw_records:
-                    session.delete(record)
+                session.add_all(ncbi_metadatas)
                 session.commit()
 
-    else:
-        return ncbi_metadatas
+            if (
+                delete_raw_records
+            ):  # cleanup since raw records are only needed before storing metadata
+                init_db()
+                with get_session_context() as session:
+                    for record in raw_records:
+                        session.delete(record)
+                    session.commit()
+            return run_identifier
+        else:
+            return ncbi_metadatas
 
 
-def retrieve_scopus_by_query(scopus_provider, query=SCOPUS_SEARCH_QUERY_V1, save=True):
-    raw_records = scopus_provider.search_by_query(query)
-    scopus_metadatas = scopus_provider.parse_raw_search_records(raw_records)
+def retrieve_scopus_by_query(
+    scopus_provider,
+    query=SCOPUS_SEARCH_QUERY_V1,
+    save=True,
+    run_identifier: Optional[int] = None,
+    log_to_file: Optional[bool] = None,
+):
+    if run_identifier is None:
+        run_identifier = int(time.time())
 
-    if save:
-        init_db()
-        with get_session_context() as session:
-            session.add_all(scopus_metadatas)
-            session.commit()
-    else:
-        return scopus_metadatas
+    with step_logger(
+        "search",
+        run_identifier,
+        enabled=_is_logging_active("search", log_to_file),
+    ):
+        raw_records = scopus_provider.search_by_query(query)
+        scopus_metadatas = scopus_provider.parse_raw_search_records(raw_records)
+
+        for metadata in scopus_metadatas:
+            metadata.run_identifier = run_identifier
+
+        if save:
+            init_db()
+            with get_session_context() as session:
+                session.add_all(scopus_metadatas)
+                session.commit()
+            return run_identifier
+        else:
+            return scopus_metadatas
+
 
 
 def deduplicate_by_doi(
@@ -213,6 +261,8 @@ def run_relevance_screening(
     provider: str,
     batch_size: Optional[int] = None,
     delay_seconds: float = 2.0,
+    run_identifier: Optional[int] = None,
+    log_to_file: Optional[bool] = None,
     **kwargs,
 ) -> tuple[List[tuple[PaperMetadata, RelevanceResult]], List[int], int]:
     """Run abstract relevance screening on paper metadata records in the database.
@@ -222,19 +272,24 @@ def run_relevance_screening(
 
     Returns the succesful paper/relevance pairs, failed_paper_ids and a run_identifier
     """
+    if run_identifier is None:
+        run_identifier = int(time.time())
 
-    run_identifier = int(time.time())
-
-    init_db()
-    screened_results, failed_paper_ids = screen_papers(
-        model_name=model_name,
-        provider=provider,
-        batch_size=batch_size,
-        delay_seconds=delay_seconds,
-        run_identifier=run_identifier,
-        **kwargs,
-    )
-    return screened_results, failed_paper_ids, run_identifier
+    with step_logger(
+        "relevance",
+        run_identifier,
+        enabled=_is_logging_active("relevance", log_to_file),
+    ):
+        init_db()
+        screened_results, failed_paper_ids = screen_papers(
+            model_name=model_name,
+            provider=provider,
+            batch_size=batch_size,
+            delay_seconds=delay_seconds,
+            run_identifier=run_identifier,
+            **kwargs,
+        )
+        return screened_results, failed_paper_ids, run_identifier
 
 
 def run_bulk_relevance_screening(
@@ -242,6 +297,8 @@ def run_bulk_relevance_screening(
     provider: str,
     batch_size: Optional[int] = 10,
     delay_seconds: float = 2.0,
+    run_identifier: Optional[int] = None,
+    log_to_file: Optional[bool] = None,
     **kwargs,
 ):
     """Run abstract relevance screening on paper metadata records in the database in bulk.
@@ -253,18 +310,24 @@ def run_bulk_relevance_screening(
     """
     from peptide_extractor.relevance import bulk_screen_papers
 
-    run_identifier = int(time.time())
+    if run_identifier is None:
+        run_identifier = int(time.time())
 
-    init_db()
-    screened_results, failed_paper_ids = bulk_screen_papers(
-        model_name=model_name,
-        provider=provider,
-        batch_size=batch_size,
-        delay_seconds=delay_seconds,
-        run_identifier=run_identifier,
-        **kwargs,
-    )
-    return screened_results, failed_paper_ids, run_identifier
+    with step_logger(
+        "relevance",
+        run_identifier,
+        enabled=_is_logging_active("relevance", log_to_file),
+    ):
+        init_db()
+        screened_results, failed_paper_ids = bulk_screen_papers(
+            model_name=model_name,
+            provider=provider,
+            batch_size=batch_size,
+            delay_seconds=delay_seconds,
+            run_identifier=run_identifier,
+            **kwargs,
+        )
+        return screened_results, failed_paper_ids, run_identifier
 
 
 def fetch_paper_fulltexts(
@@ -272,9 +335,13 @@ def fetch_paper_fulltexts(
     ncbi_provider: NCBIProvider = None,
     open_alex_provider: OpenAlexProvider = None,
     skip_existing_content: bool = True,
+    run_identifier: Optional[int] = None,
+    log_to_file: Optional[bool] = None,
     **kwargs,
 ):
     """Retrieve fulltexts according to db query"""
+    if run_identifier is None:
+        run_identifier = int(time.time())
 
     def _fetch(session: Session):
         papers_to_retrieve = get_paper_metadatas(**kwargs, session=session)
@@ -306,6 +373,7 @@ def fetch_paper_fulltexts(
                     logger.info(f"Failed to retrieve fulltext for {paper.doi}: {e}")
 
             if paper_content is not None:
+                paper_content.run_identifier = run_identifier
                 session.add(paper_content)
                 session.commit()
                 success_count += 1
@@ -315,13 +383,18 @@ def fetch_paper_fulltexts(
             time.sleep(1)
 
         logger.info(f"Success: {success_count}, Fail: {fail_count}")
-        return success_count, fail_count
+        return success_count, fail_count, run_identifier
 
-    if session is not None:
-        return _fetch(session)
-    init_db()
-    with get_session_context() as s:
-        return _fetch(s)
+    with step_logger(
+        "fetch",
+        run_identifier,
+        enabled=_is_logging_active("fetch", log_to_file),
+    ):
+        if session is not None:
+            return _fetch(session)
+        init_db()
+        with get_session_context() as s:
+            return _fetch(s)
 
 
 def run_peptide_extraction(
@@ -330,15 +403,18 @@ def run_peptide_extraction(
     provider: str = "google_genai",
     model_name: str = "gemma-4-31b-it",
     delay_seconds: float = 2.0,
+    run_identifier: Optional[int] = None,
+    log_to_file: Optional[bool] = None,
     **kwargs,
-) -> List[int]:
+) -> tuple[List[int], int]:
     """Run peptide extraction"""
+    if run_identifier is None:
+        run_identifier = int(time.time())
 
     def _run(session: Session):
 
         papers_to_extract = get_paper_metadatas(session, **kwargs)
         failed_paper_ids = []
-        run_identifier = int(time.time())
 
         for paper in papers_to_extract:
             try:
@@ -381,19 +457,32 @@ def run_peptide_extraction(
 
         return failed_paper_ids, run_identifier
 
-    if session is not None:
-        return _run(session)
-    init_db()
-    with get_session_context() as s:
-        return _run(s)
+    with step_logger(
+        "extraction",
+        run_identifier,
+        enabled=_is_logging_active("extraction", log_to_file),
+    ):
+        if session is not None:
+            return _run(session)
+        init_db()
+        with get_session_context() as s:
+            return _run(s)
 
 
-def run_evaluation(session: Optional[Session] = None, save: bool = True, **kwargs):
+def run_evaluation(
+    session: Optional[Session] = None,
+    save: bool = True,
+    run_identifier: Optional[int] = None,
+    log_to_file: Optional[bool] = None,
+    **kwargs,
+):
+    if run_identifier is None:
+        run_identifier = int(time.time())
+
     def _evaluate(session: Session):
 
         extractions_to_evaluate = get_records(PeptideEntry, session=session, **kwargs)
         failed_entries = []
-        run_identifier = int(time.time())
 
         for extraction in extractions_to_evaluate:
             try:
@@ -424,11 +513,17 @@ def run_evaluation(session: Optional[Session] = None, save: bool = True, **kwarg
 
         return failed_entries, run_identifier
 
-    if session is not None:
-        return _evaluate(session)
-    init_db()
-    with get_session_context() as s:
-        return _evaluate(s)
+    with step_logger(
+        "evaluation",
+        run_identifier,
+        enabled=_is_logging_active("evaluation", log_to_file),
+    ):
+        if session is not None:
+            return _evaluate(session)
+        init_db()
+        with get_session_context() as s:
+            return _evaluate(s)
+
 
 
 # Not removing this for development/testing purposes
@@ -438,12 +533,18 @@ if __name__ == "__main__":
 
     load_env()
 
+    # Variable to enable storing logs in docs/logs/[step]/{run_identifier}.log
+    # Set this to True to automatically store step logs in files.
+    log_to_file = False
+    LOG_TO_FILE = log_to_file
+
     log_level = logging.INFO
     logging.basicConfig(
         level=log_level,
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
         force=True,
     )
+
 
     ncbi_api_key = os.getenv("NCBI_API_KEY")
 
