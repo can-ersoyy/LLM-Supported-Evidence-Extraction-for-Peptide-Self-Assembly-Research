@@ -45,6 +45,13 @@ def init_db(db_engine: Optional[Engine] = None) -> None:
     from peptide_extractor.db.paper_content import PaperContent  # noqa: F401
     from peptide_extractor.db.paper_metadata import PaperMetadata  # noqa: F401
     from peptide_extractor.db.paper_relevance import PaperRelevance  # noqa: F401
+    from peptide_extractor.db.peptide_entry import PeptideEntry  # noqa: F401
+    from peptide_extractor.db.extraction_evaluation import (  # noqa: F401
+        ExtractionEvaluation,
+    )
+    from peptide_extractor.db.raw_provider_record import (  # noqa: F401
+        RawProviderRecord,
+    )
 
     target_engine = db_engine or engine
     SQLModel.metadata.create_all(target_engine)

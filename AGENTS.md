@@ -140,18 +140,22 @@ The properties in `golden_dataset_initial.csv` form the direct fields of extract
 | `type`                                     | String      | Morphological outcome (10 canonical classes)       | `hydrogel`, `fiber`, `tube`, `nanosphere`, `ribbon`, `vesicle`, `particle`, `organogel`, `amyloid`, `none` |
 | `n_terminal`                               | String      | N-terminal cap or residue                          | `Fmoc`, `Boc`, `Acetylation`, `Free`                                                                                   |
 | `c_terminal`                               | String      | C-terminal cap or residue                          | `Free`, `Amidation`, `Methyl ester`                                                                                      |
-| `temperature`                              | String      | Reaction temperature with unit                     | `25 °C`, `37 °C`, `Room temperature`, `NP`                                                                           |
-| `ph`                                       | String      | Solution pH                                        | `7`, `7.4`, `8.0`, `NP`                                                                                                |
-| `peptide_concentration`                    | String      | Normalized concentration in`mg/ml`               | `5.025 mg/ml`, `0.2 mg/ml`, `NP`                                                                                         |
-| `solution_system`                          | String      | Primary solvent or buffer                          | `DMSO/PBS`, `H2O`, `Aqueous Buffer`, `NP`                                                                              |
-| `solvent_ratio`                            | String      | Mixing ratio ($v/v$) or `'1'` for neat         | `5/95`, `10/90`, `1`, `NP`                                                                                             |
+| `temperature`                              | String      | Reaction temperature with unit                     | `25 °C`, `37 °C`, `Room temperature`                                                                                  |
+| `ph`                                       | String      | Solution pH                                        | `7`, `7.4`, `8.0`                                                                                                      |
+| `peptide_concentration`                    | String      | Normalized concentration in`mg/ml`               | `5.025 mg/ml`, `0.2 mg/ml`                                                                                             |
+| `solution_system`                          | String      | Primary solvent or buffer                          | `DMSO/PBS`, `H2O`, `Aqueous Buffer`                                                                                    |
+| `solvent_ratio`                            | String      | Mixing ratio ($v/v$) or `'1'` for neat         | `5/95`, `10/90`, `1`                                                                                                   |
 | `solvent_env`                              | String      | Complete solvent description & additives           | `DMSO/PBS (5/95); Dispersion medium= PBS 1x`                                                                                 |
 | `detection_method`                         | String      | Characterization techniques used                   | `Cryo-EM`, `TEM`, `Confocal Microscopy`, `ThT`                                                                         |
-| `preparation_protocol`                     | String      | Step-by-step sample preparation                    | `Lyophilized peptide dissolved in DMSO...`, `NP`                                                                           |
+| `preparation_protocol`                     | String      | Step-by-step sample preparation                    | `Lyophilized peptide dissolved in DMSO...`                                                                             |
 | `pmid`                                     | String      | Semicolon-separated PubMed IDs                     | `18070345`, `18052148`                                                                                                     |
 | `databases`                                | String      | Ground-truth provenance sources                    | `SAPDB; PeptideMiner`, `Cross-Beta`, `CPAD-2.0`                                                                          |
+| `chirality`                                | String      | Peptide stereochemistry / chirality                | `l`, `d`, `heterochiral`, `racemic`, `achiral`                                                                            |
 | **`paper_id`** *(DB FK)*           | Integer     | Foreign key linking to`paper_metadata.id`        | `1`, `42`                                                                                                                  |
 | **`evidence_span`** *(Extraction)* | Text / JSON | Location annotation from the original text content | `{"sequence": "[sec-0/p-2/s-3]", "solution": "[sec-5/sec-3/p-5/table-3/row-2"]...} `                                         |
+
+> [!NOTE]
+> Missing or unmentioned experimental variables are left empty/null (`None` / optional types) rather than populated with legacy placeholders such as `'NP'`.
 
 ---
 

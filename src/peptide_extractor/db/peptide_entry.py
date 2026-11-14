@@ -68,6 +68,7 @@ class PeptideEntry(SQLModel, table=True):
     peptide_conjugate_mixture: Optional[str] = None
     conjugate_partner: Optional[str] = None
     linear_cyclic: Optional[str] = None
+    chirality: Optional[str] = None
 
     detection_method: Optional[str] = None
     preparation_protocol: Optional[str] = None
@@ -260,6 +261,10 @@ class EvidenceSpan(BaseModel):
         # description="Exact verbatim quote naming the conjugate partner or additive."
         description="Location [sec,p,s] of conjugate partner",
     )
+    chirality: Optional[str] = Field(
+        default=None,
+        description="Location [sec,p,s] of peptide chirality",
+    )
 
     def to_string(self):
         """Convert EvidenceSpan to a string that can be parsed as a python dict directly."""
@@ -325,6 +330,10 @@ class PeptideLLMEntry(BaseModel):
     )
     linear_cyclic: Optional[PeptideLinearity] = Field(
         default=None, description="linear or cyclic"
+    )
+    chirality: Optional[str] = Field(
+        default=None,
+        description="Peptide chirality or stereochemical configuration, e.g., 'L' (all L-amino acids), 'D' (all D-amino acids), 'heterochiral' (mixed L- and D-residues), 'racemic' (equimolar mixture of enantiomers), or 'achiral'. Return null if not mentioned or cannot be inferred.",
     )
     detection_method: Optional[list[str]] = Field(
         default=None,
@@ -412,6 +421,7 @@ def peptide_llm_entry_to_peptide_entry(
         peptide_conjugate_mixture=peptide_llm_entry.peptide_conjugate_mixture,
         conjugate_partner=peptide_conjugate_check(peptide_llm_entry),
         linear_cyclic=peptide_llm_entry.linear_cyclic,
+        chirality=to_lowercase(peptide_llm_entry.chirality),
         detection_method=",".join(peptide_llm_entry.detection_method)
         if peptide_llm_entry.detection_method
         else None,

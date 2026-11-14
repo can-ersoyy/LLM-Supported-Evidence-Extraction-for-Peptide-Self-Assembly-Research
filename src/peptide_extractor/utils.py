@@ -166,14 +166,16 @@ def get_body_from_jats_xml(xml_text: str) -> str:
 
 
 def to_uppercase(text: Optional[str]) -> Optional[str]:
-    """Convert text to uppercase, if text is empty string or 'NP' return None."""
+    """Convert text to uppercase. Returns None if text is empty or None."""
     if not text:
         return None
-    return text.strip().upper()
+    cleaned = text.strip()
+    return cleaned.upper() if cleaned else None
 
 
 def to_lowercase(text: Optional[str]) -> Optional[str]:
-    """Convert text to lowercase, if text is empty string or 'NP' return None."""
+    """Convert text to lowercase. Returns None if text is empty or None."""
     if not text:
         return None
-    return text.strip().lower()
+    cleaned = text.strip()
+    return cleaned.lower() if cleaned else None
