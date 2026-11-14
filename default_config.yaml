@@ -1,7 +1,9 @@
 log_level: "INFO"
+# Enable storing logs for each step in docs/logs/[step]/{run_identifier}.log
+log_to_file: true
 ncbi_batch_size: 100
 
-# List of steps to run in order
+# List of steps to run in order (e.g. search, fetch, relevance, extraction, evaluation)
 steps:
   - extraction
 

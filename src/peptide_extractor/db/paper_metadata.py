@@ -58,6 +58,7 @@ class PaperMetadata(SQLModel, table=True):
     provider: Optional[str] = Field(
         default=None, description="Provider for the search query"
     )
+    run_identifier: Optional[int] = Field(default=None, index=True)
 
     created_at: datetime = Field(
         sa_type=DateTime(timezone=True),  # type: ignore

@@ -13,6 +13,7 @@ docs/questions.md
 docs/todos.md
 docs/scratchpad.md
 
+data/logs
 data/*.db
 
 src/*/scratchpad.py
