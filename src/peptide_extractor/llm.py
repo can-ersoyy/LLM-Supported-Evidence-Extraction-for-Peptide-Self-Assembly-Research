@@ -218,8 +218,10 @@ class LLMController:
         if should_stream:
             callbacks = [StreamingTokenPrinter()]
             res = self.structured_llm.invoke(messages, config={"callbacks": callbacks})
+            logger.info(f"LLM output: {res}")
         else:
             res = self.structured_llm.invoke(messages)
+            logger.info(f"LLM output: {res}")
 
         if isinstance(res, dict) and self.structured_output:
             return self.structured_output(**res)
