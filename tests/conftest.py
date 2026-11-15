@@ -1,4 +1,11 @@
+import os
 import pytest
+
+# Clean [::1] from NO_PROXY/no_proxy to avoid httpx InvalidURL parsing error
+for var in ("NO_PROXY", "no_proxy"):
+    if var in os.environ and "[::1]" in os.environ[var]:
+        os.environ[var] = os.environ[var].replace(",[::1]", "").replace("[::1]", "")
+
 from peptide_extractor.providers import NCBIProvider
 
 SAMPLE_PUBMED_XML = """<?xml version="1.0" ?>

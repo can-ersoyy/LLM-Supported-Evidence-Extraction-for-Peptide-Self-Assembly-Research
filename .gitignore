@@ -19,3 +19,5 @@ data/*.db
 src/*/scratchpad.py
 PMC-ids.csv
 .ruff_cache
+
+samples

@@ -1,0 +1,13 @@
+version: '3.8'
+
+services:
+  grobid:
+    image: grobid/grobid:0.8.1
+    container_name: grobid
+    ports:
+      - "8070:8070"
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 4096M

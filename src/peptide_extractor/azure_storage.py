@@ -272,6 +272,23 @@ def download_file(
     return downloaded_bytes
 
 
+def download_pdf(
+    blob_url_or_name: str,
+    container_name: Optional[str] = DEFAULT_CONTAINER_NAME,
+    client: Optional[BlobServiceClient] = None,
+    use_cache: bool = True,
+    cache_dir: Optional[Path] = None,
+) -> bytes:
+    """Download raw PDF bytes from Azure Blob Storage or local cache."""
+    return download_file(
+        blob_url_or_name=blob_url_or_name,
+        container_name=container_name,
+        client=client,
+        use_cache=use_cache,
+        cache_dir=cache_dir,
+    )
+
+
 def download_xml(
     blob_url_or_name: str,
     container_name: Optional[str] = DEFAULT_CONTAINER_NAME,

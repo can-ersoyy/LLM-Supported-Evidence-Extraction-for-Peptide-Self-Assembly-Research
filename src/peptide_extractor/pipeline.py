@@ -4,7 +4,11 @@ from peptide_extractor.evaluation import evaluate_extraction
 from peptide_extractor.db.peptide_entry import PeptideEntry
 from peptide_extractor.db import peptide_llm_entry_to_peptide_entry
 from peptide_extractor.extraction import run_extraction
-from peptide_extractor.parsers import extraction_ready_string_from_xml
+from peptide_extractor.parsers import (
+    extraction_ready_string_from_pdf,
+    extraction_ready_string_from_xml,
+    to_extraction_ready_string,
+)
 from peptide_extractor.db.paper_content import get_paper_content_by_paper_id
 from peptide_extractor.db import PaperContent
 from peptide_extractor.utils import normalize_database_dois
@@ -442,29 +446,35 @@ def run_peptide_extraction(
                 paper_fulltext = paper_content.get_content()
 
                 if paper_content.format == "pdf":
-                    pass
+                    extraction_ready_string = extraction_ready_string_from_pdf(
+                        paper_fulltext
+                    )
                 elif paper_content.format == "xml":
                     extraction_ready_string = extraction_ready_string_from_xml(
                         paper_fulltext
                     )
-                    logger.info(f"Extraction Ready String: {extraction_ready_string}")
-                    entries = run_extraction(
-                        extraction_ready_string, provider, model_name
-                    ).entries
+                else:
+                    extraction_ready_string = to_extraction_ready_string(
+                        paper_fulltext
+                    )
+                logger.info(f"Extraction Ready String: {extraction_ready_string}")
+                entries = run_extraction(
+                    extraction_ready_string, provider, model_name
+                ).entries
 
-                    db_entries = [
-                        peptide_llm_entry_to_peptide_entry(
-                            entry,
-                            paper.id,
-                            paper.pmid,
-                            model=model_name,
-                            run_identifier=run_identifier,
-                        )
-                        for entry in entries
-                    ]
-                    if save:
-                        session.add_all(db_entries)
-                        session.commit()
+                db_entries = [
+                    peptide_llm_entry_to_peptide_entry(
+                        entry,
+                        paper.id,
+                        paper.pmid,
+                        model=model_name,
+                        run_identifier=run_identifier,
+                    )
+                    for entry in entries
+                ]
+                if save:
+                    session.add_all(db_entries)
+                    session.commit()
                 time.sleep(delay_seconds)
             except Exception as e:
                 failed_paper_ids.append(paper.id)
@@ -571,11 +581,13 @@ if __name__ == "__main__":
 
     open_alex_provider = OpenAlexProvider(api_key=open_alex_api_key)
 
-    # paper_content = get_paper_content_by_paper_id(14554)
 
-    # fulltext = extraction_ready_string_from_xml(paper_content.get_content())
-
-    # print(fulltext)
+##
+    #paper_content = get_paper_content_by_paper_id(1430)
+#
+    #fulltext = to_extraction_ready_string(paper_content.get_content(), format="xml")
+#
+    #print(fulltext)
 
     #
 
@@ -636,15 +648,16 @@ if __name__ == "__main__":
 
     # 7. Run extraction
 
+    mix_papers = [9, 44, 45, 75, 79, 87, 96, 907, 13437, 1488, 1491, 1532, 1547, 1553, 1557]
+
+
     start_time = time.time()
 
     fails, identifier = run_peptide_extraction(
         provider="google",
         model_name="gemini-3.5-flash-lite",
         delay_seconds=4,
-        id=papers_with_relevance_conflict,
-        limit=400,
-        offset=0,
+        id=mix_papers
     )
 
     end_time = time.time()
@@ -652,7 +665,7 @@ if __name__ == "__main__":
     print(
         f"Extraction failed for papers with IDs: {fails}, Identifier: {identifier}, Time: {end_time - start_time}"
     )
-
+#
     # 8. Run evaluation
 
     # start_time = time.time()
