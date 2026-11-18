@@ -39,7 +39,7 @@ class PaperMetadata(SQLModel, table=True):
         default=PaperStatus.NOT_PROCESSED,
         index=True,
         sa_column_kwargs={"server_default": PaperStatus.NOT_PROCESSED},
-        description="Status of the metadata object before, after processing and discarding",
+        description="Relevance status for paper",
     )
     is_open_access: bool
 

@@ -1,5 +1,13 @@
+from pathlib import Path
+from typing import Dict, List, Optional, Union
+from peptide_extractor.azure_storage import (
+    DEFAULT_CACHE_DIR,
+    build_blob_name,
+    upload_pdf,
+)
+from peptide_extractor.db import PaperStatus
+from peptide_extractor.db import DatasetSubset
 from peptide_extractor.schemas import RelevanceResult
-from typing import List
 from peptide_extractor.evaluation import evaluate_extraction
 from peptide_extractor.db.peptide_entry import PeptideEntry
 from peptide_extractor.db import peptide_llm_entry_to_peptide_entry
@@ -11,8 +19,7 @@ from peptide_extractor.parsers import (
 )
 from peptide_extractor.db.paper_content import get_paper_content_by_paper_id
 from peptide_extractor.db import PaperContent
-from peptide_extractor.utils import normalize_database_dois
-from typing import Optional
+from peptide_extractor.utils import doi_to_filename, normalize_database_dois
 from peptide_extractor.relevance import screen_papers
 from peptide_extractor.providers import NCBIProvider
 from peptide_extractor.db import get_records
@@ -135,7 +142,6 @@ def retrieve_scopus_by_query(
             return run_identifier
         else:
             return scopus_metadatas
-
 
 
 def deduplicate_by_doi(
@@ -349,6 +355,7 @@ def run_bulk_relevance_screening(
         with get_session_context() as s:
             return _run(s)
 
+
 def fetch_paper_fulltexts(
     session: Optional[Session] = None,
     ncbi_provider: NCBIProvider = None,
@@ -416,6 +423,126 @@ def fetch_paper_fulltexts(
             return _fetch(s)
 
 
+def ingest_manual_pdfs(
+    pdf_dir: Union[str, Path],
+    session: Optional[Session] = None,
+    skip_existing_content: bool = True,
+    cache_locally: bool = True,
+    cache_dir: Optional[Path] = None,
+    source: str = "manual",
+    run_identifier: Optional[int] = None,
+    log_to_file: Optional[bool] = None,
+) -> Dict[str, object]:
+    """Upload manually downloaded PDFs to Azure Blob Storage and register PaperContent rows.
+
+    Each ``<pmid>.pdf`` file in ``pdf_dir`` is matched against existing
+    ``PaperMetadata.pmid`` records.
+    """
+    target_dir = Path(pdf_dir)
+    if not target_dir.is_dir():
+        raise FileNotFoundError(f"PDF directory does not exist: {target_dir}")
+
+    if run_identifier is None:
+        run_identifier = int(time.time())
+
+    def _ingest(s: Session) -> Dict[str, object]:
+        pdf_files = sorted(
+            p
+            for p in target_dir.iterdir()
+            if p.is_file() and p.suffix.lower() == ".pdf"
+        )
+        uploaded: List[int] = []
+        skipped: List[int] = []
+        unmatched: List[str] = []
+        failed: List[str] = []
+
+        for pdf_path in pdf_files:
+            pmid = pdf_path.stem.strip()
+            matches = get_paper_metadatas(session=s, pmid=pmid) if pmid else []
+            paper = matches[0] if matches else None
+            if paper is None or paper.id is None:
+                logger.warning(
+                    f"No matching PaperMetadata found for PMID '{pmid}' ('{pdf_path.name}')"
+                )
+                unmatched.append(pdf_path.name)
+                continue
+
+            existing_content = get_paper_content_by_paper_id(paper.id, s)
+            if existing_content is not None and skip_existing_content:
+                logger.info(
+                    f"Skipping paper {paper.id} ({pdf_path.name}): content already exists"
+                )
+                skipped.append(paper.id)
+                continue
+
+            try:
+                pdf_bytes = pdf_path.read_bytes()
+                if not pdf_bytes:
+                    raise ValueError(f"PDF file is empty: {pdf_path.name}")
+
+                identifier = (
+                    doi_to_filename(paper.doi) if paper.doi else f"paper_{paper.id}"
+                )
+                blob_url = upload_pdf(pdf_content=pdf_bytes, doi=identifier)
+
+                if cache_locally:
+                    target_cache_dir = cache_dir or DEFAULT_CACHE_DIR
+                    blob_name = build_blob_name(
+                        identifier=identifier, format="pdf", compress=False
+                    )
+                    cached_file = target_cache_dir / blob_name
+                    cached_file.parent.mkdir(parents=True, exist_ok=True)
+                    cached_file.write_bytes(pdf_bytes)
+
+                if existing_content is not None:
+                    existing_content.blob_url = blob_url
+                    existing_content.format = "pdf"
+                    existing_content.source = source
+                    existing_content.run_identifier = run_identifier
+                    s.add(existing_content)
+                else:
+                    s.add(
+                        PaperContent(
+                            paper_id=paper.id,
+                            format="pdf",
+                            source=source,
+                            blob_url=blob_url,
+                            run_identifier=run_identifier,
+                        )
+                    )
+
+                s.commit()
+                uploaded.append(paper.id)
+                logger.info(
+                    f"Ingested manual PDF '{pdf_path.name}' for paper {paper.id}"
+                )
+            except Exception as e:
+                s.rollback()
+                logger.error(
+                    f"Failed to ingest '{pdf_path.name}' for paper {paper.id}: {e}"
+                )
+                failed.append(pdf_path.name)
+
+        return {
+            "uploaded": uploaded,
+            "skipped": skipped,
+            "unmatched": unmatched,
+            "failed": failed,
+            "run_identifier": run_identifier,
+        }
+
+    with step_logger(
+        "pdf_manual_upload",
+        run_identifier,
+        enabled=_is_logging_active("pdf_manual_upload", log_to_file),
+    ):
+        if session is not None:
+            return _ingest(session)
+        init_db()
+        with get_session_context() as s:
+            return _ingest(s)
+
+
 def run_peptide_extraction(
     session: Optional[Session] = None,
     save: bool = True,
@@ -454,9 +581,7 @@ def run_peptide_extraction(
                         paper_fulltext
                     )
                 else:
-                    extraction_ready_string = to_extraction_ready_string(
-                        paper_fulltext
-                    )
+                    extraction_ready_string = to_extraction_ready_string(paper_fulltext)
                 logger.info(f"Extraction Ready String: {extraction_ready_string}")
                 entries = run_extraction(
                     extraction_ready_string, provider, model_name
@@ -550,7 +675,6 @@ def run_evaluation(
             return _evaluate(s)
 
 
-
 # Not removing this for development/testing purposes
 if __name__ == "__main__":
     from peptide_extractor.env import load_env
@@ -570,7 +694,6 @@ if __name__ == "__main__":
         force=True,
     )
 
-
     ncbi_api_key = os.getenv("NCBI_API_KEY")
 
     scopus_api_key = os.getenv("SCOPUS_API_KEY")
@@ -581,13 +704,21 @@ if __name__ == "__main__":
 
     open_alex_provider = OpenAlexProvider(api_key=open_alex_api_key)
 
-
-##
-    #paper_content = get_paper_content_by_paper_id(1430)
-#
-    #fulltext = to_extraction_ready_string(paper_content.get_content(), format="xml")
-#
-    #print(fulltext)
+    # upload sapdb/peptideminer manually downloded pdfs to azure
+    # result = ingest_manual_pdfs(
+    #    pdf_dir="manual_pdfs",
+    #    skip_existing_content=True,
+    #    cache_locally=True,
+    # )
+    #
+    # print(result)
+    #
+    ##
+    # paper_content = get_paper_content_by_paper_id(1430)
+    #
+    # fulltext = to_extraction_ready_string(paper_content.get_content(), format="xml")
+    #
+    # print(fulltext)
 
     #
 
@@ -635,7 +766,7 @@ if __name__ == "__main__":
     # end_time = time.time()
 
     # print(f"Relevance Success: {success}, Fails: {fails}, Identifier: {identifier}, Time: {end_time - start_time}")
-    from peptide_extractor.scratchpad import papers_with_relevance_conflict
+    from peptide_extractor.scratchpad import sap_db
     # 6. Fetch fulltexts
 
     # fetch_paper_fulltexts(
@@ -648,26 +779,36 @@ if __name__ == "__main__":
 
     # 7. Run extraction
 
-    mix_papers = [9, 44, 45, 75, 79, 87, 96, 907, 13437, 1488, 1491, 1532, 1547, 1553, 1557]
+    # papers_with_content = [p.paper_id for p in get_records(PaperContent)]
+    # papers_with_extraction = [p.paper_id for p in get_records(PeptideEntry)]
+    # relevant_papers_without_extraction = [
+    #    p.id
+    #    for p in get_paper_metadatas(dataset_subset=DatasetSubset.SCRAPED)
+    #    if p.id not in papers_with_extraction
+    #    and p.id in papers_with_content
+    #    and p.status == PaperStatus.USABLE
+    # ]
+    #
 
-
+    ## print(len(papers_with_extraction))
+    # print(len(relevant_papers_without_extraction))
+    #
     start_time = time.time()
 
     fails, identifier = run_peptide_extraction(
         provider="google",
         model_name="gemini-3.5-flash-lite",
         delay_seconds=4,
-        id=mix_papers
+        id=sap_db,
     )
 
     end_time = time.time()
-
     print(
         f"Extraction failed for papers with IDs: {fails}, Identifier: {identifier}, Time: {end_time - start_time}"
     )
-#
-    # 8. Run evaluation
-
+    #
+    ## 8. Run evaluation
+    #
     # start_time = time.time()
 
     # fails, identifier = run_evaluation(run_identifier=123)
