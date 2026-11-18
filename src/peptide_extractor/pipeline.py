@@ -714,11 +714,11 @@ if __name__ == "__main__":
     # print(result)
     #
     ##
-    # paper_content = get_paper_content_by_paper_id(1430)
+    paper_content = get_paper_content_by_paper_id(9)
     #
-    # fulltext = to_extraction_ready_string(paper_content.get_content(), format="xml")
+    fulltext = to_extraction_ready_string(paper_content.get_content(), format="pdf")
     #
-    # print(fulltext)
+    print(fulltext)
 
     #
 
@@ -793,19 +793,19 @@ if __name__ == "__main__":
     ## print(len(papers_with_extraction))
     # print(len(relevant_papers_without_extraction))
     #
-    #start_time = time.time()
-#
-    #fails, identifier = run_peptide_extraction(
+    # start_time = time.time()
+    #
+    # fails, identifier = run_peptide_extraction(
     #    provider="google",
     #    model_name="gemini-3.5-flash-lite",
     #    delay_seconds=4,
     #    id=sap_db,
-    #)
-#
-    #end_time = time.time()
-    #print(
+    # )
+    #
+    # end_time = time.time()
+    # print(
     #    f"Extraction failed for papers with IDs: {fails}, Identifier: {identifier}, Time: {end_time - start_time}"
-    #)
+    # )
     #
     ## 8. Run evaluation
     #
@@ -817,7 +817,22 @@ if __name__ == "__main__":
 
     # print(f"Evaluation failed for papers with IDs: {fails}, Identifier: {identifier}, Time: {end_time - start_time}")
 
+    from peptide_extractor.golden_benchmark import (
+        DEV_BENCHMARK_PMIDS,
+        benchmark_run_against_golden,
+    )
 
-    from peptide_extractor.db import split_peptide_entries_by_detection_method
-    split_entries = split_peptide_entries_by_detection_method(run_identifier=1794946013)
-    print(f"Split {len(split_entries)} entries by detection method")
+    # 1. Extract only the 10 dev-slice papers (or omit pmid=... for all papers)
+    # fails, identifier = run_peptide_extraction(
+    #    provider="google",
+    #    model_name="gemini-3.5-flash-lite",
+    #    delay_seconds=4,
+    #    pmid=list(DEV_BENCHMARK_PMIDS),
+    # )
+    # print(f"Fails: {fails}, Run identifier: {identifier}")
+    # 2. Benchmark that run against golden_dataset (run_identifier=0)
+    # print(
+    #    benchmark_run_against_golden(
+    #        llm_run_identifier=1795034264, pmids=DEV_BENCHMARK_PMIDS
+    #    ).format_report()
+    # )
