@@ -28,6 +28,7 @@ from peptide_extractor.db.peptide_entry import (
     ExtractionMode,
     PeptideEntry,
     peptide_llm_entry_to_peptide_entry,
+    split_peptide_entries_by_detection_method,
 )
 
 __all__ = [
@@ -51,4 +52,6 @@ __all__ = [
     "save_paper_relevance",
     "get_paper_by_id",
     "update_paper_status",
+    "peptide_llm_entry_to_peptide_entry",
+    "split_peptide_entries_by_detection_method",
 ]

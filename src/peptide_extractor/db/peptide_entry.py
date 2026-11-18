@@ -5,7 +5,7 @@ from enum import Enum
 from typing import TYPE_CHECKING, Optional
 from pydantic import ConfigDict
 from sqlalchemy import Column, Text
-from sqlmodel import DateTime, Field, Relationship, SQLModel
+from sqlmodel import DateTime, Field, Relationship, Session, SQLModel
 
 if TYPE_CHECKING:
     from peptide_extractor.db.paper_metadata import PaperMetadata
@@ -434,3 +434,69 @@ def peptide_llm_entry_to_peptide_entry(
         model=model,
         database=database,
     )
+
+
+def split_peptide_entries_by_detection_method(
+    run_identifier: int,
+    save: bool = False,
+    session: Optional[Session] = None,
+) -> list[PeptideEntry]:
+    """Return PeptideEntry records for a run split into one entry per detection method.
+
+    Entries with multiple comma-separated detection methods are expanded into
+    separate ``PeptideEntry`` instances (one per method) with identical fields.
+    Entries with zero or one detection method are kept as a single entry.
+
+    Args:
+        run_identifier: The ``run_identifier`` to filter ``peptide_entry`` rows by.
+        save: If True, persist the newly separated entries (for rows that had
+            multiple detection methods) to the database. Defaults to False.
+        session: Optional SQLModel Session. If omitted, uses ``get_session_context()``.
+
+    Returns:
+        List of separated ``PeptideEntry`` instances matching ``run_identifier``.
+    """
+    from peptide_extractor.db.database import get_records, get_session_context
+
+    def _split(s: Session) -> list[PeptideEntry]:
+        entries = get_records(PeptideEntry, session=s, run_identifier=run_identifier)
+        separated_entries: list[PeptideEntry] = []
+        new_entries_to_save: list[PeptideEntry] = []
+
+        for entry in entries:
+            methods = (
+                [m.strip() for m in entry.detection_method.split(",") if m.strip()]
+                if entry.detection_method
+                else []
+            )
+            if len(methods) <= 1:
+                if save:
+                    separated_entries.append(entry)
+                else:
+                    base_data = entry.model_dump(
+                        exclude={"id", "created_at", "updated_at", "extraction_mode"}
+                    )
+                    base_data["detection_method"] = methods[0] if methods else None
+                    separated_entries.append(PeptideEntry(**base_data, extraction_mode=ExtractionMode.MANUAL))
+                continue
+
+            base_data = entry.model_dump(exclude={"id", "created_at", "updated_at", "extraction_mode"})
+            for method in methods:
+                base_data["detection_method"] = method
+                new_entry = PeptideEntry(**base_data, extraction_mode=ExtractionMode.MANUAL)
+                separated_entries.append(new_entry)
+                if save:
+                    s.add(new_entry)
+                    new_entries_to_save.append(new_entry)
+
+        if save and new_entries_to_save:
+            s.commit()
+            for new_entry in new_entries_to_save:
+                s.refresh(new_entry)
+
+        return separated_entries
+
+    if session is not None:
+        return _split(session)
+    with get_session_context() as s:
+        return _split(s)

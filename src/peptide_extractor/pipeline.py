@@ -793,19 +793,19 @@ if __name__ == "__main__":
     ## print(len(papers_with_extraction))
     # print(len(relevant_papers_without_extraction))
     #
-    start_time = time.time()
-
-    fails, identifier = run_peptide_extraction(
-        provider="google",
-        model_name="gemini-3.5-flash-lite",
-        delay_seconds=4,
-        id=sap_db,
-    )
-
-    end_time = time.time()
-    print(
-        f"Extraction failed for papers with IDs: {fails}, Identifier: {identifier}, Time: {end_time - start_time}"
-    )
+    #start_time = time.time()
+#
+    #fails, identifier = run_peptide_extraction(
+    #    provider="google",
+    #    model_name="gemini-3.5-flash-lite",
+    #    delay_seconds=4,
+    #    id=sap_db,
+    #)
+#
+    #end_time = time.time()
+    #print(
+    #    f"Extraction failed for papers with IDs: {fails}, Identifier: {identifier}, Time: {end_time - start_time}"
+    #)
     #
     ## 8. Run evaluation
     #
@@ -816,3 +816,8 @@ if __name__ == "__main__":
     # end_time = time.time()
 
     # print(f"Evaluation failed for papers with IDs: {fails}, Identifier: {identifier}, Time: {end_time - start_time}")
+
+
+    from peptide_extractor.db import split_peptide_entries_by_detection_method
+    split_entries = split_peptide_entries_by_detection_method(run_identifier=1794946013)
+    print(f"Split {len(split_entries)} entries by detection method")
