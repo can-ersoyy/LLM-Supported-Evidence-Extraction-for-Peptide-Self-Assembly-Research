@@ -1,3 +1,6 @@
+from pathlib import Path
+from typing import Optional, Union
+
 from peptide_extractor.db.peptide_entry import PeptideExtractionResult
 from peptide_extractor.llm import LLMController
 
@@ -29,16 +32,43 @@ This applies to other fields as well (e.g. pH, incubation_period, solution, solv
 """
 
 
+PDF_EXTRACTION_SYSTEM_PROMPT = """
+You are an expert scientific curator extracting experimental peptide self-assembly data from an attached PDF paper into the given JSON schema.
+
+EXHAUSTIVE EXTRACTION RULES (CRITICAL):
+1. Do NOT summarize, sample, or stop after a few examples. You MUST extract EVERY experimental peptide condition reported anywhere in the paper (prose, tables, table footnotes, figures, and captions).
+2. Matrix / Screening Tables: Papers often contain tables testing N peptides across M solvents, concentrations, pH values, or temperatures. You MUST unroll the entire matrix and emit a separate entry for EVERY SINGLE TESTED `(peptide, condition)` cell—including negative / non-assembling results (e.g., soluble, precipitate, no gel -> `type: "none"`). Never skip non-gelling or negative rows/columns.
+3. Cross-Reference Shared Conditions: Tables frequently omit experimental parameters that are stated in the Methods/Results text or table footnotes (such as temperature, incubation period, pH, N-/C-terminal protecting groups, preparation protocol, or detection methods). Apply those shared conditions to every relevant table entry.
+4. Sequences & Terminals:
+   - Convert 3-letter amino acid sequences (e.g., Boc-Ser-Val-Gly-OCH2Ph) into uppercase 1-letter codes (`sequence: "SVG"`).
+   - Put N-terminal and C-terminal caps/protecting groups in `n_terminal` and `c_terminal` rather than inside `sequence`.
+5. Multiple Conditions = Multiple Entries: If the same peptide is tested in multiple solvents, temperatures, pH values, or concentrations, emit a separate entry for each tested combination.
+
+EVIDENCE GROUNDING RULES:
+1. Ignore any `[sec-...]` tag format in field descriptions—this input is a raw PDF, not tagged text.
+2. For every non-null property in an entry, provide a concise PDF location in `evidence_span` (e.g., `"Page 2, Table 1"`, `"Page 1, Results"`, `"Page 3, Fig. 1"`).
+3. If a property was NOT experimentally determined or mentioned in the PDF, leave both the property and its corresponding `evidence_span` field as `null`.
+"""
+
+
 def run_extraction(
-    paper_content: str,
+    paper_content: Union[str, bytes, Path],
     provider: str = "google_genai",
     model_name: str = "gemma-4-31b-it",
+    filename: str = "paper.pdf",
+    system_prompt: Optional[str] = None,
 ) -> PeptideExtractionResult:
+    """Run peptide extraction on parsed text or raw PDF bytes/Path."""
+    is_pdf = isinstance(paper_content, (bytes, Path))
+    resolved_prompt = system_prompt or (
+        PDF_EXTRACTION_SYSTEM_PROMPT if is_pdf else EXTRACTION_SYSTEM_PROMPT_V5
+    )
+
     model = LLMController(
         provider=provider,
         model_name=model_name,
         structured_output=PeptideExtractionResult,
-        system_prompt=EXTRACTION_SYSTEM_PROMPT_V3,
+        system_prompt=resolved_prompt,
     )
 
-    return model.extract_peptides(paper_content, stream=True)
+    return model.extract_peptides(paper_content, stream=True, filename=filename)

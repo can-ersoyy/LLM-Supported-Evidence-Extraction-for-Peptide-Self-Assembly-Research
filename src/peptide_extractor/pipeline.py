@@ -563,6 +563,7 @@ def run_peptide_extraction(
     delay_seconds: float = 2.0,
     run_identifier: Optional[int] = None,
     log_to_file: Optional[bool] = None,
+    pass_pdf_directly: bool = False,
     **kwargs,
 ) -> tuple[List[int], int]:
     """Run peptide extraction"""
@@ -584,20 +585,33 @@ def run_peptide_extraction(
 
                 paper_fulltext = paper_content.get_content()
 
-                if paper_content.format == "pdf":
-                    extraction_ready_string = extraction_ready_string_from_pdf(
-                        paper_fulltext
+                if paper_content.format == "pdf" and pass_pdf_directly:
+                    logger.info(
+                        f"Passing raw PDF ({len(paper_fulltext)} bytes) directly to LLM for paper {paper.id}"
                     )
-                elif paper_content.format == "xml":
-                    extraction_ready_string = extraction_ready_string_from_xml(
-                        paper_fulltext
-                    )
+                    entries = run_extraction(
+                        paper_fulltext,
+                        provider,
+                        model_name,
+                        filename=f"paper_{paper.id}.pdf",
+                    ).entries
                 else:
-                    extraction_ready_string = to_extraction_ready_string(paper_fulltext)
-                logger.info(f"Extraction Ready String: {extraction_ready_string}")
-                entries = run_extraction(
-                    extraction_ready_string, provider, model_name
-                ).entries
+                    if paper_content.format == "pdf":
+                        extraction_ready_string = extraction_ready_string_from_pdf(
+                            paper_fulltext
+                        )
+                    elif paper_content.format == "xml":
+                        extraction_ready_string = extraction_ready_string_from_xml(
+                            paper_fulltext
+                        )
+                    else:
+                        extraction_ready_string = to_extraction_ready_string(
+                            paper_fulltext
+                        )
+                    logger.info(f"Extraction Ready String: {extraction_ready_string}")
+                    entries = run_extraction(
+                        extraction_ready_string, provider, model_name
+                    ).entries
 
                 db_entries = [
                     peptide_llm_entry_to_peptide_entry(
@@ -786,11 +800,9 @@ if __name__ == "__main__":
     # print(result)
     #
     ##
-    paper_content = get_paper_content_by_paper_id(9)
-    #
-    fulltext = to_extraction_ready_string(paper_content.get_content(), format="pdf")
-    #
-    print(fulltext)
+    # paper_content = get_paper_content_by_paper_id(9)
+    # fulltext = to_extraction_ready_string(paper_content.get_content(), format="pdf")
+    # print(fulltext)
 
     #
 
@@ -889,6 +901,17 @@ if __name__ == "__main__":
 
     # print(f"Evaluation failed for papers with IDs: {fails}, Identifier: {identifier}, Time: {end_time - start_time}")
 
+    # fails, identifier = run_peptide_extraction(
+    #    save=True,
+    #    provider="google_genai",
+    #    model_name="gemini-3.5-flash-lite",
+    #    pass_pdf_directly=True,
+    #    id=9,
+    # )
+    # print(
+    #    f"Extraction failed for papers with IDs: {fails}, Run identifier: {identifier}"
+    # )
+
     from peptide_extractor.golden_benchmark import (
         DEV_BENCHMARK_PMIDS,
         benchmark_run_against_golden,
@@ -903,8 +926,8 @@ if __name__ == "__main__":
     # )
     # print(f"Fails: {fails}, Run identifier: {identifier}")
     # 2. Benchmark that run against golden_dataset (run_identifier=0)
-    # print(
-    #    benchmark_run_against_golden(
-    #        llm_run_identifier=1795034264, pmids=DEV_BENCHMARK_PMIDS
-    #    ).format_report()
-    # )
+    print(
+        benchmark_run_against_golden(
+            llm_run_identifier=1795040432, pmids=[20460796]
+        ).format_report()
+    )

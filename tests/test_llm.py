@@ -167,3 +167,106 @@ def test_classify_paper_with_curly_braces(mock_chat_model):
     )
     assert res.is_relevant is True
     structured.invoke.assert_called_once()
+
+
+def test_extract_peptides_pdf_bytes(mock_chat_model):
+    """Ensure extract_peptides builds a standard LangChain file block for raw PDF bytes."""
+    import base64
+    from langchain_core.messages import HumanMessage
+
+    llm, structured = mock_chat_model
+    structured.invoke.return_value = {"entries": []}
+
+    controller = LLMController(
+        llm=llm,
+        provider="google_genai",
+        structured_output=PeptideExtractionResult,
+        system_prompt="Extract from PDF",
+    )
+
+    pdf_bytes = b"%PDF-1.4 fake pdf content"
+    result = controller.extract_peptides(pdf_bytes, filename="table_paper.pdf")
+
+    assert isinstance(result, PeptideExtractionResult)
+    called_messages = structured.invoke.call_args[0][0]
+    human_msgs = [m for m in called_messages if isinstance(m, HumanMessage)]
+    assert len(human_msgs) == 1
+    content = human_msgs[0].content
+    assert isinstance(content, list)
+    file_blocks = [b for b in content if b.get("type") == "file"]
+    assert len(file_blocks) == 1
+    assert file_blocks[0]["mime_type"] == "application/pdf"
+    assert file_blocks[0]["filename"] == "table_paper.pdf"
+    assert base64.b64decode(file_blocks[0]["base64"]) == pdf_bytes
+
+
+def test_extract_peptides_pdf_path(mock_chat_model, tmp_path):
+    """Ensure extract_peptides accepts a pathlib.Path to a PDF file."""
+    import base64
+    from langchain_core.messages import HumanMessage
+
+    llm, structured = mock_chat_model
+    structured.invoke.return_value = {"entries": []}
+
+    pdf_path = tmp_path / "sample_table.pdf"
+    pdf_bytes = b"%PDF-1.4 sample"
+    pdf_path.write_bytes(pdf_bytes)
+
+    controller = LLMController(
+        llm=llm,
+        provider="google_genai",
+        structured_output=PeptideExtractionResult,
+    )
+
+    result = controller.extract_peptides(pdf_path)
+    assert isinstance(result, PeptideExtractionResult)
+    human_msg = structured.invoke.call_args[0][0][0]
+    assert isinstance(human_msg, HumanMessage)
+    file_block = [b for b in human_msg.content if b.get("type") == "file"][0]
+    assert file_block["filename"] == "sample_table.pdf"
+    assert base64.b64decode(file_block["base64"]) == pdf_bytes
+
+
+def test_extract_peptides_pdf_ollama_raises(mock_chat_model):
+    """Ensure passing raw PDF bytes to Ollama raises a clear ValueError."""
+    llm, _ = mock_chat_model
+    controller = LLMController(
+        llm=llm,
+        provider="ollama",
+        structured_output=PeptideExtractionResult,
+    )
+
+    with pytest.raises(ValueError, match="Direct PDF input is not supported"):
+        controller.extract_peptides(b"%PDF-1.4 fake")
+
+
+def test_run_extraction_selects_pdf_prompt(monkeypatch):
+    """Ensure run_extraction uses PDF_EXTRACTION_SYSTEM_PROMPT for PDF bytes."""
+    from peptide_extractor import extraction as extraction_mod
+
+    captured = {}
+
+    class DummyController:
+        def __init__(self, provider, model_name, structured_output, system_prompt):
+            captured["provider"] = provider
+            captured["model_name"] = model_name
+            captured["system_prompt"] = system_prompt
+
+        def extract_peptides(self, paper_content, stream=True, filename="paper.pdf"):
+            captured["paper_content"] = paper_content
+            captured["filename"] = filename
+            return PeptideExtractionResult(entries=[])
+
+    monkeypatch.setattr(extraction_mod, "LLMController", DummyController)
+
+    pdf_bytes = b"%PDF-1.4 test"
+    res = extraction_mod.run_extraction(
+        pdf_bytes,
+        provider="google_genai",
+        model_name="gemini-3.5-flash-lite",
+        filename="my_paper.pdf",
+    )
+    assert isinstance(res, PeptideExtractionResult)
+    assert captured["system_prompt"] == extraction_mod.PDF_EXTRACTION_SYSTEM_PROMPT
+    assert captured["paper_content"] == pdf_bytes
+    assert captured["filename"] == "my_paper.pdf"
