@@ -1,22 +1,21 @@
-from peptide_extractor.env import load_env
+import base64
 import logging
-
-logger = logging.getLogger(__name__)
-from typing import Tuple
-from typing import List
 import os
-from typing import Any, Optional, Type, Union
+from pathlib import Path
+import sys
+from typing import Any, List, Optional, Tuple, Type, Union
 
+from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 from pydantic import BaseModel
 
 from peptide_extractor.db.paper_metadata import PaperMetadata
+from peptide_extractor.env import load_env
+
+logger = logging.getLogger(__name__)
 
 load_env()
-
-import sys
-from langchain_core.callbacks import BaseCallbackHandler
 
 
 class StreamingTokenPrinter(BaseCallbackHandler):
@@ -227,12 +226,47 @@ class LLMController:
             return self.structured_output(**res)
         return res
 
-    def extract_peptides(self, paper_content: str, stream: bool = None) -> Any:
-        """Run extraction on paper content."""
+    def extract_peptides(
+        self,
+        paper_content: Union[str, bytes, Path],
+        stream: Optional[bool] = None,
+        filename: str = "paper.pdf",
+    ) -> Any:
+        """Run extraction on paper text or raw PDF bytes/Path."""
+        if isinstance(paper_content, Path):
+            filename = paper_content.name
+            paper_content = paper_content.read_bytes()
+
         messages: List[BaseMessage] = []
         if self.system_prompt:
             messages.append(SystemMessage(content=self.system_prompt))
-        messages.append(HumanMessage(content=f"Fulltext:\n\n{paper_content}"))
+
+        if isinstance(paper_content, bytes):
+            provider_clean = (self.provider or "").lower().strip()
+            if provider_clean in ("ollama", "langchain_ollama"):
+                raise ValueError(
+                    f"Direct PDF input is not supported by provider '{self.provider}'. "
+                    "Use 'google_genai' or 'open_router', or pass extracted text instead."
+                )
+            encoded_pdf = base64.b64encode(paper_content).decode("utf-8")
+            messages.append(
+                HumanMessage(
+                    content=[
+                        {
+                            "type": "text",
+                            "text": "Extract all experimental peptide self-assembly information from the attached PDF document.",
+                        },
+                        {
+                            "type": "file",
+                            "base64": encoded_pdf,
+                            "mime_type": "application/pdf",
+                            "filename": filename,
+                        },
+                    ]
+                )
+            )
+        else:
+            messages.append(HumanMessage(content=f"Fulltext:\n\n{paper_content}"))
 
         should_stream = self.stream if stream is None else stream
 
