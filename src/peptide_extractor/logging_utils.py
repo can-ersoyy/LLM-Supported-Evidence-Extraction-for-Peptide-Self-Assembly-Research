@@ -24,6 +24,8 @@ STEP_NAME_MAP: Dict[str, str] = {
     "deduplicate": "deduplicate",
     "find_abstracts": "find_abstracts",
     "clean_empty": "clean_empty",
+    "visualization": "visualization",
+    "visualize": "visualization",
 }
 
 # Registry to track active FileHandlers for re-entrancy / nesting:

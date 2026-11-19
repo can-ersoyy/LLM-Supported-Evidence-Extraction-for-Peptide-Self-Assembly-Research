@@ -1,5 +1,17 @@
 from pathlib import Path
-from typing import Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Sequence, Type, Union
+from sqlmodel import SQLModel
+from peptide_extractor.visualization import (
+    VisualizationOperation,
+    VisualizationResult,
+    visualize,
+)
+from peptide_extractor.logging_utils import (
+    step_logger,
+    is_file_logging_enabled,
+    get_project_root,
+    LOG_TO_FILE as _DEFAULT_LOG_TO_FILE,
+)
 from peptide_extractor.azure_storage import (
     DEFAULT_CACHE_DIR,
     build_blob_name,
@@ -673,6 +685,66 @@ def run_evaluation(
         init_db()
         with get_session_context() as s:
             return _evaluate(s)
+
+
+def run_visualization(
+    operations: Union[
+        VisualizationOperation,
+        str,
+        Sequence[Union[VisualizationOperation, str]],
+    ],
+    model: Union[Type[SQLModel], str],
+    *,
+    session: Optional[Session] = None,
+    output_dir: Optional[Union[str, Path]] = None,
+    save: bool = True,
+    show: bool = False,
+    file_format: str = "png",
+    dpi: int = 150,
+    limit: Optional[int] = None,
+    offset: int = 0,
+    plot_kwargs: Optional[Dict[str, Any]] = None,
+    viz_run_identifier: Optional[int] = None,
+    log_to_file: Optional[bool] = None,
+    **kwargs: Any,
+) -> tuple[Dict[VisualizationOperation, VisualizationResult], int]:
+    """Run visualization as a pipeline step for any supported DB model and filters."""
+    if viz_run_identifier is None:
+        viz_run_identifier = int(time.time())
+
+    target_dir = (
+        Path(output_dir)
+        if output_dir is not None
+        else get_project_root() / "data" / "diagrams" / str(viz_run_identifier)
+    )
+
+    def _visualize(s: Session):
+        results = visualize(
+            operations=operations,
+            model=model,
+            session=s,
+            limit=limit,
+            offset=offset,
+            output_dir=target_dir,
+            save=save,
+            show=show,
+            file_format=file_format,
+            dpi=dpi,
+            plot_kwargs=plot_kwargs,
+            **kwargs,
+        )
+        return results, viz_run_identifier
+
+    with step_logger(
+        "visualization",
+        viz_run_identifier,
+        enabled=_is_logging_active("visualization", log_to_file),
+    ):
+        if session is not None:
+            return _visualize(session)
+        init_db()
+        with get_session_context() as s:
+            return _visualize(s)
 
 
 # Not removing this for development/testing purposes

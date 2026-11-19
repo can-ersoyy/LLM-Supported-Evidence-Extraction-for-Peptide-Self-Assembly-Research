@@ -30,12 +30,18 @@ from peptide_extractor.db.peptide_entry import (
     peptide_llm_entry_to_peptide_entry,
     split_peptide_entries_by_detection_method,
 )
+from peptide_extractor.db.extraction_evaluation import (
+    EvaluationCategory,
+    ExtractionEvaluation,
+)
 
 __all__ = [
     "PaperMetadata",
     "PaperContent",
     "PaperRelevance",
     "PeptideEntry",
+    "ExtractionEvaluation",
+    "EvaluationCategory",
     "DatasetSubset",
     "PaperStatus",
     "ExtractionMode",

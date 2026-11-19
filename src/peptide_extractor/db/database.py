@@ -105,6 +105,13 @@ def _resolve_model(model_or_name: Union[Type[SQLModel], str]) -> Type[SQLModel]:
             registry["peptide_entry"] = PeptideEntry
     except ImportError:
         pass
+    try:
+        from peptide_extractor.db.extraction_evaluation import ExtractionEvaluation
+
+        if hasattr(ExtractionEvaluation, "__tablename__"):
+            registry["extraction_evaluation"] = ExtractionEvaluation
+    except ImportError:
+        pass
 
     if table_name not in registry:
         raise ValueError(

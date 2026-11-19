@@ -13,9 +13,11 @@ from peptide_extractor.pipeline import (
     fetch_paper_fulltexts,
     run_peptide_extraction,
     run_evaluation,
+    run_visualization,
 )
 from peptide_extractor.providers import NCBIProvider, OpenAlexProvider
 from peptide_extractor.logging_utils import step_logger
+from peptide_extractor.visualization import VisualizationOperation
 
 logger = logging.getLogger(__name__)
 
@@ -203,6 +205,94 @@ def run_pipeline(config, log_to_file):
             logger.info(
                 f"Evaluation failed for papers with IDs: {fails}, Identifier: {identifier}, Time: {end_time - start_time}"
             )
+
+    if "visualization" in steps:
+        viz_cfg = cfg.get("visualization", {})
+        viz_run_id = viz_cfg.get("run_identifier") or int(time.time())
+        step_enabled = is_step_log_enabled("visualization")
+        with step_logger("visualization", viz_run_id, enabled=step_enabled):
+            logger.info("Running visualization...")
+            start_time = time.time()
+            results, identifier = run_visualization(
+                operations=viz_cfg.get("operations", []),
+                model=viz_cfg.get("model") or viz_cfg.get("data_type"),
+                output_dir=viz_cfg.get("output_dir"),
+                save=viz_cfg.get("save", True),
+                show=viz_cfg.get("show", False),
+                file_format=viz_cfg.get("file_format", "png"),
+                dpi=viz_cfg.get("dpi", 150),
+                limit=viz_cfg.get("limit"),
+                offset=viz_cfg.get("offset", 0),
+                plot_kwargs=viz_cfg.get("plot_kwargs"),
+                viz_run_identifier=viz_run_id,
+                log_to_file=step_enabled,
+                **viz_cfg.get("kwargs", {}),
+            )
+            end_time = time.time()
+            logger.info(
+                f"Visualization generated {len(results)} diagrams, Identifier: {identifier}, Time: {end_time - start_time}"
+            )
+
+
+@cli.command(name="visualize")
+@click.option(
+    "-m",
+    "--model",
+    required=True,
+    help="Target DB table/model name (e.g. peptide_entry, extraction_evaluation, paper_relevance, paper_metadata).",
+)
+@click.option(
+    "-o",
+    "--operation",
+    "operations",
+    multiple=True,
+    required=True,
+    type=click.Choice([op.value for op in VisualizationOperation], case_sensitive=False),
+    help="Visualization operation(s) to run. Can be specified multiple times.",
+)
+@click.option(
+    "--run-id",
+    "run_ids",
+    multiple=True,
+    type=int,
+    help="Optional run_identifier(s) to filter records.",
+)
+@click.option(
+    "--output-dir",
+    type=click.Path(),
+    default=None,
+    help="Directory to save generated diagrams.",
+)
+@click.option(
+    "--format",
+    "file_format",
+    default="png",
+    show_default=True,
+    help="Output image format.",
+)
+@click.option("--show/--no-show", default=False, help="Display plots interactively.")
+def visualize_cmd(model, operations, run_ids, output_dir, file_format, show):
+    """Generate visualizations from database records."""
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+        force=True,
+    )
+    db_kwargs = {}
+    if run_ids:
+        db_kwargs["run_identifier"] = list(run_ids) if len(run_ids) > 1 else run_ids[0]
+
+    results, identifier = run_visualization(
+        operations=list(operations),
+        model=model,
+        output_dir=output_dir,
+        save=True,
+        show=show,
+        file_format=file_format,
+        **db_kwargs,
+    )
+    for op, res in results.items():
+        click.echo(f"[{op.value}] records={res.record_count} -> {res.output_path}")
 
 
 if __name__ == "__main__":
