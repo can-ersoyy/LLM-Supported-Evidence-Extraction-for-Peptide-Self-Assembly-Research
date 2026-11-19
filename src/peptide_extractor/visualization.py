@@ -493,7 +493,20 @@ def plot_evaluation_boxplot(
     figsize: Tuple[float, float] = (8, 5),
     title: Optional[str] = None,
 ) -> Figure:
-    """Plot boxplots for ExtractionEvaluation rates (grouped by run if multiple)."""
+    """Plot boxplots for ExtractionEvaluation rates (grouped by run if multiple).
+
+    Operation: ``VisualizationOperation.EVALUATION_BOXPLOT`` (model: ``ExtractionEvaluation``).
+
+    Args:
+        df: DataFrame produced from ``ExtractionEvaluation`` records.
+        metrics: Evaluation rate columns to plot (defaults to ``groundness_rate``, ``faithfulness_rate``, ``completeness_rate``).
+        max_rate: Upper threshold to filter out-of-range rates (set ``None`` to keep all values).
+        figsize: Figure size as ``(width, height)`` in inches.
+        title: Optional custom plot title.
+
+    Usage:
+        >>> visualize(["evaluation_boxplot"], "extraction_evaluation", run_identifier=[300, 301])
+    """
     melted = _melt_evaluation_metrics(df, metrics=metrics, max_rate=max_rate)
 
     fig, ax = plt.subplots(figsize=figsize)
@@ -524,7 +537,20 @@ def plot_evaluation_summary_range(
     figsize: Tuple[float, float] = (7, 5),
     title: Optional[str] = None,
 ) -> Figure:
-    """Plot min-max vertical range lines with mean markers for evaluation metrics."""
+    """Plot min-max vertical range lines with mean markers for evaluation metrics.
+
+    Operation: ``VisualizationOperation.EVALUATION_SUMMARY_RANGE`` (model: ``ExtractionEvaluation``).
+
+    Args:
+        df: DataFrame produced from ``ExtractionEvaluation`` records.
+        metrics: Evaluation rate columns to summarize.
+        max_rate: Upper threshold to filter out-of-range rates (set ``None`` to keep all values).
+        figsize: Figure size as ``(width, height)`` in inches.
+        title: Optional custom plot title.
+
+    Usage:
+        >>> visualize(["evaluation_summary_range"], "extraction_evaluation", run_identifier=300)
+    """
     melted = _melt_evaluation_metrics(df, metrics=metrics, max_rate=max_rate)
     has_multi_runs = (
         "run_identifier" in melted.columns
@@ -590,7 +616,20 @@ def plot_evaluation_distribution(
     figsize: Tuple[float, float] = (8, 4.5),
     title: Optional[str] = None,
 ) -> Figure:
-    """Plot histogram of evaluation rates across metrics."""
+    """Plot histogram of evaluation rates across metrics.
+
+    Operation: ``VisualizationOperation.EVALUATION_DISTRIBUTION`` (model: ``ExtractionEvaluation``).
+
+    Args:
+        df: DataFrame produced from ``ExtractionEvaluation`` records.
+        metrics: Evaluation rate columns to plot.
+        max_rate: Upper threshold to filter out-of-range rates (set ``None`` to keep all values).
+        figsize: Figure size as ``(width, height)`` in inches.
+        title: Optional custom plot title.
+
+    Usage:
+        >>> visualize(["evaluation_distribution"], "extraction_evaluation", run_identifier=300)
+    """
     melted = _melt_evaluation_metrics(df, metrics=metrics, max_rate=max_rate)
     fig, ax = plt.subplots(figsize=figsize)
     sns.histplot(
@@ -619,7 +658,18 @@ def plot_relevance_confidence_hist(
     figsize: Tuple[float, float] = (8, 4.5),
     title: Optional[str] = None,
 ) -> Figure:
-    """Plot dodged histogram of relevance confidence scores split by `is_relevant`."""
+    """Plot dodged histogram of relevance confidence scores split by `is_relevant`.
+
+    Operation: ``VisualizationOperation.RELEVANCE_CONFIDENCE_HIST`` (model: ``PaperRelevance``).
+
+    Args:
+        df: DataFrame produced from ``PaperRelevance`` records (requires ``confidence`` and ``is_relevant``).
+        figsize: Figure size as ``(width, height)`` in inches.
+        title: Optional custom plot title.
+
+    Usage:
+        >>> visualize(["relevance_confidence_hist"], "paper_relevance", model_name="gemma-4-31b-it")
+    """
     if "confidence" not in df.columns or "is_relevant" not in df.columns:
         raise ValueError("Columns 'confidence' and 'is_relevant' are required.")
 
@@ -655,7 +705,18 @@ def plot_relevance_outcome_counts(
     figsize: Tuple[float, float] = (7, 4.5),
     title: Optional[str] = None,
 ) -> Figure:
-    """Plot counts of relevant vs non-relevant screening outcomes."""
+    """Plot counts of relevant vs non-relevant screening outcomes.
+
+    Operation: ``VisualizationOperation.RELEVANCE_OUTCOME_COUNTS`` (model: ``PaperRelevance``).
+
+    Args:
+        df: DataFrame produced from ``PaperRelevance`` records (requires ``is_relevant``).
+        figsize: Figure size as ``(width, height)`` in inches.
+        title: Optional custom plot title.
+
+    Usage:
+        >>> visualize(["relevance_outcome_counts"], "paper_relevance", run_identifier=[400, 401])
+    """
     if "is_relevant" not in df.columns:
         raise ValueError("Column 'is_relevant' is required.")
 
@@ -692,7 +753,19 @@ def plot_paper_status_counts(
     figsize: Tuple[float, float] = (8, 4.5),
     title: Optional[str] = None,
 ) -> Figure:
-    """Plot PaperMetadata counts by lifecycle status."""
+    """Plot PaperMetadata counts by lifecycle status.
+
+    Operation: ``VisualizationOperation.PAPER_STATUS_COUNTS`` (model: ``PaperMetadata``).
+
+    Args:
+        df: DataFrame produced from ``PaperMetadata`` records (requires ``status``).
+        group_by: Optional column (default ``"dataset_subset"``) used to split bars by hue.
+        figsize: Figure size as ``(width, height)`` in inches.
+        title: Optional custom plot title.
+
+    Usage:
+        >>> visualize(["paper_status_counts"], "paper_metadata", dataset_subset="scraped")
+    """
     if "status" not in df.columns:
         raise ValueError("Column 'status' is required.")
 
