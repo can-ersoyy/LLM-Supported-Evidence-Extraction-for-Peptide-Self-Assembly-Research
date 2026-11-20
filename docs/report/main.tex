@@ -1,0 +1,69 @@
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[margin=2.5cm]{geometry}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage{array}
+\usepackage{amsmath,amssymb}
+\usepackage{xcolor}
+\usepackage{listings}
+\usepackage{float}
+\usepackage{subcaption}
+\usepackage{tikz}
+\usetikzlibrary{shapes.geometric, arrows.meta, positioning, fit, backgrounds}
+\usepackage[numbers,sort&compress]{natbib}
+\usepackage[colorlinks=true,linkcolor=blue!60!black,citecolor=blue!60!black,urlcolor=blue!60!black]{hyperref}
+\usepackage[nameinlink,noabbrev]{cleveref}
+
+\graphicspath{{figures/}}
+
+\lstset{
+    basicstyle=\ttfamily\small,
+    breaklines=true,
+    frame=single,
+    backgroundcolor=\color{gray!6},
+    rulecolor=\color{gray!35},
+    xleftmargin=0.5em,
+    xrightmargin=0.5em,
+    columns=flexible
+}
+
+\title{%
+    \textbf{LLM-Assisted Evidence Extraction for 4--20mer Peptide Self-Assembly Literature}\\[0.5em]
+    \large Technical Report Draft
+}
+
+\author{%
+    Can Ersoy\\
+    \texttt{can.ersoy@tum.de}
+}
+
+\date{\today}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+Experimental records on short-peptide self-assembly---encompassing primary amino acid sequences, terminal modifications, solvent systems, reaction conditions, nanostructure morphologies, and characterization techniques---are dispersed across tens of thousands of scientific publications. Existing curated resources such as SAPdb, CPAD~2.0, WaltzDB~2.0, and Cross-Beta~DB are fragmented, cover narrow sequence or morphology scopes, and rely on manual curation that does not scale. We present \texttt{peptide\_extractor}, an end-to-end automated literature curation pipeline targeting 4--20mer peptide self-assembly. The system integrates multi-provider literature discovery (NCBI PubMed/PMC, Scopus, OpenAlex, Semantic Scholar), high-recall abstract-level relevance screening via Large Language Models (LLMs), full-text retrieval backed by Azure Blob Storage, unified structural parsing of JATS~XML, GROBID TEI~XML, and scholarly PDFs into a citation-grounded node tree, and schema-constrained multimodal LLM extraction. To support both large-scale deployment without ground truth and rigorous quantitative validation, we combine reference-free completeness and citation-grounding verification with normalized matching against a manually curated golden benchmark. Across a 10-paper multi-table development benchmark, transitioning from text-only single-pass extraction to direct PDF and multimodal table-image extraction raised sequence F1 from $40.5\%$ to $92.0\%$ and condition row recall from $3.2\%$ ($17/530$) to $70.0\%$ ($371/530$).
+\end{abstract}
+
+\tableofcontents
+\newpage
+
+\input{sections/01_introduction}
+\input{sections/02_background_and_data}
+\input{sections/03_system_architecture}
+\input{sections/04_retrieval_and_screening}
+\input{sections/05_parsing_and_grounding}
+\input{sections/06_llm_extraction}
+\input{sections/07_evaluation_and_results}
+\input{sections/08_conclusion_and_future_work}
+
+\bibliographystyle{plainnat}
+\bibliography{references}
+
+\end{document}

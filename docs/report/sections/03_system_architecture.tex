@@ -1,0 +1,53 @@
+\section{System Architecture}
+\label{sec:architecture}
+
+\texttt{peptide\_extractor} is implemented as a modular Python package (\texttt{src/peptide\_extractor/}) orchestrated by \texttt{pipeline.py} and exposed through a YAML-configurable Click CLI (\texttt{cli.py}). All metadata, screening decisions, extraction records, and evaluation metrics reside in a central SQLite database managed via SQLModel and Alembic migrations, while large full-text payloads (JATS~XML and PDFs) are stored in Azure Blob Storage with local filesystem caching.
+
+\Cref{fig:pipeline_arch} illustrates the five logical stages of the end-to-end pipeline.
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[
+    node distance=0.85cm and 1.1cm,
+    box/.style={rectangle, rounded corners=3pt, draw=blue!50!black, fill=blue!5, text width=3.1cm, align=center, font=\footnotesize, minimum height=0.95cm, inner sep=4pt},
+    db/.style={cylinder, shape border rotate=90, draw=teal!60!black, fill=teal!6, aspect=0.22, text width=2.4cm, align=center, font=\footnotesize, minimum height=0.85cm, inner sep=3pt},
+    arrow/.style={-{Stealth[scale=0.85]}, thick, draw=gray!75!black}
+]
+    \node[box] (s1) {\textbf{1. Discovery}\\NCBI, Scopus, OpenAlex, Semantic Scholar};
+    \node[db, right=of s1] (pm) {\texttt{PaperMetadata}\\(\texttt{not\_processed})};
+    \node[box, right=of pm] (s2) {\textbf{2. Screening}\\LLM Abstract Triage\\(\texttt{usable} / \texttt{discard})};
+
+    \node[box, below=1.1cm of s2] (s3) {\textbf{3. Full-Text Fetch}\\PMC XML / OpenAlex PDF\\+ Azure Blob Cache};
+    \node[db, left=of s3] (pc) {\texttt{PaperContent}\\(\texttt{xml} | \texttt{pdf})};
+    \node[box, left=of pc] (s4) {\textbf{4. Parsing}\\JATS / GROBID TEI\\$\rightarrow$ Unified \texttt{Node} Tree};
+
+    \node[box, below=1.1cm of s4] (s5) {\textbf{5. LLM Extraction}\\Direct PDF / Multimodal / Two-Pass Factored};
+    \node[db, right=of s5] (pe) {\texttt{PeptideEntry}\\+ \texttt{evidence\_span}};
+    \node[box, right=of pe] (s6) {\textbf{6. Evaluation}\\Grounding, Completeness \& Golden Benchmark};
+
+    \draw[arrow] (s1) -- (pm);
+    \draw[arrow] (pm) -- (s2);
+    \draw[arrow] (s2) -- (s3);
+    \draw[arrow] (s3) -- (pc);
+    \draw[arrow] (pc) -- (s4);
+    \draw[arrow] (s4) -- (s5);
+    \draw[arrow] (s5) -- (pe);
+    \draw[arrow] (pe) -- (s6);
+\end{tikzpicture}
+\caption{End-to-end \texttt{peptide\_extractor} pipeline architecture from literature discovery to evaluation.}
+\label{fig:pipeline_arch}
+\end{figure}
+
+\subsection{Relational Data Models and Lifecycles}
+Six SQLModel tables track provenance across every stage:
+\begin{itemize}
+    \item \texttt{raw\_provider\_record} (\texttt{RawProviderRecord}): Archives raw provider search payloads prior to normalization.
+    \item \texttt{paper\_metadata} (\texttt{PaperMetadata}): Canonical paper record (\texttt{doi}, \texttt{pmid}, \texttt{pmcid}, \texttt{title}, \texttt{abstract}, \texttt{status}, \texttt{dataset\_subset}, \texttt{source\_databases}). Papers transition through \texttt{PaperStatus}: \texttt{not\_processed} $\rightarrow$ \texttt{usable} or \texttt{discard}, and are tagged as \texttt{golden\_benchmark} or \texttt{scraped} via \texttt{DatasetSubset}.
+    \item \texttt{paper\_relevance} (\texttt{PaperRelevance}): Stores abstract screening verdicts (\texttt{is\_relevant}, \texttt{confidence}, \texttt{detected\_clues}, \texttt{explanation}), model identifier, and \texttt{run\_identifier}.
+    \item \texttt{paper\_content} (\texttt{PaperContent}): Links each paper to its full-text artifact (\texttt{format} $\in \{\texttt{xml}, \texttt{pdf}\}$, \texttt{blob\_url}, \texttt{pdf\_url}, \texttt{source}).
+    \item \texttt{peptide\_entry} (\texttt{PeptideEntry}): Stores extracted or manual peptide records (\texttt{ExtractionMode.LLM} vs.\ \texttt{ExtractionMode.MANUAL}).
+    \item \texttt{extraction\_evaluation} (\texttt{ExtractionEvaluation}): Persists reference-free \texttt{completeness\_rate}, \texttt{groundness\_rate}, and \texttt{faithfulness\_rate} per \texttt{PeptideEntry}.
+\end{itemize}
+
+\subsection{CLI Execution and Observability}
+The CLI exposes \texttt{run\_pipeline --config config.yaml}, which executes configurable sequences of steps (\texttt{search}, \texttt{deduplicate}, \texttt{find\_abstracts}, \texttt{clean\_empty}, \texttt{relevance}, \texttt{fetch\_fulltext}, \texttt{extraction}, \texttt{evaluation}, \texttt{visualization}), each tagged with a \texttt{run\_identifier} and routed to per-step log files (\texttt{docs/logs/[step]/\{run\_identifier\}.log}). A standalone \texttt{visualize} command exports publication-ready PNG/SVG charts across all database tables via \texttt{visualization.py}.

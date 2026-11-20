@@ -1,0 +1,16 @@
+\section{Introduction}
+\label{sec:introduction}
+
+Short-peptide self-assembly is a foundational mechanism in supramolecular biomaterials, nanomedicine, and amyloid pathology. Oligopeptides spanning roughly 4 to 20 amino acid residues---together with shorter capped di- and tri-peptide motifs such as Fmoc-Phe-Phe---spontaneously organize into diverse nanostructures including hydrogels, nanofibers, nanotubes, nanospheres, ribbons, vesicles, and cross-$\beta$ amyloid fibrils. Whether a given sequence assembles, and which morphology it adopts, depends sensitively on experimental parameters: terminal modifications ($N$- and $C$-terminal caps), peptide concentration, solvent and co-solvent ratios, pH, temperature, incubation time, and sample preparation protocols.
+
+Despite decades of experimental publications, this knowledge remains fragmented across tens of thousands of unstructured journal articles, tables, figure captions, and supplementary documents. Existing manually curated repositories---such as SAPdb~\cite{sapdb2020}, WALTZ-DB~2.0~\cite{waltzdb2020}, CPAD~2.0~\cite{cpad2020}, and Cross-Beta~DB~\cite{crossbetadb2024}---each cover restricted sequence lengths, specific morphological subsets, or incompatible schemas, and manual curation cannot keep pace with new literature.
+
+Automating the extraction of experimental peptide self-assembly records using Large Language Models (LLMs) presents four core technical challenges:
+\begin{enumerate}
+    \item \textbf{Literature Triage at Scale:} Broad bibliographic queries return tens of thousands of candidate papers, many of which are reviews, purely computational studies, or investigations of full-length proteins rather than isolated short peptides. Downloading and processing full texts for all candidates is wasteful in bandwidth, storage, and LLM token cost.
+    \item \textbf{Heterogeneous Document Formats:} Open-access articles may be available as structured JATS~XML (e.g., PubMed Central) or only as scholarly PDFs, where dense multi-column screening tables and characterization figures carry critical experimental matrices.
+    \item \textbf{Matrix Unrolling and Paper-Wide Defaults:} A single publication frequently reports dozens of peptides across multiple solvent or pH conditions in compact tables while stating shared parameters (e.g., temperature, buffer, detection methods, preparation protocol) once in the Methods prose. Single-pass text-only LLM prompts routinely truncate large tables or drop paper-wide defaults.
+    \item \textbf{Auditability and Grounding:} Extracted records must not rely on unverified model generations; every claimed field should be traceable back to an exact sentence, table, or figure in the source publication, and extraction quality must be measurable even when no ground-truth annotations exist.
+\end{enumerate}
+
+To address these challenges, we developed \texttt{peptide\_extractor}, an end-to-end literature curation pipeline for 4--20mer peptide self-assembly research. The system combines multi-provider bibliographic retrieval, high-recall abstract relevance screening, unified JATS~XML / TEI~XML / PDF parsing into a citation-grounded node tree, multimodal and two-pass factored LLM extraction, and dual evaluation via reference-free grounding checks and normalized golden-dataset benchmarking.
