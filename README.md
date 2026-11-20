@@ -1,20 +1,49 @@
 # LLM-Assisted Evidence Extraction for 4–20mer Peptide Self-Assembly Literature
 
-This is the main development repository for the IDP project.
+`peptide_extractor` is an end-to-end scientific literature curation pipeline that discovers publications on short-peptide self-assembly, screens abstracts for experimental relevance, fetches and parses full-text JATS XML and PDFs into a unified citation-grounded node tree, extracts structured `PeptideEntry` records via LLMs, and evaluates both reference-free grounding and golden-dataset accuracy.
 
-## CLI Usage
+---
 
-The pipeline can be run using the provided CLI and a YAML configuration file.
+## Documentation Index
 
-### Configuration
+### System & Technical Guides
+- **[System Design & Pipeline Architecture](docs/project_notes/architecture.md)**:
+  - [End-to-End Pipeline Flow](docs/project_notes/architecture.md#1-end-to-end-pipeline-flow)
+  - [Pipeline Lifecycle & Data Models](docs/project_notes/architecture.md#2-pipeline-lifecycle--data-models)
+  - [CLI & YAML Configuration](docs/project_notes/architecture.md#3-cli--yaml-configuration)
+  - [Module Map](docs/project_notes/architecture.md#4-module-map-srcpeptide_extractor)
+- **[Document Parsing & Multimodal Construction](docs/project_notes/parsing.md)**:
+  - [Supported Input Formats & Conversion Flow](docs/project_notes/parsing.md#1-supported-input-formats--conversion-flow)
+  - [Unified Node Object Tree (`sec`/`p`/`s`/`table`/`fig`)](docs/project_notes/parsing.md#2-the-unified-node-object-tree)
+  - [PDF Table & Figure Cropping](docs/project_notes/parsing.md#3-pdf-table--figure-cropping-table_rendererpy)
+  - [Serialization Formats for LLMs (`to_llm_string` & `to_llm_blocks`)](docs/project_notes/parsing.md#4-serialization-formats-for-llms)
+- **[LLM Workflows, Prompts & Extraction Modes](docs/project_notes/llm_methods.md)**:
+  - [Provider & Structured Output Layer](docs/project_notes/llm_methods.md#1-provider--structured-output-layer-llmpy)
+  - [Stage 1: Abstract Relevance Screening](docs/project_notes/llm_methods.md#2-stage-1-abstract-relevance-screening-relevancepy)
+  - [Stage 2: Peptide Extraction (Direct PDF, Factored Two-Pass, Single-Pass Multimodal, Text-Only)](docs/project_notes/llm_methods.md#3-stage-2-peptide-extraction-extractionpy--pipelinepy)
+  - [Stage 3: Evaluation & Golden Benchmarking](docs/project_notes/llm_methods.md#4-stage-3-evaluation--benchmarking)
+- **[Literature Providers, Storage & Visualization](docs/project_notes/providers_and_data.md)**:
+  - [Literature Providers & Full-Text Fetching](docs/project_notes/providers_and_data.md#1-literature-providers-providerspy)
+  - [Azure Blob Storage & Caching](docs/project_notes/providers_and_data.md#2-azure-blob-storage--local-caching-azure_storagepy)
+  - [Visualization Framework](docs/project_notes/providers_and_data.md#3-visualization-framework-visualizationpy)
 
-Create a `config.yaml` file with the desired pipeline steps and parameters:
+### Setup Guides (`docs/project_notes/`)
+- **[GROBID Setup & PDF Preprocessing Guide](docs/project_notes/grobid_setup.md)**: Docker/standalone setup for converting scholarly PDFs into TEI XML.
+- **[Alembic Database Migration Guide](docs/project_notes/alembic_tutorial.md)**: Creating and applying SQLModel schema migrations.
+
+---
+
+## Quick Start (CLI)
+
+### 1. Run Pipeline Steps via YAML Config
+
+Create a `config.yaml` (or use `default_config.yaml`):
 
 ```yaml
 log_level: "INFO"
+log_to_file: true
 ncbi_batch_size: 100
 
-# List of steps to run in order
 steps:
   - search
   - deduplicate
@@ -42,19 +71,25 @@ extraction:
   delay_seconds: 4
 ```
 
-### Running
-
-Execute the CLI by passing the config file path:
+Execute the pipeline:
 
 ```bash
 uv run src/peptide_extractor/cli.py run_pipeline --config config.yaml
 ```
 
-## Full-Text Preprocessing & GROBID Setup
+### 2. Generate Visualizations
 
-The pipeline supports both **JATS XML** and **scholarly PDFs**:
-- **JATS XML**: Processed directly via PubMed Central into the unified object tree.
-- **PDFs**: Processed into TEI XML using [GROBID](https://grobid.readthedocs.io/), or a lightweight zero-daemon fallback (`pdftotext`/`pypdf`). Both XML formats produce a unified tree of citation-grounded nodes (`sec-0/p-0/s-0`, `sec-1/table-0/row-0`).
+```bash
+uv run src/peptide_extractor/cli.py visualize \
+  --model peptide_entry \
+  --operation peptide_column_completion \
+  --format png
+```
 
-For instructions on running GROBID via Docker and configuring it in the pipeline, see [docs/grobid_setup.md](docs/grobid_setup.md).
+### 3. Run Tests
 
+Development commands run inside the `idp-dev` Distrobox container:
+
+```bash
+distrobox enter idp-dev -- uv run pytest
+```

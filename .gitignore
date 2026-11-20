@@ -9,9 +9,9 @@ draft
 .coverage
 htmlcov/
 
-docs/questions.md
-docs/todos.md
-docs/scratchpad.md
+docs/personal_notes/questions.md
+docs/personal_notes/todos.md
+docs/personal_notes/scratchpad.md
 
 data/logs
 data/*.db

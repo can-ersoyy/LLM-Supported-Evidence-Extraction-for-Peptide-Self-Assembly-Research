@@ -120,7 +120,9 @@ In `PaperMetadata`, each paper transitions through standardized lifecycle states
 │   ├── journal.md                     # Research logbook
 │   ├── paper-retrieval notes.md       # Search queries across PubMed, WoS, Scopus, EuropePMC
 │   ├── golden-dataset notes.md        # Database notes & column mappings
-│   └── alembic_tutorial.md            # Step-by-step Alembic migration guide
+│   └── project_notes/                 # Setup guides & tutorials
+│       ├── alembic_tutorial.md        # Step-by-step Alembic migration guide
+│       └── grobid_setup.md            # GROBID Docker & PDF preprocessing guide
 ```
 
 ---
@@ -182,7 +184,7 @@ distrobox enter idp-dev -- uv run python src/peptide_extractor/pipeline.py
 ### 5.2 Database Migrations (Alembic + SQLModel)
 
 **Never** modify database tables in `data/papers.db` directly. All schema changes must go through Alembic.
-See detailed instructions in [`docs/alembic_tutorial.md`](docs/alembic_tutorial.md).
+See detailed instructions in [`docs/project_notes/alembic_tutorial.md`](docs/project_notes/alembic_tutorial.md).
 
 ```bash
 # 1. After updating an SQLModel model in src/peptide_extractor/db/
