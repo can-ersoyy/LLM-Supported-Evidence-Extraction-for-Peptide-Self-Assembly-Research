@@ -270,3 +270,149 @@ def test_run_extraction_selects_pdf_prompt(monkeypatch):
     assert captured["system_prompt"] == extraction_mod.PDF_EXTRACTION_SYSTEM_PROMPT
     assert captured["paper_content"] == pdf_bytes
     assert captured["filename"] == "my_paper.pdf"
+
+
+def test_extract_peptides_multimodal_blocks(mock_chat_model):
+    """Ensure extract_peptides passes multimodal text+image blocks directly to HumanMessage."""
+    from langchain_core.messages import HumanMessage
+
+    llm, structured = mock_chat_model
+    structured.invoke.return_value = {"entries": []}
+
+    controller = LLMController(
+        llm=llm,
+        provider="google_genai",
+        structured_output=PeptideExtractionResult,
+        system_prompt="Extract from blocks",
+    )
+
+    blocks = [
+        {"type": "text", "text": "[sec-1/table-0] Table 1\n>>> [TABLE IMAGE ATTACHED: sec-1/table-0] <<<"},
+        {"type": "image_url", "image_url": {"url": "data:image/png;base64,iVBORw0KGgo="}},
+    ]
+    result = controller.extract_peptides(blocks)
+
+    assert isinstance(result, PeptideExtractionResult)
+    called_messages = structured.invoke.call_args[0][0]
+    human_msgs = [m for m in called_messages if isinstance(m, HumanMessage)]
+    assert len(human_msgs) == 1
+    assert human_msgs[0].content == blocks
+
+
+def test_run_extraction_selects_text_prompt_for_blocks(monkeypatch):
+    """Ensure run_extraction uses EXTRACTION_SYSTEM_PROMPT_V6 for multimodal blocks."""
+    from peptide_extractor import extraction as extraction_mod
+
+    captured = {}
+
+    class DummyController:
+        def __init__(self, provider, model_name, structured_output, system_prompt):
+            captured["system_prompt"] = system_prompt
+
+        def extract_peptides(self, paper_content, stream=True, filename="paper.pdf"):
+            captured["paper_content"] = paper_content
+            return PeptideExtractionResult(entries=[])
+
+    monkeypatch.setattr(extraction_mod, "LLMController", DummyController)
+
+    blocks = [
+        {"type": "text", "text": "[sec-1/table-0] Table 1"},
+        {"type": "image_url", "image_url": {"url": "data:image/png;base64,abc"}},
+    ]
+    res = extraction_mod.run_extraction(blocks)
+    assert isinstance(res, PeptideExtractionResult)
+    assert captured["system_prompt"] == extraction_mod.EXTRACTION_SYSTEM_PROMPT_V6
+    assert captured["paper_content"] == blocks
+
+
+def test_factored_extraction_splits_and_merges_shared_conditions(monkeypatch):
+    """Verify two-pass factored extraction gathers shared conditions once and merges into unrolled table rows."""
+    from peptide_extractor import extraction as extraction_mod
+    from peptide_extractor.db.peptide_entry import EvidenceSpan, PeptideAssemblyType
+
+    blocks = [
+        {
+            "type": "text",
+            "text": (
+                "[sec-0/p-0/s-0] Tripeptides were incubated at 20 °C for 24 h.\n"
+                "[sec-1/table-0] Table 1\n"
+                "\t>>> [TABLE IMAGE ATTACHED: sec-1/table-0] <<<\n"
+            ),
+        },
+        {"type": "image_url", "image_url": {"url": "data:image/png;base64,tbl0"}},
+        {
+            "type": "text",
+            "text": "[sec-2/p-0/s-0] End of results.\n",
+        },
+    ]
+
+    calls = []
+
+    class DummyFactoredController:
+        def __init__(self, provider, model_name, structured_output, system_prompt):
+            self.structured_output = structured_output
+
+        def extract_peptides(self, paper_content, stream=True, filename="paper.pdf"):
+            calls.append((self.structured_output, paper_content))
+            if self.structured_output is extraction_mod.PaperWideExtractionResult:
+                return extraction_mod.PaperWideExtractionResult(
+                    shared_conditions=extraction_mod.SharedExperimentalConditions(
+                        n_terminal="Boc",
+                        c_terminal="OCH2Ph",
+                        temperature=20.0,
+                        incubation_period=1440,
+                        detection_method=["Inverted tube"],
+                        evidence_span=EvidenceSpan(
+                            temperature="[sec-0/p-0/s-0]",
+                            incubation_period="[sec-0/p-0/s-0]",
+                        ),
+                    ),
+                    prose_entries=[],
+                )
+            return extraction_mod.TableExtractionResult(
+                rows=[
+                    extraction_mod.CompactTableRow(
+                        sequence="GGG",
+                        conditions=[
+                            extraction_mod.CompactTableCondition(
+                                solution="hexane", type=PeptideAssemblyType.NONE
+                            ),
+                            extraction_mod.CompactTableCondition(
+                                solution="toluene",
+                                type=PeptideAssemblyType.ORGANOGEL,
+                                peptide_concentration=10.0,
+                            ),
+                        ],
+                    )
+                ]
+            )
+
+    monkeypatch.setattr(extraction_mod, "LLMController", DummyFactoredController)
+
+    res = extraction_mod.run_extraction(blocks, factored=True)
+    assert len(calls) == 2
+    assert calls[0][0] is extraction_mod.PaperWideExtractionResult
+    assert isinstance(calls[0][1], str)  # Pass 1 receives prose text only
+    assert calls[1][0] is extraction_mod.TableExtractionResult
+    assert isinstance(calls[1][1], list)  # Pass 2 receives table image block
+
+    assert len(res.entries) == 2
+    e0, e1 = res.entries
+    assert e0.sequence == "GGG"
+    assert e0.solution == "hexane"
+    assert e0.type == PeptideAssemblyType.NONE
+    assert e0.temperature == 20.0
+    assert e0.incubation_period == 1440
+    assert e0.n_terminal == "Boc"
+    assert e0.c_terminal == "OCH2Ph"
+    assert e0.evidence_span.temperature == "[sec-0/p-0/s-0]"
+    assert e0.evidence_span.incubation_period == "[sec-0/p-0/s-0]"
+    assert e0.evidence_span.sequence == "[sec-1/table-0]"
+    assert e0.evidence_span.solution == "[sec-1/table-0]"
+
+    assert e1.solution == "toluene"
+    assert e1.type == PeptideAssemblyType.ORGANOGEL
+    assert e1.peptide_concentration == 10.0
+    assert e1.evidence_span.peptide_concentration == "[sec-1/table-0]"
+
+

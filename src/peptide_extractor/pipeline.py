@@ -25,8 +25,11 @@ from peptide_extractor.db.peptide_entry import PeptideEntry
 from peptide_extractor.db import peptide_llm_entry_to_peptide_entry
 from peptide_extractor.extraction import run_extraction
 from peptide_extractor.parsers import (
+    extraction_ready_blocks_from_pdf,
+    extraction_ready_blocks_from_xml,
     extraction_ready_string_from_pdf,
     extraction_ready_string_from_xml,
+    to_extraction_ready_blocks,
     to_extraction_ready_string,
 )
 from peptide_extractor.db.paper_content import get_paper_content_by_paper_id
@@ -564,6 +567,10 @@ def run_peptide_extraction(
     run_identifier: Optional[int] = None,
     log_to_file: Optional[bool] = None,
     pass_pdf_directly: bool = False,
+    tables_as_images: bool = False,
+    images_as_images: bool = False,
+    table_image_layout: str = "interleaved",
+    factored_extraction: bool = True,
     **kwargs,
 ) -> tuple[List[int], int]:
     """Run peptide extraction"""
@@ -594,6 +601,37 @@ def run_peptide_extraction(
                         provider,
                         model_name,
                         filename=f"paper_{paper.id}.pdf",
+                    ).entries
+                elif tables_as_images or images_as_images:
+                    if paper_content.format == "pdf":
+                        extraction_payload = extraction_ready_blocks_from_pdf(
+                            paper_fulltext,
+                            layout=table_image_layout,
+                            tables_as_images=tables_as_images,
+                            images_as_images=images_as_images,
+                        )
+                    elif paper_content.format == "xml":
+                        extraction_payload = extraction_ready_blocks_from_xml(
+                            paper_fulltext,
+                            layout=table_image_layout,
+                            tables_as_images=tables_as_images,
+                            images_as_images=images_as_images,
+                        )
+                    else:
+                        extraction_payload = to_extraction_ready_blocks(
+                            paper_fulltext,
+                            layout=table_image_layout,
+                            tables_as_images=tables_as_images,
+                            images_as_images=images_as_images,
+                        )
+                    logger.info(
+                        f"Extraction Ready Blocks ({len(extraction_payload)} blocks, layout={table_image_layout})"
+                    )
+                    entries = run_extraction(
+                        extraction_payload,
+                        provider,
+                        model_name,
+                        factored=factored_extraction,
                     ).entries
                 else:
                     if paper_content.format == "pdf":
@@ -850,7 +888,7 @@ if __name__ == "__main__":
     # end_time = time.time()
 
     # print(f"Relevance Success: {success}, Fails: {fails}, Identifier: {identifier}, Time: {end_time - start_time}")
-    from peptide_extractor.scratchpad import sap_db
+    
     # 6. Fetch fulltexts
 
     # fetch_paper_fulltexts(
@@ -918,16 +956,20 @@ if __name__ == "__main__":
     )
 
     # 1. Extract only the 10 dev-slice papers (or omit pmid=... for all papers)
-    # fails, identifier = run_peptide_extraction(
-    #    provider="google",
-    #    model_name="gemini-3.5-flash-lite",
-    #    delay_seconds=4,
-    #    pmid=list(DEV_BENCHMARK_PMIDS),
-    # )
-    # print(f"Fails: {fails}, Run identifier: {identifier}")
+    fails, identifier = run_peptide_extraction(
+        provider="google",
+        model_name="gemini-3.5-flash-lite",
+        delay_seconds=4,
+        pmid=DEV_BENCHMARK_PMIDS,
+        #pmid=[20460796],
+        tables_as_images=True,
+    )
+    print(f"Fails: {fails}, Run identifier: {identifier}")
     # 2. Benchmark that run against golden_dataset (run_identifier=0)
     print(
         benchmark_run_against_golden(
-            llm_run_identifier=1795040432, pmids=[20460796]
+            llm_run_identifier=identifier, 
+            pmids=DEV_BENCHMARK_PMIDS
+            #pmids=[20460796]
         ).format_report()
     )

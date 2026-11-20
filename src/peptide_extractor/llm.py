@@ -3,7 +3,7 @@ import logging
 import os
 from pathlib import Path
 import sys
-from typing import Any, List, Optional, Tuple, Type, Union
+from typing import Any, Dict, List, Optional, Tuple, Type, Union
 
 from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.language_models.chat_models import BaseChatModel
@@ -228,11 +228,11 @@ class LLMController:
 
     def extract_peptides(
         self,
-        paper_content: Union[str, bytes, Path],
+        paper_content: Union[str, bytes, Path, List[Dict[str, Any]]],
         stream: Optional[bool] = None,
         filename: str = "paper.pdf",
     ) -> Any:
-        """Run extraction on paper text or raw PDF bytes/Path."""
+        """Run extraction on paper text, multimodal content blocks, or raw PDF bytes/Path."""
         if isinstance(paper_content, Path):
             filename = paper_content.name
             paper_content = paper_content.read_bytes()
@@ -265,6 +265,10 @@ class LLMController:
                     ]
                 )
             )
+        elif isinstance(paper_content, list):
+            if not paper_content:
+                raise ValueError("paper_content blocks list cannot be empty.")
+            messages.append(HumanMessage(content=paper_content))
         else:
             messages.append(HumanMessage(content=f"Fulltext:\n\n{paper_content}"))
 

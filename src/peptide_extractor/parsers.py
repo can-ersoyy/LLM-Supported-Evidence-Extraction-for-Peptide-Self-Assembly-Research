@@ -5,11 +5,12 @@ Supports JATS XML, TEI XML (from GROBID or converters), and PDF documents.
 
 from __future__ import annotations
 
+import base64
 import logging
 import os
 import time
 from pathlib import Path
-from typing import BinaryIO
+from typing import Any, BinaryIO
 
 import requests
 import spacy
@@ -46,16 +47,43 @@ class SentenceNode(
 
 
 class TableNode(Node):
-    def __init__(self, id, content, parent_id, caption, columns, rows):
+    def __init__(
+        self,
+        id,
+        content,
+        parent_id,
+        caption,
+        columns,
+        rows,
+        footnotes: str = "",
+        grid: list[list[dict[str, Any]]] | None = None,
+        coords: str | None = None,
+        image_bytes: bytes | None = None,
+    ):
         super().__init__(id, content, parent_id)
         self.caption = caption
         self.columns = columns
         self.rows = rows
+        self.footnotes = footnotes
+        self.grid = grid
+        self.coords = coords
+        self.image_bytes = image_bytes
 
 
-# specials (these will have additional fields and logic)
-# class ImageNode(Node):
-# pass
+class ImageNode(Node):
+    def __init__(
+        self,
+        id: str,
+        content: str,
+        parent_id: str | None,
+        caption: str = "",
+        coords: str | None = None,
+        image_bytes: bytes | None = None,
+    ):
+        super().__init__(id, content, parent_id)
+        self.caption = caption
+        self.coords = coords
+        self.image_bytes = image_bytes
 
 
 def get_body_tag_from_xml_root(xml_string: str) -> Tag | None:
@@ -85,16 +113,58 @@ def is_table_tag(tag: Tag) -> bool:
     )
 
 
+def is_image_figure_tag(tag: Tag) -> bool:
+    """Determines whether an XML Tag represents a non-table figure/image in JATS or TEI XML."""
+    if tag.name == "fig":
+        return True
+    return bool(tag.name == "figure" and not is_table_tag(tag))
+
+
+def _collect_coords(tag: Tag) -> str | None:
+    """Collect deduplicated GROBID coords from a tag and its descendants."""
+    all_coords: list[str] = []
+    if tag.get("coords"):
+        all_coords.append(str(tag.get("coords")))
+    for child in tag.find_all(attrs={"coords": True}):
+        if child.get("coords"):
+            all_coords.append(str(child.get("coords")))
+    return ";".join(dict.fromkeys(all_coords)) if all_coords else None
+
+
+def parse_image_node(id: str, parent_id: str | None, fig_tag: Tag) -> ImageNode:
+    """Parses a non-table figure tag (JATS <fig> or TEI <figure>) into an ImageNode."""
+    parts: list[str] = []
+    for tag_name in ("caption", "head", "figDesc"):
+        t = fig_tag.find(tag_name)
+        if t:
+            txt = t.get_text(separator=" ", strip=True)
+            if txt and txt not in parts:
+                parts.append(txt)
+    caption = " — ".join(parts) if parts else ""
+    coords = _collect_coords(fig_tag)
+    return ImageNode(
+        id=id,
+        content=caption,
+        parent_id=parent_id,
+        caption=caption,
+        coords=coords,
+    )
+
+
 def parse_table_node(id: str, parent_id: str | None, table_tag: Tag) -> TableNode:
     """Parses a table tag (JATS <table-wrap> or TEI <figure type="table"> / <table>) into a TableNode."""
     caption_tag = table_tag.find(["caption", "head", "figDesc"])
     caption = caption_tag.get_text(separator=" ", strip=True) if caption_tag else ""
+
+    foot_tag = table_tag.find(["table-wrap-foot", "note"])
+    footnotes = foot_tag.get_text(separator=" ", strip=True) if foot_tag else ""
 
     tr_tags = table_tag.find_all("tr")
     row_tags = tr_tags if tr_tags else table_tag.find_all("row")
 
     columns = []
     rows = []
+    grid: list[list[dict[str, Any]]] = []
 
     if row_tags:
         header_tr = row_tags[0]
@@ -107,7 +177,42 @@ def parse_table_node(id: str, parent_id: str | None, table_tag: Tag) -> TableNod
                 [cell.get_text(separator=" ", strip=True) for cell in row_cells]
             )
 
+        for r_idx, tr in enumerate(row_tags):
+            in_thead = tr.find_parent("thead") is not None
+            is_tei_label = tr.get("role") == "label"
+            cells = tr.find_all(["th", "td", "cell"])
+            grid_row: list[dict[str, Any]] = []
+            for cell in cells:
+                colspan_raw = cell.get("colspan") or cell.get("cols") or 1
+                rowspan_raw = cell.get("rowspan") or cell.get("rows") or 1
+                try:
+                    colspan = max(1, int(colspan_raw))
+                except (TypeError, ValueError):
+                    colspan = 1
+                try:
+                    rowspan = max(1, int(rowspan_raw))
+                except (TypeError, ValueError):
+                    rowspan = 1
+                is_header = (
+                    in_thead
+                    or is_tei_label
+                    or cell.name == "th"
+                    or (r_idx == 0 and not table_tag.find("thead"))
+                )
+                grid_row.append(
+                    {
+                        "text": cell.get_text(separator=" ", strip=True),
+                        "colspan": colspan,
+                        "rowspan": rowspan,
+                        "is_header": is_header,
+                    }
+                )
+            if grid_row:
+                grid.append(grid_row)
+
     content = caption
+
+    coords = _collect_coords(table_tag)
 
     return TableNode(
         id=id,
@@ -116,6 +221,9 @@ def parse_table_node(id: str, parent_id: str | None, table_tag: Tag) -> TableNod
         caption=caption,
         columns=columns,
         rows=rows,
+        footnotes=footnotes,
+        grid=grid or None,
+        coords=coords,
     )
 
 
@@ -162,6 +270,9 @@ def parse_xml(xml_string: str) -> RootNode:
             elif is_table_tag(root_tag):
                 id = construct_node_id(parent_id, f"table-{level_index}")
                 node = parse_table_node(id, parent_id, root_tag)
+            elif is_image_figure_tag(root_tag):
+                id = construct_node_id(parent_id, f"fig-{level_index}")
+                node = parse_image_node(id, parent_id, root_tag)
             else:
                 return
             parent_node.children.append(node)
@@ -172,6 +283,7 @@ def parse_xml(xml_string: str) -> RootNode:
             "sec": 0,
             "p": 0,
             "table": 0,
+            "fig": 0,
         }
 
         for child in children:
@@ -191,8 +303,12 @@ def parse_xml(xml_string: str) -> RootNode:
                 idx = tag_dict["table"]
                 tag_dict["table"] += 1
                 _parse(child, node, node.id, idx)
+            elif is_image_figure_tag(child):
+                idx = tag_dict["fig"]
+                tag_dict["fig"] += 1
+                _parse(child, node, node.id, idx)
             else:
-                # Other non-text container tags (e.g. lists, notes, or non-table figures)
+                # Other non-text container tags (e.g. lists, notes)
                 pass
 
         return node
@@ -247,7 +363,7 @@ def to_llm_string(paper_tree: RootNode) -> str:
 
     if isinstance(paper_tree, ParagraphNode):
         s += "\n"
-    elif isinstance(paper_tree, (SectionNode, SentenceNode)):
+    elif isinstance(paper_tree, (SectionNode, SentenceNode, ImageNode)):
         s += f" {paper_tree.content}\n"
     elif isinstance(paper_tree, TableNode):
         s += f" {paper_tree.content}\n"
@@ -267,6 +383,116 @@ def to_llm_string(paper_tree: RootNode) -> str:
         s += to_llm_string(child)
 
     return s
+
+
+def _node_image_block(node: TableNode | ImageNode) -> dict[str, Any]:
+    """Return a base64 PNG image_url block from cropped PDF bytes."""
+    if node.image_bytes is None:
+        raise ValueError(f"{type(node).__name__} {node.id} has no cropped image_bytes.")
+    encoded = base64.b64encode(node.image_bytes).decode("utf-8")
+    return {
+        "type": "image_url",
+        "image_url": {"url": f"data:image/png;base64,{encoded}"},
+    }
+
+
+def to_llm_blocks(
+    paper_tree: RootNode,
+    layout: str = "interleaved",
+    tables_as_images: bool = True,
+    images_as_images: bool = True,
+) -> list[dict[str, Any]]:
+    """Convert a parsed node tree into multimodal LangChain content blocks.
+
+    Args:
+        paper_tree: Parsed document RootNode.
+        layout: 'interleaved' (insert visual PNGs immediately at their location in the text)
+            or 'appendix' (keep location anchor in text and attach visual PNGs at the end).
+        tables_as_images: When True, attach cropped PDF table PNGs when available.
+        images_as_images: When True, attach cropped PDF figure PNGs when available.
+    """
+    if layout not in ("interleaved", "appendix"):
+        raise ValueError(f"Unsupported layout '{layout}'. Expected 'interleaved' or 'appendix'.")
+
+    if not tables_as_images and not images_as_images:
+        return [{"type": "text", "text": to_llm_string(paper_tree)}]
+
+    blocks: list[dict[str, Any]] = []
+    text_buf: list[str] = []
+    appendix_visuals: list[TableNode | ImageNode] = []
+
+    def _flush_text() -> None:
+        if text_buf:
+            combined = "".join(text_buf)
+            if combined.strip():
+                blocks.append({"type": "text", "text": combined})
+            text_buf.clear()
+
+    def _walk(node: Node) -> None:
+        tab_level = calculate_level_from_name(node.id) - 1
+        indent = "\t" * max(0, tab_level)
+
+        if isinstance(node, ParagraphNode):
+            text_buf.append(f"{indent}[{node.id}]\n")
+        elif isinstance(node, (SectionNode, SentenceNode)):
+            text_buf.append(f"{indent}[{node.id}] {node.content}\n")
+        elif isinstance(node, TableNode):
+            caption_line = f"{indent}[{node.id}] {node.content}".rstrip()
+            text_buf.append(f"{caption_line}\n")
+            if node.footnotes:
+                text_buf.append(f"{indent}\tFootnotes: {node.footnotes}\n")
+
+            if tables_as_images and node.image_bytes is not None:
+                if layout == "interleaved":
+                    text_buf.append(f"{indent}\t>>> [TABLE IMAGE ATTACHED: {node.id}] <<<\n")
+                    _flush_text()
+                    blocks.append(_node_image_block(node))
+                else:
+                    text_buf.append(
+                        f"{indent}\t>>> [SEE APPENDIX TABLE IMAGE: {node.id}] <<<\n"
+                    )
+                    appendix_visuals.append(node)
+            else:
+                header_str = " | ".join(node.columns)
+                text_buf.append(f"{indent}\tColumns: {header_str}\n")
+                for idx, row in enumerate(node.rows):
+                    row_id = f"[{node.id}/row-{idx}]"
+                    row_str = " | ".join(str(cell) for cell in row)
+                    text_buf.append(f"{indent}\t{row_id} {row_str}\n")
+            return
+        elif isinstance(node, ImageNode):
+            caption_line = f"{indent}[{node.id}] {node.content}".rstrip()
+            text_buf.append(f"{caption_line}\n")
+            if images_as_images and node.image_bytes is not None:
+                if layout == "interleaved":
+                    text_buf.append(f"{indent}\t>>> [FIGURE IMAGE ATTACHED: {node.id}] <<<\n")
+                    _flush_text()
+                    blocks.append(_node_image_block(node))
+                else:
+                    text_buf.append(
+                        f"{indent}\t>>> [SEE APPENDIX FIGURE IMAGE: {node.id}] <<<\n"
+                    )
+                    appendix_visuals.append(node)
+            return
+
+        for child in node.children:
+            _walk(child)
+
+    _walk(paper_tree)
+    _flush_text()
+
+    if layout == "appendix" and appendix_visuals:
+        for visual_node in appendix_visuals:
+            kind = "TABLE" if isinstance(visual_node, TableNode) else "FIGURE"
+            header = f"\n=== APPENDIX {kind} IMAGE: [{visual_node.id}] ===\n"
+            if visual_node.caption:
+                header += f"Caption: {visual_node.caption}\n"
+            if isinstance(visual_node, TableNode) and visual_node.footnotes:
+                header += f"Footnotes: {visual_node.footnotes}\n"
+            blocks.append({"type": "text", "text": header})
+            blocks.append(_node_image_block(visual_node))
+
+    return blocks
 
 
 def to_debug_string(paper_tree: RootNode) -> str:
@@ -356,6 +582,7 @@ class GrobidClient:
         consolidate_citations: bool = False,
         include_raw_citations: bool = False,
         segment_sentences: bool = False,
+        tei_coordinates: list[str] | None = None,
     ) -> str:
         """Convert a PDF document into TEI XML using GROBID's processFulltextDocument endpoint.
 
@@ -384,12 +611,14 @@ class GrobidClient:
             raise TypeError(f"Unsupported pdf_input type: {type(pdf_input)}")
 
         files = {"input": (filename, pdf_bytes, "application/pdf")}
-        data = {
+        data: dict[str, Any] = {
             "consolidateHeader": "1" if consolidate_header else "0",
             "consolidateCitations": "1" if consolidate_citations else "0",
             "includeRawCitations": "1" if include_raw_citations else "0",
             "segmentSentences": "1" if segment_sentences else "0",
         }
+        if tei_coordinates:
+            data["teiCoordinates"] = tei_coordinates
 
         url = f"{self.base_url}/api/processFulltextDocument"
         try:
@@ -495,6 +724,8 @@ def parse_document(
     add_sentence_nodes: bool = True,
     grobid_url: str | None = None,
     backend: str = "auto",
+    crop_pdf_tables: bool = False,
+    crop_pdf_images: bool = False,
 ) -> RootNode:
     """Unified single interface to parse documents (JATS XML, TEI XML, or PDF) into a Node tree."""
     resolved_format = format.lower()
@@ -512,12 +743,24 @@ def parse_document(
                 resolved_format = "xml"
 
     if resolved_format == "pdf":
+        grobid_kwargs: dict[str, Any] = {}
+        if crop_pdf_tables or crop_pdf_images:
+            grobid_kwargs["tei_coordinates"] = ["figure"]
         tei_xml = pdf_to_tei_xml(
             content,
             grobid_url=grobid_url,
             backend=backend,
+            **grobid_kwargs,
         )
         root_node = parse_xml(tei_xml)
+        if crop_pdf_tables:
+            from peptide_extractor.table_renderer import crop_tables_from_pdf
+
+            crop_tables_from_pdf(root_node, content)
+        if crop_pdf_images:
+            from peptide_extractor.table_renderer import crop_figures_from_pdf
+
+            crop_figures_from_pdf(root_node, content)
     else:
         if raw_text is None:
             raw_text = _read_text_content(content)
@@ -559,4 +802,67 @@ def extraction_ready_string_from_pdf(
     """Returns an extraction-ready string from a PDF document (converted via TEI XML)."""
     return to_extraction_ready_string(
         pdf_content, format="pdf", grobid_url=grobid_url, backend=backend
+    )
+
+
+def to_extraction_ready_blocks(
+    content: str | bytes | Path,
+    format: str = "auto",
+    layout: str = "interleaved",
+    tables_as_images: bool = True,
+    images_as_images: bool = True,
+    grobid_url: str | None = None,
+    backend: str = "grobid",
+) -> list[dict[str, Any]]:
+    """Convert JATS XML, TEI XML, or PDF into multimodal LLM extraction-ready content blocks."""
+    root_node = parse_document(
+        content=content,
+        format=format,
+        add_sentence_nodes=True,
+        grobid_url=grobid_url,
+        backend=backend,
+        crop_pdf_tables=tables_as_images,
+        crop_pdf_images=images_as_images,
+    )
+    return to_llm_blocks(
+        root_node,
+        layout=layout,
+        tables_as_images=tables_as_images,
+        images_as_images=images_as_images,
+    )
+
+
+def extraction_ready_blocks_from_xml(
+    xml_text: str,
+    layout: str = "interleaved",
+    tables_as_images: bool = True,
+    images_as_images: bool = True,
+) -> list[dict[str, Any]]:
+    """Returns multimodal extraction-ready blocks from an XML string (JATS or TEI)."""
+    return to_extraction_ready_blocks(
+        xml_text,
+        format="xml",
+        layout=layout,
+        tables_as_images=tables_as_images,
+        images_as_images=images_as_images,
+    )
+
+
+def extraction_ready_blocks_from_pdf(
+    pdf_content: bytes | str | Path,
+    layout: str = "interleaved",
+    tables_as_images: bool = True,
+    images_as_images: bool = True,
+    grobid_url: str | None = None,
+    backend: str = "grobid",
+) -> list[dict[str, Any]]:
+    """Returns multimodal extraction-ready blocks from a PDF document (converted via TEI XML)."""
+    return to_extraction_ready_blocks(
+        pdf_content,
+        format="pdf",
+        layout=layout,
+        tables_as_images=tables_as_images,
+        images_as_images=images_as_images,
+        grobid_url=grobid_url,
+        backend=backend,
     )

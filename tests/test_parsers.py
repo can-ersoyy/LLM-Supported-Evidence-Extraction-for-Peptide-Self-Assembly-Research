@@ -6,6 +6,7 @@ import requests
 
 from peptide_extractor.parsers import (
     GrobidClient,
+    ImageNode,
     ParagraphNode,
     RootNode,
     SectionNode,
@@ -217,11 +218,14 @@ def test_parse_tei_xml():
     assert subsec0.id == "sec-1/sec-0"
     assert subsec0.content == "Secondary Structure Analysis"
 
-    # Section 2: Non-table figure should not become a TableNode
+    # Section 2: Non-table figure should become an ImageNode (not TableNode)
     sec2 = root.children[2]
-    assert len(sec2.children) == 1  # Only paragraph, non-table figure skipped
-    assert isinstance(sec2.children[0], ParagraphNode)
-    assert sec2.children[0].content == "Conclusion of the study."
+    assert len(sec2.children) == 2
+    assert isinstance(sec2.children[0], ImageNode)
+    assert sec2.children[0].id == "sec-2/fig-0"
+    assert "Figure 1: TEM micrograph" in sec2.children[0].caption
+    assert isinstance(sec2.children[1], ParagraphNode)
+    assert sec2.children[1].content == "Conclusion of the study."
 
 
 def test_add_sentences_and_get_node_by_id():
@@ -261,6 +265,7 @@ def test_to_llm_string_and_debug_string():
     assert "[sec-1/table-0] Table 1: Assembly characteristics" in llm_str
     assert "Columns: Sequence | Solvent | Outcome" in llm_str
     assert "[sec-1/table-0/row-0] FF | H2O | nanotube" in llm_str
+    assert "[sec-2/fig-0] Figure 1: TEM micrograph" in llm_str
 
     debug_str = to_debug_string(root)
     assert "(RootNode," in debug_str
@@ -379,4 +384,253 @@ def test_pdf_to_tei_xml_does_not_swallow_processing_errors():
         pdf_to_tei_xml(dummy_pdf, retry_timeout=1, max_retry=3)
 
     mock_sleep.assert_not_called()
+
+
+def test_parse_table_with_spans_and_footnotes():
+    xml_with_spans = """<?xml version="1.0" encoding="UTF-8"?>
+    <article><body><sec><title>Results</title>
+      <table-wrap id="tbl_span">
+        <caption>Table 2: Matrix screening</caption>
+        <table>
+          <thead>
+            <tr>
+              <th rowspan="2">Peptide</th>
+              <th colspan="2">Conditions</th>
+            </tr>
+            <tr>
+              <th>pH</th>
+              <th>Morphology</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>KLVFF</td>
+              <td>7.4</td>
+              <td>nanofiber</td>
+            </tr>
+          </tbody>
+        </table>
+        <table-wrap-foot><p>Incubated at 25 °C for 24 h.</p></table-wrap-foot>
+      </table-wrap>
+    </sec></body></article>
+    """
+    root = parse_xml(xml_with_spans)
+    tbl = root.children[0].children[0]
+    assert isinstance(tbl, TableNode)
+    assert "Incubated at 25 °C" in tbl.footnotes
+    assert tbl.grid is not None
+    assert tbl.grid[0][0]["rowspan"] == 2
+    assert tbl.grid[0][1]["colspan"] == 2
+
+
+def test_to_llm_blocks_interleaved_and_appendix():
+    import base64
+    from io import BytesIO
+    from PIL import Image
+    from peptide_extractor.parsers import (
+        extraction_ready_blocks_from_xml,
+        to_llm_blocks,
+    )
+
+    root = parse_xml(SAMPLE_JATS_XML)
+    root = add_sentences(root)
+
+    # Without PDF-cropped image_bytes, XML tables fall back to text
+    xml_fallback = to_llm_blocks(root, layout="interleaved", tables_as_images=True)
+    assert len(xml_fallback) == 1
+    assert xml_fallback[0]["type"] == "text"
+    assert "[sec-1/table-0/row-0] FF | Water | nanotube" in xml_fallback[0]["text"]
+
+    # Attach cropped PDF PNG bytes to TableNode
+    buf = BytesIO()
+    Image.new("RGB", (100, 50), color="#FFFFFF").save(buf, format="PNG")
+    tbl = get_node_by_id(root, "sec-1/table-0")
+    assert isinstance(tbl, TableNode)
+    tbl.image_bytes = buf.getvalue()
+
+    # Interleaved layout: text -> table image -> remaining text
+    interleaved = to_llm_blocks(root, layout="interleaved", tables_as_images=True)
+    assert len(interleaved) == 3
+    assert interleaved[0]["type"] == "text"
+    assert "[sec-1/table-0] Table 1: Experimental observations" in interleaved[0]["text"]
+    assert ">>> [TABLE IMAGE ATTACHED: sec-1/table-0] <<<" in interleaved[0]["text"]
+    assert "FF | Water | nanotube" not in interleaved[0]["text"]
+
+    assert interleaved[1]["type"] == "image_url"
+    url = interleaved[1]["image_url"]["url"]
+    assert url.startswith("data:image/png;base64,")
+    decoded_png = base64.b64decode(url.split(",", 1)[1])
+    assert decoded_png.startswith(b"\x89PNG\r\n\x1a\n")
+
+    assert interleaved[2]["type"] == "text"
+    assert "[sec-1/sec-0] Morphological Analysis" in interleaved[2]["text"]
+
+    # Appendix layout: full text first, then labeled appendix table image
+    appendix = to_llm_blocks(root, layout="appendix", tables_as_images=True)
+    assert len(appendix) == 3
+    assert appendix[0]["type"] == "text"
+    assert ">>> [SEE APPENDIX TABLE IMAGE: sec-1/table-0] <<<" in appendix[0]["text"]
+    assert "[sec-1/sec-0] Morphological Analysis" in appendix[0]["text"]
+    assert appendix[1]["type"] == "text"
+    assert "=== APPENDIX TABLE IMAGE: [sec-1/table-0] ===" in appendix[1]["text"]
+    assert appendix[2]["type"] == "image_url"
+
+    # Convenience wrapper + tables_as_images=False fallback
+    via_wrapper = extraction_ready_blocks_from_xml(
+        SAMPLE_JATS_XML, tables_as_images=False, images_as_images=False
+    )
+    assert len(via_wrapper) == 1
+    assert via_wrapper[0]["type"] == "text"
+    assert "[sec-1/table-0/row-0] FF | Water | nanotube" in via_wrapper[0]["text"]
+
+
+def test_pdf_table_cropping_uses_original_bytes_without_rerendering():
+    import base64
+    import sys
+    import types
+    from io import BytesIO
+    from PIL import Image
+    from peptide_extractor.parsers import to_llm_blocks
+    from peptide_extractor.table_renderer import crop_tables_from_pdf, parse_grobid_coords
+
+    tei_with_coords = """<?xml version="1.0" encoding="UTF-8"?>
+    <TEI xmlns="http://www.tei-c.org/ns/1.0">
+      <text><body><div n="1"><head>Results</head>
+        <figure type="table" coords="2,40.0,100.0,300.0,150.0">
+          <head>Table 1: Original PDF Table</head>
+          <table><row><cell>A</cell><cell>B</cell></row></table>
+        </figure>
+      </div></body></text>
+    </TEI>
+    """
+    assert parse_grobid_coords("2,40.0,100.0,300.0,150.0") == [(2, 40.0, 100.0, 300.0, 150.0)]
+
+    root = parse_xml(tei_with_coords)
+    tbl = root.children[0].children[0]
+    assert isinstance(tbl, TableNode)
+    assert tbl.coords == "2,40.0,100.0,300.0,150.0"
+
+    buf = BytesIO()
+    Image.new("RGB", (120, 60), color="#123456").save(buf, format="PNG")
+    fake_png = buf.getvalue()
+
+    class FakePixmap:
+        def tobytes(self, fmt: str) -> bytes:
+            return fake_png
+
+    class FakeRect:
+        def __init__(self, x0, y0, x1, y1):
+            self.x0, self.y0, self.x1, self.y1 = x0, y0, x1, y1
+
+    class FakePage:
+        rect = FakeRect(0.0, 0.0, 600.0, 800.0)
+
+        def get_pixmap(self, clip=None, dpi=200):
+            return FakePixmap()
+
+    class FakeDoc:
+        def __len__(self):
+            return 2
+
+        def __getitem__(self, idx):
+            return FakePage()
+
+        def close(self):
+            pass
+
+    fake_fitz = types.SimpleNamespace(
+        open=lambda **kwargs: FakeDoc(),
+        Rect=FakeRect,
+    )
+
+    with patch.dict(sys.modules, {"fitz": fake_fitz}):
+        cropped = crop_tables_from_pdf(root, b"%PDF-1.4 fake")
+
+    assert cropped == 1
+    assert tbl.image_bytes is not None
+
+    blocks = to_llm_blocks(root, layout="interleaved", tables_as_images=True)
+    img_block = next(b for b in blocks if b["type"] == "image_url")
+    decoded = base64.b64decode(img_block["image_url"]["url"].split(",", 1)[1])
+    assert decoded.startswith(b"\x89PNG\r\n\x1a\n")
+
+
+def test_pdf_figure_cropping_and_image_node_blocks():
+    import base64
+    import sys
+    import types
+    from io import BytesIO
+    from PIL import Image
+    from peptide_extractor.parsers import to_llm_blocks
+    from peptide_extractor.table_renderer import crop_figures_from_pdf
+
+    tei_with_fig = """<?xml version="1.0" encoding="UTF-8"?>
+    <TEI xmlns="http://www.tei-c.org/ns/1.0">
+      <text><body><div n="1"><head>Results</head>
+        <figure xml:id="fig_0" coords="2,50.0,120.0,250.0,180.0">
+          <head>Figure 1: TEM</head>
+          <figDesc>Nanofibers observed at 10 mg/ml.</figDesc>
+        </figure>
+      </div></body></text>
+    </TEI>
+    """
+    root = parse_xml(tei_with_fig)
+    fig = root.children[0].children[0]
+    assert isinstance(fig, ImageNode)
+    assert fig.id == "sec-0/fig-0"
+    assert fig.coords == "2,50.0,120.0,250.0,180.0"
+
+    buf = BytesIO()
+    Image.new("RGB", (100, 80), color="#654321").save(buf, format="PNG")
+    fake_png = buf.getvalue()
+
+    class FakePixmap:
+        def tobytes(self, fmt: str) -> bytes:
+            return fake_png
+
+    class FakeRect:
+        def __init__(self, x0, y0, x1, y1):
+            self.x0, self.y0, self.x1, self.y1 = x0, y0, x1, y1
+
+    class FakePage:
+        rect = FakeRect(0.0, 0.0, 600.0, 800.0)
+
+        def get_pixmap(self, clip=None, dpi=200):
+            return FakePixmap()
+
+    class FakeDoc:
+        def __len__(self):
+            return 2
+
+        def __getitem__(self, idx):
+            return FakePage()
+
+        def close(self):
+            pass
+
+    fake_fitz = types.SimpleNamespace(
+        open=lambda **kwargs: FakeDoc(),
+        Rect=FakeRect,
+    )
+
+    with patch.dict(sys.modules, {"fitz": fake_fitz}):
+        cropped = crop_figures_from_pdf(root, b"%PDF-1.4 fake")
+
+    assert cropped == 1
+    assert fig.image_bytes is not None
+
+    interleaved = to_llm_blocks(root, layout="interleaved", images_as_images=True)
+    assert len(interleaved) == 2
+    assert ">>> [FIGURE IMAGE ATTACHED: sec-0/fig-0] <<<" in interleaved[0]["text"]
+    assert interleaved[1]["type"] == "image_url"
+    decoded = base64.b64decode(interleaved[1]["image_url"]["url"].split(",", 1)[1])
+    assert decoded.startswith(b"\x89PNG\r\n\x1a\n")
+
+    appendix = to_llm_blocks(root, layout="appendix", images_as_images=True)
+    assert len(appendix) == 3
+    assert ">>> [SEE APPENDIX FIGURE IMAGE: sec-0/fig-0] <<<" in appendix[0]["text"]
+    assert "=== APPENDIX FIGURE IMAGE: [sec-0/fig-0] ===" in appendix[1]["text"]
+    assert appendix[2]["type"] == "image_url"
+
+
 
