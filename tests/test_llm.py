@@ -416,3 +416,45 @@ def test_factored_extraction_splits_and_merges_shared_conditions(monkeypatch):
     assert e1.evidence_span.peptide_concentration == "[sec-1/table-0]"
 
 
+def test_factored_extraction_uses_separate_table_provider_and_model(monkeypatch):
+    """Verify Pass 2 can use a distinct table_provider and table_model_name while Pass 1 uses provider/model_name."""
+    from peptide_extractor import extraction as extraction_mod
+
+    blocks = [
+        {
+            "type": "text",
+            "text": "[sec-1/table-0] Table 1\n\t>>> [TABLE IMAGE ATTACHED: sec-1/table-0] <<<\n",
+        },
+        {"type": "image_url", "image_url": {"url": "data:image/png;base64,tbl0"}},
+    ]
+
+    init_calls = []
+
+    class DummyController:
+        def __init__(self, provider, model_name, structured_output, system_prompt):
+            init_calls.append((structured_output, provider, model_name))
+            self.structured_output = structured_output
+
+        def extract_peptides(self, paper_content, stream=True, filename="paper.pdf"):
+            if self.structured_output is extraction_mod.PaperWideExtractionResult:
+                return extraction_mod.PaperWideExtractionResult()
+            return extraction_mod.TableExtractionResult(rows=[])
+
+    monkeypatch.setattr(extraction_mod, "LLMController", DummyController)
+
+    extraction_mod.run_extraction(
+        blocks,
+        provider="google_genai",
+        model_name="gemini-2.5-pro",
+        factored=True,
+        table_provider="openrouter",
+        table_model_name="gemma-4-31b-it",
+    )
+
+    assert init_calls == [
+        (extraction_mod.PaperWideExtractionResult, "google_genai", "gemini-2.5-pro"),
+        (extraction_mod.TableExtractionResult, "openrouter", "gemma-4-31b-it"),
+    ]
+
+
+

@@ -1,3 +1,4 @@
+from peptide_extractor.logging_utils import logger
 import re
 from pathlib import Path
 from typing import Any, Optional, Union
@@ -196,8 +197,12 @@ def _split_blocks_for_factored_extraction(
                 tid = m.group(1).strip()
                 # Capture the table caption/footnotes lines right above the marker
                 lines = text[: m.start()].splitlines()
-                caption_lines = [ln.strip() for ln in lines[-4:] if tid in ln or "Footnotes:" in ln]
-                pending_table_meta[tid] = "\n".join(caption_lines) if caption_lines else f"[{tid}]"
+                caption_lines = [
+                    ln.strip() for ln in lines[-4:] if tid in ln or "Footnotes:" in ln
+                ]
+                pending_table_meta[tid] = (
+                    "\n".join(caption_lines) if caption_lines else f"[{tid}]"
+                )
         elif btype == "image_url":
             # Pair with the most recent pending table metadata (appendix or interleaved)
             tid = None
@@ -299,6 +304,8 @@ def run_factored_extraction(
     provider: str = "google_genai",
     model_name: str = "gemma-4-31b-it",
     filename: str = "paper.pdf",
+    table_provider: Optional[str] = None,
+    table_model_name: Optional[str] = None,
 ) -> PeptideExtractionResult:
     """Two-pass extraction: Pass 1 extracts shared paper-wide conditions; Pass 2 extracts each table."""
     if not isinstance(paper_content, list):
@@ -337,8 +344,8 @@ def run_factored_extraction(
 
     # Pass 2: Extract each table image independently with compact row-grouped schema
     table_controller = LLMController(
-        provider=provider,
-        model_name=model_name,
+        provider=table_provider or provider,
+        model_name=table_model_name or model_name,
         structured_output=TableExtractionResult,
         system_prompt=TABLE_EXTRACTION_SYSTEM_PROMPT,
     )
@@ -356,12 +363,11 @@ def run_factored_extraction(
             },
             image_block,
         ]
+        # logger.info("Extracting table", table_prompt_blocks)
         table_res: TableExtractionResult = table_controller.extract_peptides(
             table_prompt_blocks, stream=True, filename=filename
         )
-        all_entries.extend(
-            merge_table_result_with_shared(table_res, shared, table_id)
-        )
+        all_entries.extend(merge_table_result_with_shared(table_res, shared, table_id))
 
     return PeptideExtractionResult(entries=all_entries)
 
@@ -373,6 +379,8 @@ def run_extraction(
     filename: str = "paper.pdf",
     system_prompt: Optional[str] = None,
     factored: bool = False,
+    table_provider: Optional[str] = None,
+    table_model_name: Optional[str] = None,
 ) -> PeptideExtractionResult:
     """Run peptide extraction on parsed text, multimodal content blocks, or raw PDF bytes/Path."""
     if factored and isinstance(paper_content, list):
@@ -381,6 +389,8 @@ def run_extraction(
             provider=provider,
             model_name=model_name,
             filename=filename,
+            table_provider=table_provider,
+            table_model_name=table_model_name,
         )
 
     is_pdf = isinstance(paper_content, (bytes, Path))

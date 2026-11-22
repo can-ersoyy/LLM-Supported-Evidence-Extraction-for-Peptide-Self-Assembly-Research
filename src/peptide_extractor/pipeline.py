@@ -571,6 +571,8 @@ def run_peptide_extraction(
     images_as_images: bool = False,
     table_image_layout: str = "interleaved",
     factored_extraction: bool = True,
+    table_provider: Optional[str] = None,
+    table_model_name: Optional[str] = None,
     **kwargs,
 ) -> tuple[List[int], int]:
     """Run peptide extraction"""
@@ -632,6 +634,8 @@ def run_peptide_extraction(
                         provider,
                         model_name,
                         factored=factored_extraction,
+                        table_provider=table_provider,
+                        table_model_name=table_model_name,
                     ).entries
                 else:
                     if paper_content.format == "pdf":
@@ -888,7 +892,7 @@ if __name__ == "__main__":
     # end_time = time.time()
 
     # print(f"Relevance Success: {success}, Fails: {fails}, Identifier: {identifier}, Time: {end_time - start_time}")
-    
+
     # 6. Fetch fulltexts
 
     # fetch_paper_fulltexts(
@@ -950,26 +954,32 @@ if __name__ == "__main__":
     #    f"Extraction failed for papers with IDs: {fails}, Run identifier: {identifier}"
     # )
 
+    # golden_papers_ids = [r.paper_id for r in get_records(PeptideEntry, run_identifier=0)]
+
     from peptide_extractor.golden_benchmark import (
         DEV_BENCHMARK_PMIDS,
         benchmark_run_against_golden,
     )
 
-    # 1. Extract only the 10 dev-slice papers (or omit pmid=... for all papers)
     fails, identifier = run_peptide_extraction(
+        # provider="ollama",
+        # model_name="gemma4:26b",
         provider="google",
         model_name="gemini-3.5-flash-lite",
         delay_seconds=4,
-        pmid=DEV_BENCHMARK_PMIDS,
-        #pmid=[20460796],
+        # id=golden_papers_ids,
+        pmid=[20460796],
         tables_as_images=True,
+        factored_extraction=True,
+        table_provider="ollama",
+        table_model_name="gemma4:26b",
+        # table_provider="google",
+        # table_model_name="gemini-3.5-flash-lite",
     )
     print(f"Fails: {fails}, Run identifier: {identifier}")
-    # 2. Benchmark that run against golden_dataset (run_identifier=0)
+
     print(
         benchmark_run_against_golden(
-            llm_run_identifier=identifier, 
-            pmids=DEV_BENCHMARK_PMIDS
-            #pmids=[20460796]
+            llm_run_identifier=identifier, pmids=[20460796]
         ).format_report()
     )
