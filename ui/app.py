@@ -1161,6 +1161,13 @@ def page_peptide_search(client: PipelineClient) -> None:
         value=st.session_state.get("search_seq_prefill", ""),
         placeholder="e.g. FF, KLVFF",
     )
+    try:
+        if seq.strip():
+            st.query_params["sequence"] = seq.strip()
+        elif "sequence" in st.query_params:
+            del st.query_params["sequence"]
+    except Exception:
+        pass
     length_range = c2.slider("Length (residues)", min_value=1, max_value=50, value=(1, 30))
     morphology = c3.selectbox(
         "Morphology",
@@ -1335,6 +1342,14 @@ def page_paper_inspector(client: PipelineClient) -> None:
         return
 
     paper = detail["paper"]
+    try:
+        st.query_params["paper_id"] = str(selected_id)
+        if paper.get("pmid"):
+            st.query_params["pmid"] = str(paper["pmid"])
+        elif "pmid" in st.query_params:
+            del st.query_params["pmid"]
+    except Exception:
+        pass
     st.subheader(paper.get("title") or "(No title)")
     meta_parts = [
         f"ID: `{paper.get('id')}`",
@@ -1526,6 +1541,12 @@ def main() -> None:
     page = _render_sidebar(client)
     try:
         st.query_params["page"] = page
+        if page != "Peptide Search" and "sequence" in st.query_params:
+            del st.query_params["sequence"]
+        if page != "Paper Inspector":
+            for k in ("paper_id", "pmid", "doi"):
+                if k in st.query_params:
+                    del st.query_params[k]
     except Exception:
         pass
 
