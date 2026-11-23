@@ -3,6 +3,7 @@
 `peptide_extractor` is an end-to-end scientific literature curation pipeline that discovers publications on short-peptide self-assembly, screens abstracts for experimental relevance, fetches and parses full-text JATS XML and PDFs into a unified citation-grounded node tree, extracts structured `PeptideEntry` records via LLMs, and evaluates both reference-free grounding and golden-dataset accuracy.
 
 ---
+#### Streamlit (private) URL: https://gdj4m9vp3rbvzqbsbezscm.streamlit.app/
 
 ## Documentation Index
 
