@@ -18,6 +18,7 @@ from peptide_extractor.db.paper_metadata import (
     update_paper_status,
 )
 from peptide_extractor.db.paper_relevance import save_paper_relevance
+from peptide_extractor.utils import retry_on_external_error
 
 
 SYSTEM_PROMPT_BULK = """
@@ -49,6 +50,8 @@ def screen_papers(
     delay_seconds: float = 2.0,
     run_identifier: int = 0,
     update_status: bool = True,
+    max_retries: int = 0,
+    retry_delay: float = 2.0,
     **kwargs: Any,
 ) -> tuple[List[tuple[PaperMetadata, RelevanceResult]], List[int]]:
     """Screen papers given conditions for relevance."""
@@ -70,8 +73,13 @@ def screen_papers(
     for paper in papers_to_screen:
         paper_id = paper.id
         try:
-            relevance_result: RelevanceResult = classifier.classify_paper(
-                paper.title, paper.abstract
+            relevance_result: RelevanceResult = retry_on_external_error(
+                classifier.classify_paper,
+                paper.title,
+                paper.abstract,
+                max_retries=max_retries,
+                retry_delay=retry_delay,
+                context=f"relevance paper {paper_id}",
             )
 
             import json
@@ -132,6 +140,8 @@ def bulk_screen_papers(
     delay_seconds: float = 2.0,
     run_identifier: int = 0,
     update_status: bool = True,
+    max_retries: int = 0,
+    retry_delay: float = 2.0,
     **kwargs: Any,
 ):
 
@@ -158,8 +168,12 @@ def bulk_screen_papers(
             ]
             logger.info(prepared_batch)
 
-            relevance_results: BulkRelevanceResults = classifier.bulk_classify_paper(
-                prepared_batch
+            relevance_results: BulkRelevanceResults = retry_on_external_error(
+                classifier.bulk_classify_paper,
+                prepared_batch,
+                max_retries=max_retries,
+                retry_delay=retry_delay,
+                context=f"bulk relevance batch {current_batch[0].id}-{current_batch[-1].id}",
             )
 
             returned_ids = set()

@@ -34,7 +34,11 @@ from peptide_extractor.parsers import (
 )
 from peptide_extractor.db.paper_content import get_paper_content_by_paper_id
 from peptide_extractor.db import PaperContent
-from peptide_extractor.utils import doi_to_filename, normalize_database_dois
+from peptide_extractor.utils import (
+    doi_to_filename,
+    normalize_database_dois,
+    retry_on_external_error,
+)
 from peptide_extractor.relevance import screen_papers
 from peptide_extractor.providers import NCBIProvider
 from peptide_extractor.db import get_records
@@ -310,6 +314,8 @@ def run_relevance_screening(
     delay_seconds: float = 2.0,
     run_identifier: Optional[int] = None,
     log_to_file: Optional[bool] = None,
+    max_retries: int = 0,
+    retry_delay: float = 2.0,
     **kwargs,
 ) -> tuple[List[tuple[PaperMetadata, RelevanceResult]], List[int], int]:
     """Run abstract relevance screening on paper metadata records in the database.
@@ -330,6 +336,8 @@ def run_relevance_screening(
             batch_size=batch_size,
             delay_seconds=delay_seconds,
             run_identifier=run_identifier,
+            max_retries=max_retries,
+            retry_delay=retry_delay,
             **kwargs,
         )
         return screened_results, failed_paper_ids, run_identifier
@@ -354,6 +362,8 @@ def run_bulk_relevance_screening(
     session: Optional[Session] = None,
     run_identifier: Optional[int] = None,
     log_to_file: Optional[bool] = None,
+    max_retries: int = 0,
+    retry_delay: float = 2.0,
     **kwargs,
 ):
     """Run abstract relevance screening on paper metadata records in the database in bulk.
@@ -376,6 +386,8 @@ def run_bulk_relevance_screening(
             batch_size=batch_size,
             delay_seconds=delay_seconds,
             run_identifier=run_identifier,
+            max_retries=max_retries,
+            retry_delay=retry_delay,
             **kwargs,
         )
         return screened_results, failed_paper_ids, run_identifier
@@ -399,6 +411,8 @@ def fetch_paper_fulltexts(
     skip_existing_content: bool = True,
     run_identifier: Optional[int] = None,
     log_to_file: Optional[bool] = None,
+    max_retries: int = 0,
+    retry_delay: float = 2.0,
     **kwargs,
 ):
     """Retrieve fulltexts according to db query"""
@@ -424,13 +438,25 @@ def fetch_paper_fulltexts(
 
             # normally it is better to batch retrieve from pubmed but for now just singular fetch
             try:
-                paper_contents, _, _ = ncbi_provider.fetch([paper])
+                paper_contents, _, _ = retry_on_external_error(
+                    ncbi_provider.fetch,
+                    [paper],
+                    max_retries=max_retries,
+                    retry_delay=retry_delay,
+                    context=f"ncbi fetch paper {paper.id}",
+                )
                 paper_content = paper_contents[0]
             except Exception as e:
                 logger.info(f"Failed to retrieve fulltext for paper {paper.id} ({paper.doi}): {e}")
                 logger.info("Trying pdf retrieval")
                 try:
-                    paper_content = open_alex_provider.fetch(paper)
+                    paper_content = retry_on_external_error(
+                        open_alex_provider.fetch,
+                        paper,
+                        max_retries=max_retries,
+                        retry_delay=retry_delay,
+                        context=f"openalex fetch paper {paper.id}",
+                    )
 
                 except Exception as e:
                     logger.error(f"Failed to retrieve fulltext for paper {paper.id} ({paper.doi}): {e}")
@@ -619,6 +645,8 @@ def run_peptide_extraction(
     factored_extraction: bool = True,
     table_provider: Optional[str] = None,
     table_model_name: Optional[str] = None,
+    max_retries: int = 0,
+    retry_delay: float = 2.0,
     **kwargs,
 ) -> tuple[List[int], int]:
     """Run peptide extraction"""
@@ -649,6 +677,8 @@ def run_peptide_extraction(
                         provider,
                         model_name,
                         filename=f"paper_{paper.id}.pdf",
+                        max_retries=max_retries,
+                        retry_delay=retry_delay,
                     ).entries
                 elif tables_as_images or images_as_images:
                     if paper_content.format == "pdf":
@@ -682,6 +712,8 @@ def run_peptide_extraction(
                         factored=factored_extraction,
                         table_provider=table_provider,
                         table_model_name=table_model_name,
+                        max_retries=max_retries,
+                        retry_delay=retry_delay,
                     ).entries
                 else:
                     if paper_content.format == "pdf":
@@ -698,7 +730,11 @@ def run_peptide_extraction(
                         )
                     logger.info(f"Extraction Ready String: {extraction_ready_string}")
                     entries = run_extraction(
-                        extraction_ready_string, provider, model_name
+                        extraction_ready_string,
+                        provider,
+                        model_name,
+                        max_retries=max_retries,
+                        retry_delay=retry_delay,
                     ).entries
 
                 db_entries = [
@@ -746,6 +782,8 @@ def run_evaluation(
     save: bool = True,
     run_identifier: Optional[int] = None,
     log_to_file: Optional[bool] = None,
+    max_retries: int = 0,
+    retry_delay: float = 2.0,
     **kwargs,
 ):
     if run_identifier is None:
@@ -770,7 +808,14 @@ def run_evaluation(
 
                 paper_fulltext = paper_content.get_content()
 
-                evaluation = evaluate_extraction(extraction, paper_fulltext)
+                evaluation = retry_on_external_error(
+                    evaluate_extraction,
+                    extraction,
+                    paper_fulltext,
+                    max_retries=max_retries,
+                    retry_delay=retry_delay,
+                    context=f"evaluation peptide {extraction.id}",
+                )
                 evaluation.peptide_entry_id = extraction.id
                 evaluation.run_identifier = run_identifier
                 if save:

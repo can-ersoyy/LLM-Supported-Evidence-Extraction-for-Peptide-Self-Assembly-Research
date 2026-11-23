@@ -135,6 +135,9 @@ def run_pipeline(config, log_to_file):
         rel_cfg = cfg.get("relevance", {})
         run_identifier = rel_cfg.get("run_identifier") or int(time.time())
         step_enabled = is_step_log_enabled("relevance")
+        retry_opts = {
+            k: rel_cfg[k] for k in ("max_retries", "retry_delay") if k in rel_cfg
+        }
         with step_logger("relevance", run_identifier, enabled=step_enabled):
             logger.info("Running relevance screening...")
             start_time = time.time()
@@ -145,6 +148,7 @@ def run_pipeline(config, log_to_file):
                 batch_size=rel_cfg.get("batch_size", 50),
                 run_identifier=run_identifier,
                 log_to_file=step_enabled,
+                **retry_opts,
                 **rel_cfg.get("kwargs", {}),
             )
             end_time = time.time()
@@ -156,6 +160,9 @@ def run_pipeline(config, log_to_file):
         ft_cfg = cfg.get("fetch") or cfg.get("fetch_fulltext", {})
         run_identifier = ft_cfg.get("run_identifier") or int(time.time())
         step_enabled = is_step_log_enabled("fetch") or is_step_log_enabled("fetch_fulltext")
+        retry_opts = {
+            k: ft_cfg[k] for k in ("max_retries", "retry_delay") if k in ft_cfg
+        }
         with step_logger("fetch", run_identifier, enabled=step_enabled):
             logger.info("Fetching fulltexts...")
             success, fails, identifier = fetch_paper_fulltexts(
@@ -163,6 +170,7 @@ def run_pipeline(config, log_to_file):
                 open_alex_provider=open_alex_provider,
                 run_identifier=run_identifier,
                 log_to_file=step_enabled,
+                **retry_opts,
                 **ft_cfg.get("kwargs", {}),
             )
             logger.info(
@@ -173,6 +181,9 @@ def run_pipeline(config, log_to_file):
         ext_cfg = cfg.get("extraction", {})
         run_identifier = ext_cfg.get("run_identifier") or int(time.time())
         step_enabled = is_step_log_enabled("extraction")
+        retry_opts = {
+            k: ext_cfg[k] for k in ("max_retries", "retry_delay") if k in ext_cfg
+        }
         with step_logger("extraction", run_identifier, enabled=step_enabled):
             logger.info("Running extraction...")
             start_time = time.time()
@@ -182,6 +193,7 @@ def run_pipeline(config, log_to_file):
                 delay_seconds=ext_cfg.get("delay_seconds", 4),
                 run_identifier=run_identifier,
                 log_to_file=step_enabled,
+                **retry_opts,
                 **ext_cfg.get("kwargs", {}),
             )
             end_time = time.time()
@@ -193,12 +205,16 @@ def run_pipeline(config, log_to_file):
         eval_cfg = cfg.get("evaluation", {})
         run_identifier = eval_cfg.get("run_identifier") or int(time.time())
         step_enabled = is_step_log_enabled("evaluation")
+        retry_opts = {
+            k: eval_cfg[k] for k in ("max_retries", "retry_delay") if k in eval_cfg
+        }
         with step_logger("evaluation", run_identifier, enabled=step_enabled):
             logger.info("Running evaluation...")
             start_time = time.time()
             fails, identifier = run_evaluation(
                 run_identifier=run_identifier,
                 log_to_file=step_enabled,
+                **retry_opts,
                 **eval_cfg.get("kwargs", {}),
             )
             end_time = time.time()

@@ -14,6 +14,7 @@ from peptide_extractor.db.peptide_entry import (
     PeptideLinearity,
 )
 from peptide_extractor.llm import LLMController
+from peptide_extractor.utils import retry_on_external_error
 
 LOCATION_GROUNDING_RULES = """
 LOCATION GROUNDING RULES:
@@ -306,6 +307,8 @@ def run_factored_extraction(
     filename: str = "paper.pdf",
     table_provider: Optional[str] = None,
     table_model_name: Optional[str] = None,
+    max_retries: int = 0,
+    retry_delay: float = 2.0,
 ) -> PeptideExtractionResult:
     """Two-pass extraction: Pass 1 extracts shared paper-wide conditions; Pass 2 extracts each table."""
     if not isinstance(paper_content, list):
@@ -315,6 +318,8 @@ def run_factored_extraction(
             model_name=model_name,
             filename=filename,
             factored=False,
+            max_retries=max_retries,
+            retry_delay=retry_delay,
         )
 
     prose_text, table_items = _split_blocks_for_factored_extraction(paper_content)
@@ -325,6 +330,8 @@ def run_factored_extraction(
             model_name=model_name,
             filename=filename,
             factored=False,
+            max_retries=max_retries,
+            retry_delay=retry_delay,
         )
 
     # Pass 1: Extract paper-wide experimental defaults + prose-only entries
@@ -334,8 +341,14 @@ def run_factored_extraction(
         structured_output=PaperWideExtractionResult,
         system_prompt=SHARED_CONDITIONS_SYSTEM_PROMPT,
     )
-    pass1_res: PaperWideExtractionResult = shared_controller.extract_peptides(
-        prose_text, stream=True, filename=filename
+    pass1_res: PaperWideExtractionResult = retry_on_external_error(
+        shared_controller.extract_peptides,
+        prose_text,
+        stream=True,
+        filename=filename,
+        max_retries=max_retries,
+        retry_delay=retry_delay,
+        context=f"extraction pass1 {filename}",
     )
     shared = pass1_res.shared_conditions
     shared_summary = _format_shared_conditions_summary(shared)
@@ -364,8 +377,14 @@ def run_factored_extraction(
             image_block,
         ]
         try:
-            table_res: TableExtractionResult = table_controller.extract_peptides(
-                table_prompt_blocks, stream=True, filename=filename
+            table_res: TableExtractionResult = retry_on_external_error(
+                table_controller.extract_peptides,
+                table_prompt_blocks,
+                stream=True,
+                filename=filename,
+                max_retries=max_retries,
+                retry_delay=retry_delay,
+                context=f"extraction table [{table_id}] {filename}",
             )
         except Exception as e:
             logger.error(f"Failed to extract table [{table_id}] for {filename}: {e}")
@@ -384,6 +403,8 @@ def run_extraction(
     factored: bool = False,
     table_provider: Optional[str] = None,
     table_model_name: Optional[str] = None,
+    max_retries: int = 0,
+    retry_delay: float = 2.0,
 ) -> PeptideExtractionResult:
     """Run peptide extraction on parsed text, multimodal content blocks, or raw PDF bytes/Path."""
     if factored and isinstance(paper_content, list):
@@ -394,6 +415,8 @@ def run_extraction(
             filename=filename,
             table_provider=table_provider,
             table_model_name=table_model_name,
+            max_retries=max_retries,
+            retry_delay=retry_delay,
         )
 
     is_pdf = isinstance(paper_content, (bytes, Path))
@@ -408,4 +431,12 @@ def run_extraction(
         system_prompt=resolved_prompt,
     )
 
-    return model.extract_peptides(paper_content, stream=True, filename=filename)
+    return retry_on_external_error(
+        model.extract_peptides,
+        paper_content,
+        stream=True,
+        filename=filename,
+        max_retries=max_retries,
+        retry_delay=retry_delay,
+        context=f"extraction {filename}",
+    )

@@ -466,3 +466,133 @@ def test_fetch_fulltexts_records_and_logs_failed_papers(memory_db, tmp_path, mon
     assert "Failed to retrieve fulltext for paper 50 (10.1000/fail)" in content
     assert "Fulltext fetch failed for 1 paper(s) with IDs: [50]" in content
 
+
+def test_is_external_api_error_classification():
+    import requests
+    from pydantic import BaseModel, ValidationError
+    from sqlalchemy.exc import IntegrityError
+    from langchain_core.exceptions import OutputParserException
+    from peptide_extractor.utils import is_external_api_error
+
+    class _Dummy(BaseModel):
+        x: int
+
+    try:
+        _Dummy(x="not_an_int")
+    except ValidationError as ve:
+        assert is_external_api_error(ve) is False
+
+    assert is_external_api_error(OutputParserException("bad json")) is False
+    assert is_external_api_error(ValueError("bad value")) is False
+    assert is_external_api_error(IntegrityError("stmt", {}, Exception("db"))) is False
+
+    resp_404 = requests.Response()
+    resp_404.status_code = 404
+    assert is_external_api_error(requests.HTTPError(response=resp_404)) is False
+
+    resp_429 = requests.Response()
+    resp_429.status_code = 429
+    assert is_external_api_error(requests.HTTPError(response=resp_429)) is True
+
+    resp_503 = requests.Response()
+    resp_503.status_code = 503
+    assert is_external_api_error(requests.HTTPError(response=resp_503)) is True
+
+    assert is_external_api_error(requests.Timeout("read timed out")) is True
+    assert is_external_api_error(TimeoutError("timed out")) is True
+    assert is_external_api_error(ConnectionError("reset")) is True
+    assert is_external_api_error(RuntimeError("429 Resource Exhausted")) is True
+
+
+def test_retry_on_external_error_retries_transient_but_not_schema(monkeypatch):
+    from pydantic import BaseModel, ValidationError
+    from peptide_extractor.utils import retry_on_external_error
+
+    monkeypatch.setattr("peptide_extractor.utils.time.sleep", lambda _: None)
+
+    calls = {"count": 0}
+
+    def flaky_api():
+        calls["count"] += 1
+        if calls["count"] < 3:
+            raise TimeoutError("API timeout")
+        return "ok"
+
+    assert retry_on_external_error(flaky_api, max_retries=2, retry_delay=0.01) == "ok"
+    assert calls["count"] == 3
+
+    class _Dummy(BaseModel):
+        x: int
+
+    schema_calls = {"count": 0}
+
+    def bad_schema():
+        schema_calls["count"] += 1
+        _Dummy(x="bad")
+
+    with pytest.raises(ValidationError):
+        retry_on_external_error(bad_schema, max_retries=3, retry_delay=0.01)
+    assert schema_calls["count"] == 1
+
+
+def test_run_evaluation_retries_external_errors_only(memory_db, tmp_path, monkeypatch):
+    from pydantic import BaseModel, ValidationError
+    from peptide_extractor.db.peptide_entry import PeptideEntry
+    from peptide_extractor.db.extraction_evaluation import ExtractionEvaluation
+
+    log_dir = tmp_path / "logs"
+    monkeypatch.setenv("PEPTIDE_EXTRACTOR_LOG_DIR", str(log_dir))
+    monkeypatch.setattr("peptide_extractor.utils.time.sleep", lambda _: None)
+    monkeypatch.setattr(pipeline.time, "sleep", lambda _: None)
+
+    with Session(memory_db) as s:
+        s.add(
+            PaperMetadata(
+                id=20,
+                title="Retry Paper",
+                pmid="444",
+                is_open_access=True,
+                status=PaperStatus.USABLE,
+                dataset_subset=DatasetSubset.SCRAPED,
+            )
+        )
+        s.add(PaperContent(paper_id=20, format="xml", raw_content="<article/>"))
+        s.add(PeptideEntry(id=201, paper_id=20, pmid="444", sequence="FF", length=2))
+        s.add(PeptideEntry(id=202, paper_id=20, pmid="444", sequence="KLVFF", length=5))
+        s.commit()
+
+    monkeypatch.setattr(PaperContent, "get_content", lambda self: "<article/>")
+
+    class _Dummy(BaseModel):
+        x: int
+
+    attempts = {201: 0, 202: 0}
+
+    def mock_evaluate(extraction, fulltext):
+        attempts[extraction.id] += 1
+        if extraction.id == 201 and attempts[201] == 1:
+            raise TimeoutError("Temporary LLM timeout")
+        if extraction.id == 202:
+            _Dummy(x="bad")  # raises ValidationError -> must NOT retry
+        return ExtractionEvaluation(groundness_rate=1.0, completeness_rate=1.0)
+
+    monkeypatch.setattr(pipeline, "evaluate_extraction", mock_evaluate)
+
+    with Session(memory_db) as s:
+        failed_ids, _ = pipeline.run_evaluation(
+            session=s,
+            save=True,
+            run_identifier=505050,
+            log_to_file=True,
+            max_retries=2,
+            retry_delay=0.01,
+        )
+
+    assert attempts[201] == 2  # retried once and succeeded
+    assert attempts[202] == 1  # ValidationError was NOT retried
+    assert failed_ids == [202]
+
+    content = (log_dir / "evaluation" / "505050.log").read_text(encoding="utf-8")
+    assert "Evaluation failed for 1 peptide entry(ies) with IDs: [202]" in content
+
+

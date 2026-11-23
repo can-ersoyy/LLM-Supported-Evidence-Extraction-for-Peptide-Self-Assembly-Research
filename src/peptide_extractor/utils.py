@@ -9,8 +9,10 @@ import re
 import time
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Callable, Optional, TypeVar
 import requests
+
+T = TypeVar("T")
 
 
 def normalize_doi(doi: Optional[str]) -> Optional[str]:
@@ -179,3 +181,115 @@ def to_lowercase(text: Optional[str]) -> Optional[str]:
         return None
     cleaned = text.strip()
     return cleaned.lower() if cleaned else None
+
+
+_TRANSIENT_HTTP_STATUS_CODES = {408, 429, 500, 502, 503, 504}
+_TRANSIENT_ERROR_MARKERS = (
+    "429",
+    "rate limit",
+    "ratelimit",
+    "resource exhausted",
+    "too many requests",
+    "500",
+    "502",
+    "503",
+    "504",
+    "service unavailable",
+    "temporarily unavailable",
+    "overloaded",
+    "timeout",
+    "timed out",
+    "connection reset",
+    "connection aborted",
+    "connection refused",
+    "remote end closed",
+)
+
+
+def is_external_api_error(exc: BaseException) -> bool:
+    """Return True if ``exc`` represents a transient external/API error.
+
+    Schema/validation errors (e.g. Pydantic ``ValidationError``), DB errors
+    (``SQLAlchemyError``), and local programming/input errors (``ValueError``,
+    ``TypeError``, ``KeyError``, etc.) return False so they are never retried.
+    """
+    from pydantic import ValidationError
+    from sqlalchemy.exc import SQLAlchemyError
+
+    non_retryable: tuple[type[BaseException], ...] = (
+        ValidationError,
+        SQLAlchemyError,
+        TypeError,
+        KeyError,
+        AttributeError,
+        FileNotFoundError,
+        NotImplementedError,
+    )
+    try:
+        from langchain_core.exceptions import OutputParserException
+
+        non_retryable = non_retryable + (OutputParserException,)
+    except ImportError:
+        pass
+
+    if isinstance(exc, requests.exceptions.RequestException):
+        if isinstance(exc, requests.exceptions.HTTPError) and exc.response is not None:
+            return exc.response.status_code in _TRANSIENT_HTTP_STATUS_CODES
+        return True
+
+    if isinstance(exc, non_retryable):
+        return False
+
+    if isinstance(exc, ValueError):
+        return False
+
+    if isinstance(exc, (TimeoutError, ConnectionError)):
+        return True
+
+    try:
+        import httpx
+
+        if isinstance(exc, httpx.HTTPError):
+            if isinstance(exc, httpx.HTTPStatusError) and exc.response is not None:
+                return exc.response.status_code in _TRANSIENT_HTTP_STATUS_CODES
+            return True
+    except ImportError:
+        pass
+
+    status_code = getattr(exc, "status_code", None) or getattr(exc, "code", None)
+    if isinstance(status_code, int):
+        return status_code in _TRANSIENT_HTTP_STATUS_CODES
+
+    msg = str(exc).lower()
+    return any(marker in msg for marker in _TRANSIENT_ERROR_MARKERS)
+
+
+def retry_on_external_error(
+    fn: Callable[..., T],
+    *args,
+    max_retries: int = 0,
+    retry_delay: float = 2.0,
+    backoff_factor: float = 2.0,
+    context: str = "",
+    **kwargs,
+) -> T:
+    """Execute ``fn(*args, **kwargs)``, retrying only on transient external API errors."""
+    if max_retries <= 0:
+        return fn(*args, **kwargs)
+
+    attempt = 0
+    while True:
+        try:
+            return fn(*args, **kwargs)
+        except Exception as exc:
+            if attempt >= max_retries or not is_external_api_error(exc):
+                raise
+            sleep_seconds = retry_delay * (backoff_factor**attempt)
+            ctx_label = f" ({context})" if context else ""
+            logger.warning(
+                f"External API error{ctx_label} on attempt {attempt + 1}/{max_retries + 1}: "
+                f"{exc}. Retrying in {sleep_seconds:.1f}s..."
+            )
+            time.sleep(sleep_seconds)
+            attempt += 1
+
