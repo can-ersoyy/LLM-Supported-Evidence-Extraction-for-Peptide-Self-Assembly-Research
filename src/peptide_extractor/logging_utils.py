@@ -96,6 +96,46 @@ def is_file_logging_enabled(
     return False
 
 
+NOISY_LIBRARY_LOGGERS: Tuple[str, ...] = (
+    "httpx",
+    "httpcore",
+    "urllib3",
+    "requests",
+    "google",
+    "google_genai",
+    "google.genai",
+    "google.auth",
+    "google.api_core",
+    "grpc",
+    "langchain",
+    "langchain_core",
+    "langchain_community",
+    "langchain_google_genai",
+    "langchain_ollama",
+    "langchain_openrouter",
+    "openai",
+    "anthropic",
+    "azure",
+    "azure.core",
+    "sqlalchemy",
+    "matplotlib",
+    "PIL",
+    "spacy",
+    "thinc",
+    "fitz",
+    "pymupdf",
+    "ollama",
+)
+
+
+def silence_library_loggers(level: int = logging.ERROR) -> None:
+    """Suppress INFO/WARNING noise from third-party libraries (e.g. HTTP clients, LLM SDKs)."""
+    for lib_name in NOISY_LIBRARY_LOGGERS:
+        lib_logger = logging.getLogger(lib_name)
+        if lib_logger.level == logging.NOTSET or lib_logger.level < level:
+            lib_logger.setLevel(level)
+
+
 @contextmanager
 def step_logger(
     step: str,
@@ -120,6 +160,8 @@ def step_logger(
     if not enabled:
         yield None
         return
+
+    silence_library_loggers()
 
     step_name = normalize_step_name(step)
     base_dir = Path(log_dir).resolve() if log_dir else get_default_log_dir()

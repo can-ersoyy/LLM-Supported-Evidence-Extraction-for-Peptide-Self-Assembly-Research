@@ -107,8 +107,9 @@ def screen_papers(
                 update_paper_status(paper_id, new_status, session=session)
 
             results.append((paper, relevance_result))
-            logger.info(f"Paper {paper_id} processed")
-            logger.info(f"Paper with id {paper_id} is processed")
+            logger.info(
+                f"Paper {paper_id}: relevant={relevance_result.is_relevant}, confidence={relevance_result.confidence}"
+            )
 
         except Exception as e:
             if session is not None:
@@ -166,7 +167,9 @@ def bulk_screen_papers(
             prepared_batch = [
                 (paper.id, paper.title, paper.abstract) for paper in current_batch
             ]
-            logger.info(prepared_batch)
+            logger.info(
+                f"Screening relevance batch of {len(current_batch)} paper(s): {[p.id for p in current_batch]}"
+            )
 
             relevance_results: BulkRelevanceResults = retry_on_external_error(
                 classifier.bulk_classify_paper,
@@ -207,8 +210,9 @@ def bulk_screen_papers(
                         update_paper_status(id, new_status, session=session)
 
                     results.append((id, real_result))
-                    logger.info(f"Paper {id} processed")
-                    logger.info(f"Paper with id {id} is processed")
+                    logger.info(
+                        f"Paper {id}: relevant={real_result.is_relevant}, confidence={real_result.confidence}"
+                    )
                 except Exception as e:
                     if session is not None:
                         session.rollback()

@@ -19,17 +19,16 @@ load_env()
 
 
 class StreamingTokenPrinter(BaseCallbackHandler):
-    """Streams LLM tokens to stdout as they are generated."""
+    """Callback handler for streaming LLM requests without polluting stdout/logs."""
 
     def on_llm_start(self, *args, **kwargs) -> None:
-        logger.info("\n--- [Streaming Tokens] ---")
+        pass
 
     def on_llm_new_token(self, token: str, **kwargs) -> None:
-        sys.stdout.write(token)
-        sys.stdout.flush()
+        pass
 
     def on_llm_end(self, *args, **kwargs) -> None:
-        logger.info("\n--- [End of Stream] ---\n")
+        pass
 
 
 def get_chat_model(
@@ -217,10 +216,10 @@ class LLMController:
         if should_stream:
             callbacks = [StreamingTokenPrinter()]
             res = self.structured_llm.invoke(messages, config={"callbacks": callbacks})
-            logger.info(f"LLM output: {res}")
+            logger.debug(f"LLM output: {res}")
         else:
             res = self.structured_llm.invoke(messages)
-            logger.info(f"LLM output: {res}")
+            logger.debug(f"LLM output: {res}")
 
         if isinstance(res, dict) and self.structured_output:
             return self.structured_output(**res)
@@ -280,7 +279,7 @@ class LLMController:
         else:
             res = self.structured_llm.invoke(messages)
 
-        logger.info(f"LLM output: {res}")
+        logger.debug(f"LLM output: {res}")
         if isinstance(res, dict) and self.structured_output:
             return self.structured_output(**res)
         return res
