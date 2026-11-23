@@ -86,6 +86,19 @@ class PipelineClient:
             json={"limit": limit, "offset": offset, "filters": filters or {}},
         ).json()
 
+    def search_peptides(
+        self,
+        db_path: Optional[str] = None,
+        **criteria: Any,
+    ) -> Dict[str, Any]:
+        if self.mode == "local":
+            return backend.search_peptides(db_path=db_path, **criteria)
+        return self._request(
+            "POST",
+            "/db/peptides/search",
+            json=criteria,
+        ).json()
+
     def download_db(self) -> bytes:
         if self.mode == "local":
             db_path = backend.get_db_file_path()

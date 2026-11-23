@@ -199,10 +199,11 @@ def _render_sidebar(client: PipelineClient) -> str:
 
     st.sidebar.divider()
     if read_only and st.session_state["conn_mode"] == "Local (In-Process)":
-        nav_options = ["Overview & DB", "Results & Plots"]
+        nav_options = ["Overview & DB", "Peptide Search", "Results & Plots"]
     else:
         nav_options = [
             "Overview & DB",
+            "Peptide Search",
             "Run Pipeline",
             "PDF Ingestion",
             "DB Sync & Admin",
@@ -880,6 +881,136 @@ def page_logs_and_jobs(client: PipelineClient) -> None:
                     st.error(f"Failed to read log file: {exc}")
 
 
+def page_peptide_search(client: PipelineClient) -> None:
+    st.header("Peptide & Condition Search")
+
+    c1, c2, c3, c4 = st.columns(4)
+    seq = c1.text_input(
+        "Sequence (substring)",
+        value=st.session_state.get("search_seq_prefill", ""),
+        placeholder="e.g. FF, KLVFF",
+    )
+    length_range = c2.slider("Length (residues)", min_value=1, max_value=50, value=(1, 30))
+    morphology = c3.selectbox(
+        "Morphology",
+        [
+            "",
+            "hydrogel",
+            "fiber",
+            "tube",
+            "nanosphere",
+            "ribbon",
+            "vesicle",
+            "particle",
+            "organogel",
+            "amyloid",
+            "none",
+        ],
+    )
+    chirality = c4.selectbox(
+        "Chirality",
+        ["", "l", "d", "heterochiral", "racemic", "achiral"],
+    )
+
+    c5, c6, c7, c8 = st.columns(4)
+    n_term = c5.text_input("N-terminal", placeholder="e.g. Fmoc, Acetylation")
+    c_term = c6.text_input("C-terminal", placeholder="e.g. Amidation, Free")
+    solvent = c7.text_input("Solvent / Solution", placeholder="e.g. DMSO, PBS, H2O")
+    detection = c8.text_input("Detection Method", placeholder="e.g. TEM, ThT, CD")
+
+    with st.expander("Numeric & Run Filters"):
+        n1, n2, n3, n4, n5, n6 = st.columns(6)
+        ph_min = n1.text_input("pH min")
+        ph_max = n2.text_input("pH max")
+        t_min = n3.text_input("Temp min (°C)")
+        t_max = n4.text_input("Temp max (°C)")
+        mode_f = n5.selectbox("Mode", ["", "llm", "manual"], key="ps_mode")
+        run_id_f = n6.text_input("run_identifier", key="ps_rid")
+        limit = st.number_input(
+            "Max results", min_value=10, max_value=2000, value=200, key="ps_limit"
+        )
+
+    def _opt_float(val: str) -> Optional[float]:
+        return float(val.strip()) if val.strip() else None
+
+    try:
+        res = client.search_peptides(
+            db_path=st.session_state.get("session_db_path"),
+            sequence=seq or None,
+            min_length=length_range[0],
+            max_length=length_range[1],
+            morphology=morphology or None,
+            chirality=chirality or None,
+            n_terminal=n_term or None,
+            c_terminal=c_term or None,
+            ph_min=_opt_float(ph_min),
+            ph_max=_opt_float(ph_max),
+            temp_min=_opt_float(t_min),
+            temp_max=_opt_float(t_max),
+            solvent=solvent or None,
+            detection_method=detection or None,
+            extraction_mode=mode_f or None,
+            run_identifier=int(run_id_f.strip()) if run_id_f.strip() else None,
+            limit=int(limit),
+        )
+    except Exception as exc:
+        st.error(f"Peptide search failed: {exc}")
+        return
+
+    rows = res.get("rows", [])
+    st.caption(f"Found {len(rows)} matching peptide entry(ies).")
+    if not rows:
+        st.info("No matching peptides found.")
+        return
+
+    df = pd.DataFrame(rows)
+    preferred_cols = [
+        "sequence",
+        "length",
+        "type",
+        "n_terminal",
+        "c_terminal",
+        "chirality",
+        "ph",
+        "temperature",
+        "peptide_concentration",
+        "solution",
+        "solvent",
+        "detection_method",
+        "extraction_mode",
+        "model",
+        "run_identifier",
+        "pmid",
+        "pubmed_url",
+        "doi_url",
+    ]
+    ordered_cols = [c for c in preferred_cols if c in df.columns] + [
+        c for c in df.columns if c not in preferred_cols
+    ]
+    st.dataframe(
+        df[ordered_cols],
+        use_container_width=True,
+        column_config={
+            "pubmed_url": st.column_config.LinkColumn("PubMed", display_text="PubMed"),
+            "doi_url": st.column_config.LinkColumn("DOI", display_text="DOI"),
+        },
+    )
+
+    dl1, dl2 = st.columns(2)
+    dl1.download_button(
+        "Download CSV",
+        data=df.to_csv(index=False).encode("utf-8"),
+        file_name="peptide_search.csv",
+        mime="text/csv",
+    )
+    dl2.download_button(
+        "Download JSON",
+        data=json.dumps(rows, indent=2).encode("utf-8"),
+        file_name="peptide_search.json",
+        mime="application/json",
+    )
+
+
 def main() -> None:
     st.session_state.setdefault("session_id", uuid.uuid4().hex[:12])
     _load_streamlit_secrets()
@@ -889,6 +1020,8 @@ def main() -> None:
 
     if page == "Overview & DB":
         page_overview(client)
+    elif page == "Peptide Search":
+        page_peptide_search(client)
     elif page == "Run Pipeline":
         page_run_pipeline(client)
     elif page == "PDF Ingestion":

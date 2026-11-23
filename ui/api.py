@@ -66,6 +66,11 @@ def db_records(table_name: str, req: QueryRecordsRequest) -> Dict[str, Any]:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
+@app.post("/db/peptides/search", dependencies=[Depends(_verify_api_key)])
+def db_peptides_search(req: Dict[str, Any]) -> Dict[str, Any]:
+    return backend.search_peptides(**req)
+
+
 @app.get("/db/download", dependencies=[Depends(_verify_api_key)])
 def db_download() -> FileResponse:
     db_path = backend.get_db_file_path()

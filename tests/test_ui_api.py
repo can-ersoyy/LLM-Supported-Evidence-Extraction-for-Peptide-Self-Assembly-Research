@@ -304,3 +304,41 @@ def test_session_isolated_visualizations(tmp_path: Path, monkeypatch, temp_db):
     )
 
 
+def test_search_peptides_and_links(temp_db):
+    from peptide_extractor.db import ExtractionMode, PeptideEntry
+
+    _, test_engine = temp_db
+    with get_session_context(db_engine=test_engine) as s:
+        s.add(
+            PeptideEntry(
+                paper_id=1,
+                sequence="KLVFF",
+                length=5,
+                type="fiber",
+                n_terminal="Fmoc",
+                ph=7.4,
+                temperature=25.0,
+                solvent="PBS",
+                detection_method="TEM; ThT",
+                pmid="123456",
+                extraction_mode=ExtractionMode.LLM,
+                run_identifier=42,
+            )
+        )
+        s.commit()
+
+    client = TestClient(api.app)
+    resp = client.post(
+        "/db/peptides/search",
+        json={"sequence": "klv", "morphology": "fiber", "solvent": "pbs"},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["count"] == 1
+    row = data["rows"][0]
+    assert row["sequence"] == "KLVFF"
+    assert row["pubmed_url"] == "https://pubmed.ncbi.nlm.nih.gov/123456/"
+    assert row["doi_url"] == "https://doi.org/10.1000/test1"
+
+
+

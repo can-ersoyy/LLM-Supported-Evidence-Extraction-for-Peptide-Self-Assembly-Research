@@ -501,6 +501,118 @@ def query_records(
     }
 
 
+def search_peptides(
+    *,
+    sequence: Optional[str] = None,
+    min_length: Optional[int] = None,
+    max_length: Optional[int] = None,
+    morphology: Optional[str] = None,
+    chirality: Optional[str] = None,
+    n_terminal: Optional[str] = None,
+    c_terminal: Optional[str] = None,
+    ph_min: Optional[float] = None,
+    ph_max: Optional[float] = None,
+    temp_min: Optional[float] = None,
+    temp_max: Optional[float] = None,
+    solvent: Optional[str] = None,
+    detection_method: Optional[str] = None,
+    extraction_mode: Optional[str] = None,
+    run_identifier: Optional[int] = None,
+    limit: int = 200,
+    offset: int = 0,
+    db_path: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Search PeptideEntry records by sequence, conditions, and metadata."""
+    target_engine = _get_target_engine(db_path)
+    init_db(target_engine)
+
+    with get_session_context(db_engine=target_engine) as session:
+        stmt = select(PeptideEntry)
+        if sequence and sequence.strip():
+            stmt = stmt.where(
+                func.upper(PeptideEntry.sequence).contains(sequence.strip().upper())
+            )
+        if min_length is not None:
+            stmt = stmt.where(PeptideEntry.length >= int(min_length))
+        if max_length is not None:
+            stmt = stmt.where(PeptideEntry.length <= int(max_length))
+        if morphology and morphology.strip():
+            stmt = stmt.where(
+                func.lower(PeptideEntry.type) == morphology.strip().lower()
+            )
+        if chirality and chirality.strip():
+            stmt = stmt.where(
+                func.lower(PeptideEntry.chirality) == chirality.strip().lower()
+            )
+        if n_terminal and n_terminal.strip():
+            stmt = stmt.where(
+                func.lower(PeptideEntry.n_terminal).contains(n_terminal.strip().lower())
+            )
+        if c_terminal and c_terminal.strip():
+            stmt = stmt.where(
+                func.lower(PeptideEntry.c_terminal).contains(c_terminal.strip().lower())
+            )
+        if ph_min is not None:
+            stmt = stmt.where(PeptideEntry.ph >= float(ph_min))
+        if ph_max is not None:
+            stmt = stmt.where(PeptideEntry.ph <= float(ph_max))
+        if temp_min is not None:
+            stmt = stmt.where(PeptideEntry.temperature >= float(temp_min))
+        if temp_max is not None:
+            stmt = stmt.where(PeptideEntry.temperature <= float(temp_max))
+        if solvent and solvent.strip():
+            needle = solvent.strip().lower()
+            stmt = stmt.where(
+                func.lower(func.coalesce(PeptideEntry.solvent, "")).contains(needle)
+                | func.lower(func.coalesce(PeptideEntry.solution, "")).contains(needle)
+            )
+        if detection_method and detection_method.strip():
+            stmt = stmt.where(
+                func.lower(func.coalesce(PeptideEntry.detection_method, "")).contains(
+                    detection_method.strip().lower()
+                )
+            )
+        if extraction_mode and extraction_mode.strip():
+            stmt = stmt.where(PeptideEntry.extraction_mode == extraction_mode.strip())
+        if run_identifier is not None:
+            stmt = stmt.where(PeptideEntry.run_identifier == int(run_identifier))
+
+        if offset:
+            stmt = stmt.offset(offset)
+        if limit:
+            stmt = stmt.limit(limit)
+
+        entries = list(session.exec(stmt).all())
+
+        paper_ids = {e.paper_id for e in entries if e.paper_id is not None}
+        doi_by_paper: Dict[int, Optional[str]] = {}
+        if paper_ids:
+            papers = session.exec(
+                select(PaperMetadata).where(PaperMetadata.id.in_(paper_ids))  # type: ignore[union-attr]
+            ).all()
+            doi_by_paper = {p.id: p.doi for p in papers if p.id is not None}
+
+        rows: List[Dict[str, Any]] = []
+        for entry in entries:
+            row = _serialize_value(entry.model_dump())
+            doi = doi_by_paper.get(entry.paper_id) if entry.paper_id is not None else None
+            row["doi"] = doi
+            row["doi_url"] = f"https://doi.org/{doi}" if doi else None
+            row["pubmed_url"] = (
+                f"https://pubmed.ncbi.nlm.nih.gov/{entry.pmid}/"
+                if entry.pmid
+                else None
+            )
+            rows.append(row)
+
+    return {
+        "count": len(rows),
+        "limit": limit,
+        "offset": offset,
+        "rows": rows,
+    }
+
+
 def _parse_id_list(val: Any) -> Any:
     if val is None or val == "":
         return None
