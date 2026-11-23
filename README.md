@@ -35,46 +35,39 @@
 
 ## Quick Start (CLI)
 
-### 1. Run Pipeline Steps via YAML Config
+### 1. Run the End-to-End Pipeline (CLI or YAML Config)
 
-Create a `config.yaml` (or use `default_config.yaml`):
+All pipeline steps (`search`, `deduplicate`, `find_abstracts`, `clean_empty`, `relevance`, `fetch_fulltext`, `extraction`, `evaluation`, `visualization`) now share a single `run_identifier` and automatically pass their outputs (surviving paper IDs, `USABLE` papers, extracted entry IDs) to downstream steps — no per-step input wiring required.
+
+Create a minimal `config.yaml` (or use `default_config.yaml`):
 
 ```yaml
 log_level: "INFO"
 log_to_file: true
-ncbi_batch_size: 100
+steps: all
 
-steps:
-  - search
-  - deduplicate
-  - find_abstracts
-  - clean_empty
-  - relevance
-  - fetch_fulltext
-  - extraction
-  - evaluation
-
-search:
-  db: "pmc"
-  queries:
-    - "peptide self-assembly"
-
-relevance:
-  model_name: "gemini-3.5-flash-lite"
-  provider: "google"
-  batch_size: 50
-  delay_seconds: 3
-
-extraction:
-  provider: "google"
-  model_name: "gemini-3.5-flash-lite"
-  delay_seconds: 4
+queries:
+  - "peptide self-assembly"
+db: "pmc"
+provider: "google"
+model_name: "gemini-3.5-flash-lite"
+limit: 10
 ```
 
 Execute the pipeline:
 
 ```bash
 uv run src/peptide_extractor/cli.py run_pipeline --config config.yaml
+```
+
+Or run directly via CLI flags without a config file:
+
+```bash
+uv run src/peptide_extractor/cli.py run_pipeline \
+  -q "peptide self-assembly" \
+  --limit 10 \
+  --provider google \
+  --model gemini-3.5-flash-lite
 ```
 
 ### 2. Generate Visualizations

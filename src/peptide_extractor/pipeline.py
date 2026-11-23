@@ -1,6 +1,7 @@
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Type, Union
-from sqlmodel import SQLModel
+from sqlmodel import SQLModel, select
 from peptide_extractor.visualization import (
     VisualizationOperation,
     VisualizationResult,
@@ -196,15 +197,31 @@ def deduplicate_by_doi(
         return _deduplicate(s)
 
 
-def find_abstracts_by_doi(open_alex_api_key):
-    init_db()
-    non_abstract_metadas = get_paper_metadatas(abstract="")
-    found_abstract_count = 0
+def find_abstracts_by_doi(
+    open_alex_api_key: Optional[str] = None,
+    session: Optional[Session] = None,
+    **filters: Any,
+) -> int:
+    if filters.get("id") == []:
+        return 0
 
-    semantic_scholar = SemanticScholarProvider()
-    open_alex = OpenAlexProvider(api_key=open_alex_api_key)
+    def _find(s: Session) -> int:
+        empty_str_papers = get_paper_metadatas(abstract="", session=s, **filters)
+        none_papers = get_paper_metadatas(abstract=None, session=s, **filters)
+        seen_ids = set()
+        non_abstract_metadas: List[PaperMetadata] = []
+        for paper in empty_str_papers + none_papers:
+            if paper.id not in seen_ids:
+                seen_ids.add(paper.id)
+                non_abstract_metadas.append(paper)
 
-    with get_session_context() as session:
+        if not non_abstract_metadas:
+            return 0
+
+        found_abstract_count = 0
+        semantic_scholar = SemanticScholarProvider()
+        open_alex = OpenAlexProvider(api_key=open_alex_api_key)
+
         for metadata in non_abstract_metadas:
             if metadata.doi is None:
                 logger.info(f"Skipping paper {metadata.id}: no DOI")
@@ -217,8 +234,8 @@ def find_abstracts_by_doi(open_alex_api_key):
                 if abstract is not None:
                     found_abstract_count += 1
                     metadata.abstract = abstract
-                    session.add(metadata)
-                    session.commit()
+                    s.add(metadata)
+                    s.commit()
                 else:
                     try:
                         abstract = open_alex.get_abstract_by_doi(metadata.doi)
@@ -226,8 +243,8 @@ def find_abstracts_by_doi(open_alex_api_key):
                         if abstract is not None:
                             found_abstract_count += 1
                             metadata.abstract = abstract
-                            session.add(metadata)
-                            session.commit()
+                            s.add(metadata)
+                            s.commit()
                     except Exception as e:
                         logger.info(
                             f"Failed to retrieve abstract for {metadata.doi}: {e}"
@@ -241,8 +258,8 @@ def find_abstracts_by_doi(open_alex_api_key):
                         if abstract is not None:
                             found_abstract_count += 1
                             metadata.abstract = abstract
-                            session.add(metadata)
-                            session.commit()
+                            s.add(metadata)
+                            s.commit()
                         logger.info(
                             f"Retrieved abstract for {metadata.doi}: {abstract}"
                         )
@@ -257,21 +274,40 @@ def find_abstracts_by_doi(open_alex_api_key):
         logger.info(
             f"Retrieved {found_abstract_count} abstracts out of {len(non_abstract_metadas)}"
         )
+        return found_abstract_count
+
+    if session is not None:
+        return _find(session)
+    init_db()
+    with get_session_context() as s:
+        return _find(s)
 
 
-def remove_empty_abstract_title_papers(session: Optional[Session] = None) -> int:
+def remove_empty_abstract_title_papers(
+    session: Optional[Session] = None,
+    **filters: Any,
+) -> int:
     """Returns removed count"""
+    if filters.get("id") == []:
+        return 0
 
-    def _remove(session: Session):
-        empty_abstract = get_paper_metadatas(abstract="", session=session)
-        empty_title = get_paper_metadatas(title="", session=session)
-        empty_papers = [paper for paper in empty_abstract + empty_title]
+    def _remove(s: Session) -> int:
+        empty_abstract = get_paper_metadatas(abstract="", session=s, **filters)
+        none_abstract = get_paper_metadatas(abstract=None, session=s, **filters)
+        empty_title = get_paper_metadatas(title="", session=s, **filters)
+
+        seen_ids = set()
+        empty_papers: List[PaperMetadata] = []
+        for paper in empty_abstract + none_abstract + empty_title:
+            if paper.id not in seen_ids:
+                seen_ids.add(paper.id)
+                empty_papers.append(paper)
 
         deleted_count = 0
         for paper in empty_papers:
-            session.delete(paper)
+            s.delete(paper)
             deleted_count += 1
-        session.commit()
+        s.commit()
         return deleted_count
 
     if session is not None:
@@ -801,6 +837,775 @@ def run_visualization(
         init_db()
         with get_session_context() as s:
             return _visualize(s)
+
+
+ALL_PIPELINE_STEPS: tuple[str, ...] = (
+    "search",
+    "deduplicate",
+    "find_abstracts",
+    "clean_empty",
+    "relevance",
+    "fetch_fulltext",
+    "extraction",
+    "evaluation",
+    "visualization",
+)
+
+_STEP_ALIASES: Dict[str, str] = {
+    "fetch": "fetch_fulltext",
+}
+
+
+def _normalize_pipeline_steps(
+    steps: Optional[Union[str, Sequence[str]]],
+) -> List[str]:
+    """Normalize step names, expanding 'all' or None into ALL_PIPELINE_STEPS."""
+    if steps is None:
+        return list(ALL_PIPELINE_STEPS)
+    if isinstance(steps, str):
+        raw_steps = [steps]
+    else:
+        raw_steps = list(steps)
+
+    if not raw_steps or any(str(s).strip().lower() == "all" for s in raw_steps):
+        return list(ALL_PIPELINE_STEPS)
+
+    normalized: List[str] = []
+    for raw in raw_steps:
+        name = _STEP_ALIASES.get(str(raw).strip().lower(), str(raw).strip().lower())
+        if name not in ALL_PIPELINE_STEPS:
+            raise ValueError(
+                f"Unknown pipeline step '{raw}'. Valid steps: {list(ALL_PIPELINE_STEPS)} or 'all'."
+            )
+        if name not in normalized:
+            normalized.append(name)
+    return normalized
+
+
+@dataclass
+class PipelineResult:
+    """Summary of an end-to-end `run_full_pipeline` execution."""
+
+    run_identifier: int
+    steps_executed: List[str] = field(default_factory=list)
+    paper_ids: Optional[List[int]] = None
+    search_count: int = 0
+    deduplicated_count: int = 0
+    abstracts_found_count: int = 0
+    cleaned_empty_count: int = 0
+    relevance_run_identifier: Optional[int] = None
+    relevance_usable_ids: List[int] = field(default_factory=list)
+    relevance_discarded_count: int = 0
+    relevance_failed_ids: List[int] = field(default_factory=list)
+    fetch_run_identifier: Optional[int] = None
+    fetch_success_count: int = 0
+    fetch_fail_count: int = 0
+    extraction_run_identifier: Optional[int] = None
+    extraction_entry_count: int = 0
+    extraction_failed_ids: List[int] = field(default_factory=list)
+    evaluation_run_identifier: Optional[int] = None
+    evaluation_failed_ids: List[int] = field(default_factory=list)
+    visualization_outputs: Dict[str, Any] = field(default_factory=dict)
+
+    def summary(self) -> str:
+        lines = [
+            f"Pipeline Run {self.run_identifier}",
+            f"  Steps executed: {', '.join(self.steps_executed) or 'none'}",
+            f"  Search papers added: {self.search_count}",
+            f"  Deduplicated removed: {self.deduplicated_count}",
+            f"  Abstracts found: {self.abstracts_found_count}",
+            f"  Empty title/abstract removed: {self.cleaned_empty_count}",
+            f"  Relevance usable: {len(self.relevance_usable_ids)} (discarded: {self.relevance_discarded_count}, failed: {len(self.relevance_failed_ids)})",
+            f"  Fulltext fetched: {self.fetch_success_count} (failed: {self.fetch_fail_count})",
+            f"  Extraction entries: {self.extraction_entry_count} (failed papers: {len(self.extraction_failed_ids)})",
+            f"  Evaluation failed entries: {len(self.evaluation_failed_ids)}",
+            f"  Visualizations generated: {len(self.visualization_outputs)}",
+        ]
+        return "\n".join(lines)
+
+
+def _refresh_existing_paper_ids(
+    paper_ids: Sequence[int],
+    session: Optional[Session] = None,
+) -> List[int]:
+    """Return subset of `paper_ids` that still exist in `paper_metadata`."""
+    if not paper_ids:
+        return []
+    papers = get_paper_metadatas(session=session, id=list(paper_ids))
+    existing = {p.id for p in papers if p.id is not None}
+    return [pid for pid in paper_ids if pid in existing]
+
+
+def run_full_pipeline(
+    *,
+    steps: Optional[Union[str, Sequence[str]]] = None,
+    queries: Optional[Sequence[str]] = None,
+    db: str = "pmc",
+    paper_ids: Optional[Sequence[int]] = None,
+    pmids: Optional[Sequence[str]] = None,
+    limit: Optional[int] = None,
+    provider: str = "google",
+    model_name: str = "gemini-3.5-flash-lite",
+    delay_seconds: float = 3.0,
+    run_identifier: Optional[int] = None,
+    log_to_file: Optional[bool] = None,
+    config: Optional[Dict[str, Any]] = None,
+    ncbi_provider: Optional[NCBIProvider] = None,
+    open_alex_provider: Optional[OpenAlexProvider] = None,
+    ncbi_api_key: Optional[str] = None,
+    open_alex_api_key: Optional[str] = None,
+    session: Optional[Session] = None,
+    _step_fns: Optional[Dict[str, Any]] = None,
+) -> PipelineResult:
+    """Run the end-to-end peptide extraction pipeline with automatic inter-step data flow.
+
+    Instead of manually wiring `id` / `run_identifier` filters into every step, each
+    step automatically passes its output scope (surviving paper IDs, `USABLE` papers,
+    and `run_identifier`) to downstream steps. Explicit per-step `kwargs` in `config`
+    still override the automatic scope when needed.
+    """
+    import os
+
+    cfg = dict(config or {})
+    pipeline_run_id = (
+        run_identifier
+        if run_identifier is not None
+        else cfg.get("run_identifier") or int(time.time())
+    )
+
+    if steps is None:
+        steps = cfg.get("steps")
+    steps_to_run = _normalize_pipeline_steps(steps)
+
+    # Resolve top-level defaults from config + function args
+    global_provider = cfg.get("provider", provider)
+    global_model = cfg.get("model_name", model_name)
+    global_delay = cfg.get("delay_seconds", delay_seconds)
+    global_limit = limit if limit is not None else cfg.get("limit")
+    global_queries = list(queries) if queries is not None else cfg.get("queries")
+    global_db = cfg.get("db", db)
+
+    if log_to_file is None:
+        global_log_to_file = bool(
+            cfg.get("log_to_file", cfg.get("save_logs", cfg.get("file_logging", False)))
+        )
+    else:
+        global_log_to_file = bool(log_to_file)
+
+    def _is_step_log_enabled(step_name: str) -> bool:
+        step_cfg = cfg.get(step_name, {})
+        if isinstance(step_cfg, dict):
+            for k in ("log_to_file", "save_logs", "file_logging"):
+                if k in step_cfg:
+                    return bool(step_cfg[k])
+        if step_name == "fetch_fulltext":
+            alt_cfg = cfg.get("fetch", {})
+            if isinstance(alt_cfg, dict):
+                for k in ("log_to_file", "save_logs", "file_logging"):
+                    if k in alt_cfg:
+                        return bool(alt_cfg[k])
+        return global_log_to_file
+
+    def _get_step_cfg(step_name: str) -> Dict[str, Any]:
+        if step_name == "fetch_fulltext":
+            return dict(cfg.get("fetch") or cfg.get("fetch_fulltext") or {})
+        return dict(cfg.get(step_name) or {})
+
+    fns = {
+        "search": retrive_ncbi_by_query,
+        "deduplicate": deduplicate_by_doi,
+        "find_abstracts": find_abstracts_by_doi,
+        "clean_empty": remove_empty_abstract_title_papers,
+        "relevance_bulk": run_bulk_relevance_screening,
+        "relevance_single": run_relevance_screening,
+        "fetch_fulltext": fetch_paper_fulltexts,
+        "extraction": run_peptide_extraction,
+        "evaluation": run_evaluation,
+        "visualization": run_visualization,
+    }
+    if _step_fns:
+        fns.update(_step_fns)
+
+    resolved_ncbi_key = ncbi_api_key if ncbi_api_key is not None else os.getenv("NCBI_API_KEY")
+    resolved_oa_key = (
+        open_alex_api_key
+        if open_alex_api_key is not None
+        else os.getenv("OPEN_ALEX_API_KEY")
+    )
+
+    def _get_ncbi_provider() -> NCBIProvider:
+        nonlocal ncbi_provider
+        if ncbi_provider is None:
+            ncbi_provider = NCBIProvider(
+                api_key=resolved_ncbi_key, batch_size=cfg.get("ncbi_batch_size", 100)
+            )
+        return ncbi_provider
+
+    def _get_oa_provider() -> OpenAlexProvider:
+        nonlocal open_alex_provider
+        if open_alex_provider is None:
+            open_alex_provider = OpenAlexProvider(api_key=resolved_oa_key)
+        return open_alex_provider
+
+    def _with_session_if_needed(fn):
+        if session is not None:
+            return fn(session)
+        init_db()
+        with get_session_context() as s:
+            return fn(s)
+
+    result = PipelineResult(run_identifier=pipeline_run_id)
+
+    # Seed initial paper scope if explicit paper_ids or pmids were provided
+    seed_paper_ids = (
+        list(paper_ids)
+        if paper_ids is not None
+        else (list(cfg["paper_ids"]) if cfg.get("paper_ids") is not None else None)
+    )
+    seed_pmids = (
+        list(pmids)
+        if pmids is not None
+        else (list(cfg["pmids"]) if cfg.get("pmids") is not None else None)
+    )
+
+    current_paper_ids: Optional[List[int]] = None
+    if seed_paper_ids is not None:
+        current_paper_ids = seed_paper_ids
+    elif seed_pmids is not None:
+        matched = _with_session_if_needed(
+            lambda s: get_paper_metadatas(session=s, pmid=[str(p) for p in seed_pmids])
+        )
+        current_paper_ids = [p.id for p in matched if p.id is not None]
+
+    # 1. Search
+    if "search" in steps_to_run:
+        search_cfg = _get_step_cfg("search")
+        search_queries = search_cfg.get("queries") or global_queries
+        if not search_queries:
+            logger.info("No search queries provided; skipping search step.")
+        else:
+            step_run_id = search_cfg.get("run_identifier") or pipeline_run_id
+            step_enabled = _is_step_log_enabled("search")
+            with step_logger("search", step_run_id, enabled=step_enabled):
+                logger.info("Running query search...")
+                step_db = search_cfg.get("db", global_db)
+                fns["search"](
+                    _get_ncbi_provider(),
+                    db=step_db,
+                    query_list=list(search_queries),
+                    run_identifier=step_run_id,
+                    log_to_file=step_enabled,
+                )
+                new_papers = _with_session_if_needed(
+                    lambda s: get_paper_metadatas(session=s, run_identifier=step_run_id)
+                )
+                new_ids = [p.id for p in new_papers if p.id is not None]
+                result.search_count = len(new_ids)
+                if current_paper_ids is None:
+                    current_paper_ids = new_ids
+                else:
+                    existing_set = set(current_paper_ids)
+                    current_paper_ids.extend(pid for pid in new_ids if pid not in existing_set)
+                result.steps_executed.append("search")
+
+    # 2. Deduplicate
+    if "deduplicate" in steps_to_run:
+        dd_cfg = _get_step_cfg("deduplicate")
+        step_run_id = dd_cfg.get("run_identifier") or pipeline_run_id
+        step_enabled = _is_step_log_enabled("deduplicate")
+        with step_logger("deduplicate", step_run_id, enabled=step_enabled):
+            logger.info("Deduplicating by DOI...")
+            normalize = dd_cfg.get("normalize", True)
+            remove_empty = dd_cfg.get("remove_empty", True)
+            removed = fns["deduplicate"](
+                session=session, normalize=normalize, remove_empty=remove_empty
+            )
+            result.deduplicated_count = removed
+            logger.info(f"Removed {removed} papers with duplicate doi")
+            if current_paper_ids is not None:
+                current_paper_ids = _with_session_if_needed(
+                    lambda s: _refresh_existing_paper_ids(current_paper_ids, session=s)
+                )
+            result.steps_executed.append("deduplicate")
+
+    # 3. Find missing abstracts
+    if "find_abstracts" in steps_to_run:
+        fa_cfg = _get_step_cfg("find_abstracts")
+        step_run_id = fa_cfg.get("run_identifier") or pipeline_run_id
+        step_enabled = _is_step_log_enabled("find_abstracts")
+        if current_paper_ids is not None and len(current_paper_ids) == 0:
+            logger.info("No papers in pipeline scope; skipping find_abstracts.")
+        else:
+            with step_logger("find_abstracts", step_run_id, enabled=step_enabled):
+                logger.info("Finding missing abstracts...")
+                fa_filters = dict(fa_cfg.get("kwargs", {}))
+                if not fa_filters and current_paper_ids is not None:
+                    fa_filters["id"] = current_paper_ids
+                found = fns["find_abstracts"](
+                    resolved_oa_key, session=session, **fa_filters
+                )
+                result.abstracts_found_count = found or 0
+                result.steps_executed.append("find_abstracts")
+
+    # 4. Clean empty abstract / title
+    if "clean_empty" in steps_to_run:
+        ce_cfg = _get_step_cfg("clean_empty")
+        step_run_id = ce_cfg.get("run_identifier") or pipeline_run_id
+        step_enabled = _is_step_log_enabled("clean_empty")
+        if current_paper_ids is not None and len(current_paper_ids) == 0:
+            logger.info("No papers in pipeline scope; skipping clean_empty.")
+        else:
+            with step_logger("clean_empty", step_run_id, enabled=step_enabled):
+                logger.info("Removing papers with empty abstract or title...")
+                ce_filters = dict(ce_cfg.get("kwargs", {}))
+                if not ce_filters and current_paper_ids is not None:
+                    ce_filters["id"] = current_paper_ids
+                removed = fns["clean_empty"](session=session, **ce_filters)
+                result.cleaned_empty_count = removed
+                logger.info(f"Removed {removed} papers with empty abstract or title")
+                if current_paper_ids is not None:
+                    current_paper_ids = _with_session_if_needed(
+                        lambda s: _refresh_existing_paper_ids(current_paper_ids, session=s)
+                    )
+                result.steps_executed.append("clean_empty")
+
+    # 5. Relevance screening
+    if "relevance" in steps_to_run:
+        rel_cfg = _get_step_cfg("relevance")
+        step_run_id = rel_cfg.get("run_identifier") or pipeline_run_id
+        step_enabled = _is_step_log_enabled("relevance")
+        rel_kwargs = dict(rel_cfg.get("kwargs", {}))
+
+        skip_relevance = False
+        if not rel_kwargs:
+            if current_paper_ids is not None:
+                if len(current_paper_ids) == 0:
+                    logger.info("No papers in pipeline scope; skipping relevance.")
+                    skip_relevance = True
+                else:
+                    rel_kwargs = {
+                        "id": current_paper_ids,
+                        "status": PaperStatus.NOT_PROCESSED,
+                    }
+            else:
+                rel_kwargs = {
+                    "status": PaperStatus.NOT_PROCESSED,
+                    "dataset_subset": DatasetSubset.SCRAPED,
+                }
+                if global_limit is not None:
+                    rel_kwargs["limit"] = global_limit
+
+        if not skip_relevance:
+            with step_logger("relevance", step_run_id, enabled=step_enabled):
+                logger.info("Running relevance screening...")
+                start_time = time.time()
+                use_bulk = rel_cfg.get("bulk", True)
+                rel_fn = fns["relevance_bulk"] if use_bulk else fns["relevance_single"]
+                screened_results, fails, identifier = rel_fn(
+                    model_name=rel_cfg.get("model_name", global_model),
+                    provider=rel_cfg.get("provider", global_provider),
+                    delay_seconds=rel_cfg.get("delay_seconds", global_delay),
+                    batch_size=rel_cfg.get("batch_size", 50),
+                    run_identifier=step_run_id,
+                    log_to_file=step_enabled,
+                    session=session,
+                    **rel_kwargs,
+                )
+                end_time = time.time()
+                logger.info(
+                    f"Relevance Success: {screened_results}, Fails: {fails}, Identifier: {identifier}, Time: {end_time - start_time}"
+                )
+
+                usable_ids: List[int] = []
+                discarded_count = 0
+                for item, rel_res in screened_results:
+                    pid = item.id if hasattr(item, "id") else item
+                    if getattr(rel_res, "is_relevant", False):
+                        if pid is not None:
+                            usable_ids.append(pid)
+                    else:
+                        discarded_count += 1
+
+                # If user seeded specific paper_ids that were already USABLE before relevance, keep them too
+                if current_paper_ids is not None and (
+                    seed_paper_ids is not None or seed_pmids is not None
+                ):
+                    already_usable = _with_session_if_needed(
+                        lambda s: [
+                            p.id
+                            for p in get_paper_metadatas(
+                                session=s,
+                                id=current_paper_ids,
+                                status=PaperStatus.USABLE,
+                            )
+                            if p.id is not None
+                        ]
+                    )
+                    for pid in already_usable:
+                        if pid not in usable_ids:
+                            usable_ids.append(pid)
+
+                result.relevance_run_identifier = identifier
+                result.relevance_usable_ids = usable_ids
+                result.relevance_discarded_count = discarded_count
+                result.relevance_failed_ids = list(fails)
+                current_paper_ids = usable_ids
+                result.steps_executed.append("relevance")
+
+    # 6. Fetch fulltexts
+    if "fetch_fulltext" in steps_to_run:
+        ft_cfg = _get_step_cfg("fetch_fulltext")
+        step_run_id = ft_cfg.get("run_identifier") or pipeline_run_id
+        step_enabled = _is_step_log_enabled("fetch_fulltext")
+        ft_kwargs = dict(ft_cfg.get("kwargs", {}))
+
+        skip_fetch = False
+        if not ft_kwargs:
+            if current_paper_ids is not None:
+                if len(current_paper_ids) == 0:
+                    logger.info("No usable papers in pipeline scope; skipping fetch_fulltext.")
+                    skip_fetch = True
+                else:
+                    ft_kwargs = {"id": current_paper_ids, "status": PaperStatus.USABLE}
+            else:
+                ft_kwargs = {"status": PaperStatus.USABLE}
+                if global_limit is not None:
+                    ft_kwargs["limit"] = global_limit
+
+        if not skip_fetch:
+            with step_logger("fetch", step_run_id, enabled=step_enabled):
+                logger.info("Fetching fulltexts...")
+                success, fails, identifier = fns["fetch_fulltext"](
+                    session=session,
+                    ncbi_provider=_get_ncbi_provider(),
+                    open_alex_provider=_get_oa_provider(),
+                    skip_existing_content=ft_cfg.get("skip_existing_content", True),
+                    run_identifier=step_run_id,
+                    log_to_file=step_enabled,
+                    **ft_kwargs,
+                )
+                logger.info(
+                    f"Fetch Fulltext Success: {success}, Fails: {fails}, Identifier: {identifier}"
+                )
+                result.fetch_run_identifier = identifier
+                result.fetch_success_count = success
+                result.fetch_fail_count = fails
+                # If pipeline started at fetch_fulltext without prior paper_ids, carry the usable IDs forward
+                if current_paper_ids is None and not ft_cfg.get("kwargs"):
+                    usable_papers = _with_session_if_needed(
+                        lambda s: get_paper_metadatas(session=s, **ft_kwargs)
+                    )
+                    current_paper_ids = [p.id for p in usable_papers if p.id is not None]
+                result.steps_executed.append("fetch_fulltext")
+
+    # 7. Peptide extraction
+    if "extraction" in steps_to_run:
+        ext_cfg = _get_step_cfg("extraction")
+        step_run_id = ext_cfg.get("run_identifier") or pipeline_run_id
+        step_enabled = _is_step_log_enabled("extraction")
+        ext_kwargs = dict(ext_cfg.get("kwargs", {}))
+
+        skip_extraction = False
+        if not ext_kwargs:
+            if current_paper_ids is not None:
+                if len(current_paper_ids) == 0:
+                    logger.info("No papers in pipeline scope; skipping extraction.")
+                    skip_extraction = True
+                else:
+                    ext_kwargs = {"id": current_paper_ids, "status": PaperStatus.USABLE}
+            else:
+                def _find_extractable_ids(s: Session) -> List[int]:
+                    content_paper_ids = {
+                        c.paper_id
+                        for c in get_records(PaperContent, session=s)
+                        if c.paper_id is not None
+                    }
+                    if ext_cfg.get("skip_existing_extractions", True):
+                        extracted_ids = {
+                            e.paper_id
+                            for e in get_records(PeptideEntry, session=s)
+                            if e.paper_id is not None
+                        }
+                    else:
+                        extracted_ids = set()
+                    usable_papers = get_paper_metadatas(
+                        session=s, status=PaperStatus.USABLE
+                    )
+                    candidates = [
+                        p.id
+                        for p in usable_papers
+                        if p.id is not None
+                        and p.id in content_paper_ids
+                        and p.id not in extracted_ids
+                    ]
+                    if global_limit is not None:
+                        candidates = candidates[:global_limit]
+                    return candidates
+
+                candidate_ids = _with_session_if_needed(_find_extractable_ids)
+                if not candidate_ids:
+                    logger.info("No unextracted usable papers with content found; skipping extraction.")
+                    skip_extraction = True
+                else:
+                    ext_kwargs = {"id": candidate_ids}
+
+        if not skip_extraction:
+            with step_logger("extraction", step_run_id, enabled=step_enabled):
+                logger.info("Running extraction...")
+                start_time = time.time()
+                extra_ext_opts = {
+                    k: ext_cfg[k]
+                    for k in (
+                        "save",
+                        "pass_pdf_directly",
+                        "tables_as_images",
+                        "images_as_images",
+                        "table_image_layout",
+                        "factored_extraction",
+                        "table_provider",
+                        "table_model_name",
+                    )
+                    if k in ext_cfg
+                }
+                fails, identifier = fns["extraction"](
+                    session=session,
+                    provider=ext_cfg.get("provider", global_provider),
+                    model_name=ext_cfg.get("model_name", global_model),
+                    delay_seconds=ext_cfg.get("delay_seconds", global_delay),
+                    run_identifier=step_run_id,
+                    log_to_file=step_enabled,
+                    **extra_ext_opts,
+                    **ext_kwargs,
+                )
+                end_time = time.time()
+                logger.info(
+                    f"Extraction failed for papers with IDs: {fails}, Identifier: {identifier}, Time: {end_time - start_time}"
+                )
+                result.extraction_run_identifier = identifier
+                result.extraction_failed_ids = list(fails)
+                extracted_entries = _with_session_if_needed(
+                    lambda s: get_records(PeptideEntry, session=s, run_identifier=identifier)
+                )
+                result.extraction_entry_count = len(extracted_entries)
+                result.steps_executed.append("extraction")
+
+    # 8. Evaluation
+    if "evaluation" in steps_to_run:
+        eval_cfg = _get_step_cfg("evaluation")
+        step_run_id = eval_cfg.get("run_identifier") or pipeline_run_id
+        step_enabled = _is_step_log_enabled("evaluation")
+        eval_kwargs = dict(eval_cfg.get("kwargs", {}))
+
+        skip_evaluation = False
+        if not eval_kwargs:
+            if current_paper_ids is not None and len(current_paper_ids) == 0:
+                logger.info("No papers in pipeline scope; skipping evaluation.")
+                skip_evaluation = True
+            elif result.extraction_run_identifier is not None:
+                if result.extraction_entry_count == 0:
+                    logger.info("No PeptideEntry records extracted in this run; skipping evaluation.")
+                    skip_evaluation = True
+                else:
+                    entry_ids = _with_session_if_needed(
+                        lambda s: [
+                            e.id
+                            for e in get_records(
+                                PeptideEntry,
+                                session=s,
+                                run_identifier=result.extraction_run_identifier,
+                            )
+                            if e.id is not None
+                        ]
+                    )
+                    if not entry_ids:
+                        skip_evaluation = True
+                    else:
+                        eval_kwargs = {"id": entry_ids}
+            elif run_identifier is not None or cfg.get("run_identifier") is not None:
+                entry_ids = _with_session_if_needed(
+                    lambda s: [
+                        e.id
+                        for e in get_records(
+                            PeptideEntry, session=s, run_identifier=pipeline_run_id
+                        )
+                        if e.id is not None
+                    ]
+                )
+                if not entry_ids:
+                    logger.info(
+                        f"No PeptideEntry records found for run_identifier={pipeline_run_id}; skipping evaluation."
+                    )
+                    skip_evaluation = True
+                else:
+                    eval_kwargs = {"id": entry_ids}
+            else:
+                from peptide_extractor.db.extraction_evaluation import (
+                    ExtractionEvaluation,
+                )
+
+                def _find_unevaluated_entry_ids(s: Session) -> List[int]:
+                    evaluated_ids = {
+                        ev.peptide_entry_id
+                        for ev in get_records(ExtractionEvaluation, session=s)
+                        if ev.peptide_entry_id is not None
+                    }
+                    entries = get_records(PeptideEntry, session=s)
+                    pending = [
+                        e.id
+                        for e in entries
+                        if e.id is not None and e.id not in evaluated_ids
+                    ]
+                    if global_limit is not None:
+                        pending = pending[:global_limit]
+                    return pending
+
+                pending_entry_ids = _with_session_if_needed(_find_unevaluated_entry_ids)
+                if not pending_entry_ids:
+                    logger.info("No unevaluated PeptideEntry records found; skipping evaluation.")
+                    skip_evaluation = True
+                else:
+                    eval_kwargs = {"id": pending_entry_ids}
+        elif "run_identifier" in eval_kwargs:
+            target_ext_run_id = eval_kwargs.pop("run_identifier")
+            entry_ids = _with_session_if_needed(
+                lambda s: [
+                    e.id
+                    for e in get_records(
+                        PeptideEntry, session=s, run_identifier=target_ext_run_id
+                    )
+                    if e.id is not None
+                ]
+            )
+            if not entry_ids:
+                logger.info(
+                    f"No PeptideEntry records found for run_identifier={target_ext_run_id}; skipping evaluation."
+                )
+                skip_evaluation = True
+            else:
+                eval_kwargs["id"] = entry_ids
+
+        if not skip_evaluation:
+            with step_logger("evaluation", step_run_id, enabled=step_enabled):
+                logger.info("Running evaluation...")
+                start_time = time.time()
+                fails, identifier = fns["evaluation"](
+                    session=session,
+                    run_identifier=step_run_id,
+                    log_to_file=step_enabled,
+                    **eval_kwargs,
+                )
+                end_time = time.time()
+                logger.info(
+                    f"Evaluation failed for papers with IDs: {fails}, Identifier: {identifier}, Time: {end_time - start_time}"
+                )
+                result.evaluation_run_identifier = identifier
+                result.evaluation_failed_ids = list(fails)
+                result.steps_executed.append("evaluation")
+
+    # 9. Visualization
+    if "visualization" in steps_to_run:
+        viz_cfg = _get_step_cfg("visualization")
+        viz_run_id = viz_cfg.get("run_identifier") or pipeline_run_id
+        step_enabled = _is_step_log_enabled("visualization")
+        explicit_model = viz_cfg.get("model") or viz_cfg.get("data_type")
+        explicit_ops = viz_cfg.get("operations")
+
+        with step_logger("visualization", viz_run_id, enabled=step_enabled):
+            logger.info("Running visualization...")
+            start_time = time.time()
+            if explicit_model and explicit_ops:
+                viz_kwargs = dict(viz_cfg.get("kwargs", {}))
+                if "run_identifier" not in viz_kwargs:
+                    norm_model = str(explicit_model).strip().lower()
+                    if norm_model == "peptide_entry" and result.extraction_run_identifier is not None:
+                        viz_kwargs["run_identifier"] = result.extraction_run_identifier
+                    elif norm_model == "extraction_evaluation" and result.evaluation_run_identifier is not None:
+                        viz_kwargs["run_identifier"] = result.evaluation_run_identifier
+                    elif norm_model == "paper_relevance" and result.relevance_run_identifier is not None:
+                        viz_kwargs["run_identifier"] = result.relevance_run_identifier
+
+                viz_results, identifier = fns["visualization"](
+                    session=session,
+                    operations=explicit_ops,
+                    model=explicit_model,
+                    output_dir=viz_cfg.get("output_dir"),
+                    save=viz_cfg.get("save", True),
+                    show=viz_cfg.get("show", False),
+                    file_format=viz_cfg.get("file_format", "png"),
+                    dpi=viz_cfg.get("dpi", 150),
+                    limit=viz_cfg.get("limit"),
+                    offset=viz_cfg.get("offset", 0),
+                    plot_kwargs=viz_cfg.get("plot_kwargs"),
+                    viz_run_identifier=viz_run_id,
+                    log_to_file=step_enabled,
+                    **viz_kwargs,
+                )
+                for op, res_obj in viz_results.items():
+                    result.visualization_outputs[op.value] = res_obj.output_path
+                logger.info(
+                    f"Visualization generated {len(viz_results)} diagrams, Identifier: {identifier}, Time: {time.time() - start_time}"
+                )
+                result.steps_executed.append("visualization")
+            else:
+                # Auto-visualize outputs generated in this pipeline run
+                auto_specs: List[tuple[str, List[str], Dict[str, Any]]] = []
+                if result.extraction_entry_count > 0 and result.extraction_run_identifier is not None:
+                    auto_specs.append(
+                        (
+                            "peptide_entry",
+                            [
+                                "peptide_column_completion",
+                                "peptide_length_distribution",
+                                "peptide_morphology_distribution",
+                                "extractions_per_paper",
+                            ],
+                            {"run_identifier": result.extraction_run_identifier},
+                        )
+                    )
+                if result.evaluation_run_identifier is not None:
+                    auto_specs.append(
+                        (
+                            "extraction_evaluation",
+                            ["evaluation_boxplot", "evaluation_summary_range"],
+                            {"run_identifier": result.evaluation_run_identifier},
+                        )
+                    )
+                if result.relevance_run_identifier is not None:
+                    auto_specs.append(
+                        (
+                            "paper_relevance",
+                            ["relevance_outcome_counts", "relevance_confidence_hist"],
+                            {"run_identifier": result.relevance_run_identifier},
+                        )
+                    )
+
+                total_generated = 0
+                for auto_model, auto_ops, auto_kwargs in auto_specs:
+                    viz_results, _ = fns["visualization"](
+                        session=session,
+                        operations=auto_ops,
+                        model=auto_model,
+                        output_dir=viz_cfg.get("output_dir"),
+                        save=viz_cfg.get("save", True),
+                        show=viz_cfg.get("show", False),
+                        file_format=viz_cfg.get("file_format", "png"),
+                        dpi=viz_cfg.get("dpi", 150),
+                        viz_run_identifier=viz_run_id,
+                        log_to_file=step_enabled,
+                        **auto_kwargs,
+                    )
+                    total_generated += len(viz_results)
+                    for op, res_obj in viz_results.items():
+                        result.visualization_outputs[op.value] = res_obj.output_path
+
+                logger.info(
+                    f"Visualization generated {total_generated} diagrams, Identifier: {viz_run_id}, Time: {time.time() - start_time}"
+                )
+                if total_generated > 0:
+                    result.steps_executed.append("visualization")
+
+    result.paper_ids = current_paper_ids
+    return result
 
 
 # Not removing this for development/testing purposes
