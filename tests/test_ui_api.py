@@ -1,0 +1,181 @@
+"""Tests for the ui/ backend, FastAPI server, and PipelineClient."""
+
+from __future__ import annotations
+
+import time
+from pathlib import Path
+from unittest.mock import patch
+
+import pytest
+
+fastapi = pytest.importorskip("fastapi")
+from fastapi.testclient import TestClient  # noqa: E402
+from sqlmodel import create_engine  # noqa: E402
+
+from peptide_extractor.db import PaperMetadata, PaperStatus, init_db  # noqa: E402
+from peptide_extractor.db.database import get_session_context  # noqa: E402
+from ui import api  # noqa: E402
+from ui.client import PipelineClient  # noqa: E402
+
+
+@pytest.fixture()
+def temp_db(tmp_path: Path, monkeypatch):
+    db_file = tmp_path / "test_ui.db"
+    db_url = f"sqlite:///{db_file}"
+    monkeypatch.setenv("DATABASE_URL", db_url)
+    test_engine = create_engine(db_url, connect_args={"check_same_thread": False})
+    monkeypatch.setattr("peptide_extractor.db.database.engine", test_engine)
+    monkeypatch.setattr("peptide_extractor.db.database.DATABASE_URL", db_url)
+    monkeypatch.setattr("ui.backend.DATABASE_URL", db_url)
+    init_db(test_engine)
+
+    with get_session_context(db_engine=test_engine) as s:
+        s.add(
+            PaperMetadata(
+                doi="10.1000/test1",
+                pmid="123456",
+                title="Test Peptide Paper",
+                abstract="Fmoc-FF forms hydrogels.",
+                status=PaperStatus.USABLE,
+                is_open_access=True,
+            )
+        )
+        s.commit()
+
+    return db_file, test_engine
+
+
+def test_api_health_and_db_stats_and_records(temp_db):
+    client = TestClient(api.app)
+
+    r_health = client.get("/health")
+    assert r_health.status_code == 200
+    assert r_health.json() == {"status": "ok"}
+
+    r_stats = client.get("/db/stats")
+    assert r_stats.status_code == 200
+    stats = r_stats.json()
+    assert stats["tables"]["paper_metadata"]["total"] == 1
+    assert stats["tables"]["paper_metadata"]["by_status"]["usable"] == 1
+
+    r_rows = client.post(
+        "/db/records/paper_metadata",
+        json={"limit": 10, "offset": 0, "filters": {"pmid": "123456"}},
+    )
+    assert r_rows.status_code == 200
+    data = r_rows.json()
+    assert data["count"] == 1
+    assert data["rows"][0]["title"] == "Test Peptide Paper"
+
+
+def test_api_key_enforcement(monkeypatch, temp_db):
+    monkeypatch.setenv("PEPTIDE_API_KEY", "secret-token")
+    client = TestClient(api.app)
+
+    assert client.get("/db/stats").status_code == 401
+    assert (
+        client.get("/db/stats", headers={"X-API-Key": "wrong"}).status_code == 401
+    )
+    assert (
+        client.get("/db/stats", headers={"X-API-Key": "secret-token"}).status_code
+        == 200
+    )
+
+
+def test_job_runner_captures_logs(temp_db):
+    client = TestClient(api.app)
+    resp = client.post("/jobs/step/deduplicate", json={"params": {"normalize": True}})
+    assert resp.status_code == 200
+    job_id = resp.json()["id"]
+
+    for _ in range(30):
+        j = client.get(f"/jobs/{job_id}").json()
+        if j["status"] in {"completed", "failed"}:
+            break
+        time.sleep(0.1)
+
+    assert j["status"] == "completed"
+    assert j["result"]["step"] == "deduplicate"
+    assert any("Started 'step:deduplicate'" in line for line in j["logs"])
+
+
+def test_pdf_ingestion_endpoint(temp_db):
+    client = TestClient(api.app)
+    with patch(
+        "ui.backend.ingest_manual_pdfs",
+        return_value={
+            "uploaded": [1],
+            "skipped": [],
+            "unmatched": [],
+            "failed": [],
+            "run_identifier": 999,
+        },
+    ) as mock_ingest:
+        resp = client.post(
+            "/pdfs/ingest",
+            files=[("files", ("123456.pdf", b"%PDF-1.4 dummy", "application/pdf"))],
+            data={"skip_existing_content": "true", "cache_locally": "false", "source": "manual"},
+        )
+        assert resp.status_code == 200
+        job_id = resp.json()["id"]
+
+        for _ in range(30):
+            j = client.get(f"/jobs/{job_id}").json()
+            if j["status"] in {"completed", "failed"}:
+                break
+            time.sleep(0.1)
+
+        assert j["status"] == "completed"
+        assert j["result"]["uploaded"] == [1]
+        mock_ingest.assert_called_once()
+
+
+def test_sync_db_subprocess_job(tmp_path: Path):
+    script = tmp_path / "sync_db.py"
+    script.write_text('print("syncing database ok")\n', encoding="utf-8")
+
+    client = TestClient(api.app)
+    resp = client.post("/sync-db/run", json={"script_path": str(script)})
+    assert resp.status_code == 200
+    job_id = resp.json()["id"]
+
+    for _ in range(30):
+        j = client.get(f"/jobs/{job_id}").json()
+        if j["status"] in {"completed", "failed"}:
+            break
+        time.sleep(0.1)
+
+    assert j["status"] == "completed"
+    assert any("syncing database ok" in line for line in j["logs"])
+
+
+def test_db_download_and_upload(temp_db):
+    db_file, _ = temp_db
+    client = TestClient(api.app)
+
+    dl = client.get("/db/download")
+    assert dl.status_code == 200
+    assert dl.content.startswith(b"SQLite format 3\x00")
+
+    bad_up = client.post(
+        "/db/upload",
+        files={"file": ("bad.db", b"not-sqlite", "application/octet-stream")},
+    )
+    assert bad_up.status_code == 400
+
+    good_up = client.post(
+        "/db/upload",
+        files={"file": ("backup.db", dl.content, "application/octet-stream")},
+    )
+    assert good_up.status_code == 200
+    assert good_up.json()["status"] == "replaced"
+    assert good_up.json()["backup_path"] is not None
+
+
+def test_local_pipeline_client(temp_db):
+    local_client = PipelineClient(mode="local")
+    assert local_client.health()["status"] == "ok"
+    stats = local_client.get_db_stats()
+    assert stats["tables"]["paper_metadata"]["total"] == 1
+    res = local_client.query_records("paper_metadata", limit=5)
+    assert res["count"] == 1
