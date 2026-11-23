@@ -536,6 +536,56 @@ def _build_filter_kwargs(params: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _execute_step(step_name: str, params: Dict[str, Any]) -> Dict[str, Any]:
+    step = step_name.strip().lower()
+    run_id = params.get("run_identifier")
+    run_identifier = int(run_id) if run_id not in (None, "") else int(time.time())
+    log_to_file = bool(params.get("log_to_file", True))
+
+    if step == "visualization":
+        from peptide_extractor.logging_utils import step_logger
+        from peptide_extractor.visualization import visualize
+
+        filter_kwargs = _build_filter_kwargs(params)
+        ops = params.get("operations") or []
+        db_path = params.get("db_path")
+        target_engine = _get_target_engine(db_path)
+        output_dir = (
+            Path(params["output_dir"])
+            if params.get("output_dir")
+            else get_project_root() / "data" / "diagrams" / str(run_identifier)
+        )
+        limit = filter_kwargs.pop("limit", None)
+        offset = filter_kwargs.pop("offset", 0)
+
+        with step_logger("visualization", run_identifier, enabled=log_to_file):
+            init_db(target_engine)
+            with get_session_context(db_engine=target_engine) as session:
+                results = visualize(
+                    operations=ops,
+                    model=params.get("model", "peptide_entry"),
+                    session=session,
+                    limit=limit,
+                    offset=offset,
+                    output_dir=output_dir,
+                    save=bool(params.get("save", True)),
+                    show=False,
+                    file_format=params.get("file_format", "png"),
+                    dpi=int(params.get("dpi", 150)),
+                    **filter_kwargs,
+                )
+        return {
+            "step": "visualization",
+            "run_identifier": run_identifier,
+            "diagrams": [
+                {
+                    "operation": op.value,
+                    "record_count": res.record_count,
+                    "output_path": str(res.output_path) if res.output_path else None,
+                }
+                for op, res in results.items()
+            ],
+        }
+
     from peptide_extractor.pipeline import (
         NCBI_SEARCH_QUERIES_V3,
         NCBI_SEARCH_QUERY_V1,
@@ -550,7 +600,6 @@ def _execute_step(step_name: str, params: Dict[str, Any]) -> Dict[str, Any]:
         run_bulk_relevance_screening,
         run_evaluation,
         run_peptide_extraction,
-        run_visualization,
     )
     from peptide_extractor.providers import (
         NCBIProvider,
@@ -558,13 +607,9 @@ def _execute_step(step_name: str, params: Dict[str, Any]) -> Dict[str, Any]:
         ScopusProvider,
     )
 
-    step = step_name.strip().lower()
     ncbi_api_key = os.getenv("NCBI_API_KEY")
     open_alex_api_key = os.getenv("OPEN_ALEX_API_KEY")
     scopus_api_key = os.getenv("SCOPUS_API_KEY")
-    run_id = params.get("run_identifier")
-    run_identifier = int(run_id) if run_id not in (None, "") else int(time.time())
-    log_to_file = bool(params.get("log_to_file", True))
 
     if step == "search":
         source = params.get("source", "ncbi").lower()
@@ -711,34 +756,6 @@ def _execute_step(step_name: str, params: Dict[str, Any]) -> Dict[str, Any]:
             "step": "evaluation",
             "failed_entry_ids": fails,
             "run_identifier": rid,
-        }
-
-    if step == "visualization":
-        filter_kwargs = _build_filter_kwargs(params)
-        ops = params.get("operations") or []
-        results, rid = run_visualization(
-            operations=ops,
-            model=params.get("model", "peptide_entry"),
-            output_dir=params.get("output_dir") or None,
-            save=bool(params.get("save", True)),
-            show=False,
-            file_format=params.get("file_format", "png"),
-            dpi=int(params.get("dpi", 150)),
-            viz_run_identifier=run_identifier,
-            log_to_file=log_to_file,
-            **filter_kwargs,
-        )
-        return {
-            "step": "visualization",
-            "run_identifier": rid,
-            "diagrams": [
-                {
-                    "operation": op.value,
-                    "record_count": res.record_count,
-                    "output_path": str(res.output_path) if res.output_path else None,
-                }
-                for op, res in results.items()
-            ],
         }
 
     raise ValueError(f"Unknown pipeline step: '{step_name}'")

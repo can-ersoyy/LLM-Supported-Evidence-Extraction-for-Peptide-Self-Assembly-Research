@@ -797,11 +797,18 @@ def page_results(client: PipelineClient) -> None:
                             "operations": selected_ops,
                             "run_identifier": viz_run_filter or None,
                             "limit": viz_limit or None,
+                            "db_path": st.session_state.get("session_db_path"),
                         },
                     )
                     _submit_and_track(job)
                 except Exception as exc:
                     st.error(str(exc))
+
+        if st.session_state.get("active_job_id"):
+            with st.expander("Plot Generation Logs", expanded=True):
+                _render_job_log_window(
+                    client, st.session_state.get("active_job_id"), key_prefix="viz_log"
+                )
 
         st.divider()
         st.subheader("Saved Diagrams")
