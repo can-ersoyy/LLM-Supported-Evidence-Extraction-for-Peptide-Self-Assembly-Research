@@ -409,6 +409,7 @@ def fetch_paper_fulltexts(
     ncbi_provider: NCBIProvider = None,
     open_alex_provider: OpenAlexProvider = None,
     skip_existing_content: bool = True,
+    content_format: str = "xml",
     run_identifier: Optional[int] = None,
     log_to_file: Optional[bool] = None,
     max_retries: int = 0,
@@ -419,6 +420,12 @@ def fetch_paper_fulltexts(
     if run_identifier is None:
         run_identifier = int(time.time())
 
+    normalized_format = content_format.lower().strip()
+    if normalized_format not in {"xml", "pdf"}:
+        raise ValueError(
+            f"Unsupported content_format '{content_format}'. Expected 'xml' or 'pdf'."
+        )
+
     def _fetch(session: Session):
         papers_to_retrieve = get_paper_metadatas(**kwargs, session=session)
         logger.info(papers_to_retrieve)
@@ -428,29 +435,36 @@ def fetch_paper_fulltexts(
         failed_paper_ids = []
 
         for paper in papers_to_retrieve:
-            paper_content: Optional[PaperContent] = get_paper_content_by_paper_id(
-                paper.id, session
+            existing_content: Optional[PaperContent] = get_paper_content_by_paper_id(
+                paper.id, session, format=normalized_format
             )
 
-            if skip_existing_content and paper_content is not None:
-                logger.info(f"Paper {paper.id} already has content")
+            if skip_existing_content and existing_content is not None:
+                logger.info(f"Paper {paper.id} already has {normalized_format} content")
                 continue
 
+            paper_content: Optional[PaperContent] = None
+
             # normally it is better to batch retrieve from pubmed but for now just singular fetch
-            try:
-                paper_contents, _, _ = retry_on_external_error(
-                    ncbi_provider.fetch,
-                    [paper],
-                    max_retries=max_retries,
-                    retry_delay=retry_delay,
-                    context=f"ncbi fetch paper {paper.id}",
-                )
-                paper_content = paper_contents[0]
-            except Exception as e:
-                logger.info(
-                    f"Failed to retrieve fulltext for paper {paper.id} ({paper.doi}): {e}"
-                )
-                logger.info("Trying pdf retrieval")
+            if ncbi_provider is not None:
+                try:
+                    paper_contents, _, _ = retry_on_external_error(
+                        ncbi_provider.fetch,
+                        [paper],
+                        format=normalized_format,
+                        max_retries=max_retries,
+                        retry_delay=retry_delay,
+                        context=f"ncbi fetch ({normalized_format}) paper {paper.id}",
+                    )
+                    if paper_contents:
+                        paper_content = paper_contents[0]
+                except Exception as e:
+                    logger.info(
+                        f"Failed to retrieve {normalized_format} from NCBI for paper {paper.id} ({paper.doi}): {e}"
+                    )
+
+            if paper_content is None and open_alex_provider is not None:
+                logger.info("Trying pdf retrieval via OpenAlex")
                 try:
                     paper_content = retry_on_external_error(
                         open_alex_provider.fetch,
@@ -459,7 +473,6 @@ def fetch_paper_fulltexts(
                         retry_delay=retry_delay,
                         context=f"openalex fetch paper {paper.id}",
                     )
-
                 except Exception as e:
                     logger.error(
                         f"Failed to retrieve fulltext for paper {paper.id} ({paper.doi}): {e}"
@@ -642,6 +655,7 @@ def run_peptide_extraction(
     delay_seconds: float = 2.0,
     run_identifier: Optional[int] = None,
     log_to_file: Optional[bool] = None,
+    content_format: Optional[str] = None,
     pass_pdf_directly: bool = False,
     tables_as_images: bool = False,
     images_as_images: bool = False,
@@ -657,6 +671,20 @@ def run_peptide_extraction(
     if run_identifier is None:
         run_identifier = int(time.time())
 
+    resolved_format: Optional[str] = None
+    if content_format is not None:
+        resolved_format = content_format.lower().strip()
+        if resolved_format not in {"xml", "pdf"}:
+            raise ValueError(
+                f"Unsupported content_format '{content_format}'. Expected 'xml' or 'pdf'."
+            )
+    if pass_pdf_directly:
+        if resolved_format is not None and resolved_format != "pdf":
+            raise ValueError(
+                f"pass_pdf_directly=True requires content_format='pdf' (got '{content_format}')."
+            )
+        resolved_format = "pdf"
+
     def _run(session: Session):
 
         papers_to_extract = get_paper_metadatas(session, **kwargs)
@@ -664,10 +692,16 @@ def run_peptide_extraction(
 
         for paper in papers_to_extract:
             try:
-                paper_content = get_paper_content_by_paper_id(paper.id, session)
+                paper_content = get_paper_content_by_paper_id(
+                    paper.id, session, format=resolved_format
+                )
 
                 if paper_content is None:
-                    logger.info(f"Skipping paper {paper.id}: no content")
+                    logger.info(
+                        f"Skipping paper {paper.id}: no {resolved_format or ''} content".replace(
+                            "  ", " "
+                        )
+                    )
                     continue
 
                 paper_fulltext = paper_content.get_content()
@@ -981,25 +1015,25 @@ if __name__ == "__main__":
 
     # 5. Run relevance screening
 
-    start_time = time.time()
-
+    # start_time = time.time()
     #
-
-    ## doing relevance in batches
-    from peptide_extractor.scratchpad import papers_to_relevance_check
-
-    success, fails, identifier = run_bulk_relevance_screening(
-        "llama3.2:3b",
-        "ollama",
-        delay_seconds=1,
-        batch_size=1,
-        id=papers_to_relevance_check,
-    )
-
+    ##
     #
-
-    ##success, fails, identifier = run_bulk_relevance_screening("llama4:16x17b", "ollama", delay_seconds=1, batch_size=10, id=9533, limit=5000, offset=0)
-
+    ### doing relevance in batches
+    # from peptide_extractor.scratchpad import papers_to_relevance_check
+    #
+    # success, fails, identifier = run_bulk_relevance_screening(
+    #    "llama3.2:3b",
+    #    "ollama",
+    #    delay_seconds=1,
+    #    batch_size=1,
+    #    id=papers_to_relevance_check,
+    # )
+    #
+    ##
+    #
+    ###success, fails, identifier = run_bulk_relevance_screening("llama4:16x17b", "ollama", delay_seconds=1, batch_size=10, id=9533, limit=5000, offset=0)
+    #
     #
 
     # success, fails, identifier = run_bulk_relevance_screening("gemini-3.5-flash-lite", "google", delay_seconds=4, batch_size=10, search_query=NCBI_SEARCH_QUERIES_V3, limit=5000, offset=5000)
@@ -1007,19 +1041,13 @@ if __name__ == "__main__":
     #
     # success, fails, identifier = run_bulk_relevance_screening("gemini-3.1-flash-lite", "google", delay_seconds=4, batch_size=10, search_query=papers_with_relevance_conflict, limit=400, offset=0)
 
-    end_time = time.time()
-
-    print(
-        f"Relevance Success: {success}, Fails: {fails}, Identifier: {identifier}, Time: {end_time - start_time}"
-    )
-    exit(0)
-    # 6. Fetch fulltexts
-
-    # fetch_paper_fulltexts(
-    #    ncbi_provider=ncbi_provider,
-    #    open_alex_provider=open_alex_provider,
-    #    id=papers_with_relevance_conflict,
+    # end_time = time.time()
+    #
+    # print(
+    #    f"Relevance Success: {success}, Fails: {fails}, Identifier: {identifier}, Time: {end_time - start_time}"
     # )
+    # exit(0)
+    # 6. Fetch fulltexts
 
     # from peptide_extractor.scratchpad import papers_to_extract_2
 
@@ -1076,30 +1104,46 @@ if __name__ == "__main__":
 
     # golden_papers_ids = [r.paper_id for r in get_records(PeptideEntry, run_identifier=0)]
 
-    from peptide_extractor.golden_benchmark import (
-        DEV_BENCHMARK_PMIDS,
-        benchmark_run_against_golden,
-    )
-
+    # Compare on 71/75 golden dataset papers
+    all_golden_papers = get_paper_metadatas(source_databases="SAPDB; PeptideMiner")
+    assert len(all_golden_papers) == 75
+    subset = [
+        p.id
+        for p in all_golden_papers
+        if get_paper_content_by_paper_id(p.id) is not None
+    ]
+    assert len(subset) == 71
+    print("works")
+    exit(0)
+    # method: direct pdf
     fails, identifier = run_peptide_extraction(
-        # provider="ollama",
-        # model_name="gemma4:26b",
         provider="google",
         model_name="gemini-3.5-flash-lite",
         delay_seconds=4,
-        # id=golden_papers_ids,
-        pmid=[20460796],
         tables_as_images=True,
         factored_extraction=True,
-        table_provider="ollama",
-        table_model_name="gemma4:26b",
-        # table_provider="google",
-        # table_model_name="gemini-3.5-flash-lite",
+        pass_pdf_directly=True,
+        # table_provider="ollama",
+        # table_model_name="gemma4:26b",
+        table_provider="google",
+        table_model_name="gemini-3.5-flash-lite",
+        content_format="pdf",
+        id=subset,
     )
     print(f"Fails: {fails}, Run identifier: {identifier}")
 
-    print(
-        benchmark_run_against_golden(
-            llm_run_identifier=identifier, pmids=[20460796]
-        ).format_report()
+    # method: 2-pass + table as image
+    fails, identifier = run_peptide_extraction(
+        provider="google",
+        model_name="gemini-3.5-flash-lite",
+        delay_seconds=4,
+        tables_as_images=True,
+        factored_extraction=True,
+        # table_provider="ollama",
+        # table_model_name="gemma4:26b",
+        table_provider="google",
+        table_model_name="gemini-3.5-flash-lite",
+        content_format="pdf",
+        id=subset,
     )
+    print(f"Fails: {fails}, Run identifier: {identifier}")

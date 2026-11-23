@@ -67,7 +67,11 @@ def get_paper_contents(
 def get_paper_content_by_paper_id(
     paper_id: int,
     session: Optional[Session] = None,
+    format: Optional[str] = None,
 ) -> Optional[PaperContent]:
-    """Retrieve a PaperContent record by paper ID."""
-    records = get_records(PaperContent, paper_id=paper_id, session=session)
+    """Retrieve a PaperContent record by paper ID, optionally filtered by format."""
+    filters: dict[str, Any] = {"paper_id": paper_id}
+    if format is not None:
+        filters["format"] = format
+    records = get_records(PaperContent, session=session, **filters)
     return records[0] if records else None

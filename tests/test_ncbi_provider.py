@@ -533,3 +533,110 @@ class TestNCBIProviderFetch:
         assert successful_ids == []
         assert failed_ids == [99]
         mock_get.assert_not_called()
+
+    @patch("peptide_extractor.providers.upload_pdf")
+    @patch("peptide_extractor.providers.requests.get")
+    def test_fetch_pdf_s3_success(self, mock_get, mock_upload_pdf, ncbi_provider):
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.headers = {"Content-Type": "application/pdf"}
+        mock_resp.content = b"%PDF-1.4 fake pdf bytes"
+        mock_get.return_value = mock_resp
+
+        mock_upload_pdf.return_value = "https://myaccount.blob.core.windows.net/papers/pdf/10_1021_acsnano_1c01792.pdf"
+
+        paper = PaperMetadata(
+            id=42,
+            pmcid="PMC70003",
+            doi="10.1021/acsnano.1c01792",
+            title="Designed self-assembling peptide hydrogels",
+            is_open_access=True,
+            status=PaperStatus.USABLE,
+            dataset_subset=DatasetSubset.SCRAPED,
+        )
+
+        contents, successful_ids, failed_ids = ncbi_provider.fetch([paper], format="pdf")
+
+        assert len(contents) == 1
+        assert contents[0].paper_id == 42
+        assert contents[0].format == "pdf"
+        assert contents[0].source == "pmc"
+        assert contents[0].pdf_url == "https://pmc-oa-opendata.s3.amazonaws.com/PMC70003.1/PMC70003.1.pdf"
+        assert (
+            contents[0].blob_url
+            == "https://myaccount.blob.core.windows.net/papers/pdf/10_1021_acsnano_1c01792.pdf"
+        )
+        assert successful_ids == [42]
+        assert failed_ids == []
+        mock_upload_pdf.assert_called_once_with(
+            pdf_content=b"%PDF-1.4 fake pdf bytes",
+            doi="10_1021_acsnano_1c01792",
+        )
+
+    @patch("peptide_extractor.providers.upload_pdf")
+    @patch("peptide_extractor.providers.requests.get")
+    def test_fetch_pdf_fallback_to_pmc_web(self, mock_get, mock_upload_pdf, ncbi_provider):
+        s3_resp = MagicMock()
+        s3_resp.status_code = 404
+        s3_resp.headers = {}
+        s3_resp.content = b"Not Found"
+
+        web_resp = MagicMock()
+        web_resp.status_code = 200
+        web_resp.headers = {"Content-Type": "application/pdf"}
+        web_resp.content = b"%PDF-1.7 pmc web pdf"
+
+        mock_get.side_effect = [s3_resp, web_resp]
+        mock_upload_pdf.return_value = "https://myaccount.blob.core.windows.net/papers/pdf/PMC70003.pdf"
+
+        paper = PaperMetadata(
+            id=43,
+            pmcid="70003",
+            doi=None,
+            title="No DOI paper",
+            is_open_access=True,
+            status=PaperStatus.USABLE,
+            dataset_subset=DatasetSubset.SCRAPED,
+        )
+
+        contents, successful_ids, failed_ids = ncbi_provider.fetch([paper], format="pdf")
+
+        assert len(contents) == 1
+        assert contents[0].format == "pdf"
+        assert contents[0].pdf_url == "https://pmc.ncbi.nlm.nih.gov/articles/PMC70003/pdf/"
+        assert successful_ids == [43]
+        assert failed_ids == []
+        mock_upload_pdf.assert_called_once_with(
+            pdf_content=b"%PDF-1.7 pmc web pdf",
+            doi="PMC70003",
+        )
+
+    @patch("peptide_extractor.providers.upload_pdf")
+    @patch("peptide_extractor.providers.requests.get")
+    def test_fetch_pdf_rejects_non_pdf_response(self, mock_get, mock_upload_pdf, ncbi_provider):
+        html_resp = MagicMock()
+        html_resp.status_code = 200
+        html_resp.headers = {"Content-Type": "text/html"}
+        html_resp.content = b"<!DOCTYPE html><html>Not a PDF</html>"
+        mock_get.return_value = html_resp
+
+        paper = PaperMetadata(
+            id=44,
+            pmcid="PMC70004",
+            doi="10.1000/html",
+            title="HTML landing page",
+            is_open_access=True,
+            status=PaperStatus.USABLE,
+            dataset_subset=DatasetSubset.SCRAPED,
+        )
+
+        contents, successful_ids, failed_ids = ncbi_provider.fetch([paper], format="pdf")
+
+        assert contents == []
+        assert successful_ids == []
+        assert failed_ids == [44]
+        mock_upload_pdf.assert_not_called()
+
+    def test_fetch_invalid_format_raises(self, ncbi_provider):
+        with pytest.raises(ValueError, match="Unsupported format"):
+            ncbi_provider.fetch([], format="txt")

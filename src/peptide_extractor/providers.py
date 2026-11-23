@@ -332,9 +332,101 @@ class NCBIProvider(BaseProvider):
 
         return paper_metadatas
 
-    def fetch(
-        self, paper_metadatas: Sequence[PaperMetadata], db="pmc", batch_size=10
+    @staticmethod
+    def _normalize_pmcid(pmcid: Optional[str]) -> Optional[str]:
+        if not pmcid or not str(pmcid).strip():
+            return None
+        cleaned = str(pmcid).strip()
+        if not cleaned.upper().startswith("PMC"):
+            cleaned = f"PMC{cleaned}"
+        return cleaned
+
+    @staticmethod
+    def _is_pdf_response(response: requests.Response) -> bool:
+        content_type = str(response.headers.get("Content-Type", "")).lower()
+        return bool(response.content) and (
+            response.content.lstrip().startswith(b"%PDF")
+            or "application/pdf" in content_type
+        )
+
+    def _download_pmc_pdf(self, pmcid: str) -> Optional[Tuple[bytes, str]]:
+        """Attempt to download a PDF for a PMCID from PMC Open Data S3 or PMC web."""
+        candidate_urls = [
+            f"https://pmc-oa-opendata.s3.amazonaws.com/{pmcid}.1/{pmcid}.1.pdf",
+            f"https://pmc.ncbi.nlm.nih.gov/articles/{pmcid}/pdf/",
+        ]
+        headers = {
+            "User-Agent": "peptide-extractor/1.0 (https://github.com/peptide-extractor)"
+        }
+        for url in candidate_urls:
+            try:
+                response = requests.get(url, headers=headers, timeout=30)
+                time.sleep(0.2)
+                if response.status_code == 200 and self._is_pdf_response(response):
+                    return response.content, url
+            except requests.RequestException as e:
+                logger.debug(f"PDF fetch attempt failed for {pmcid} at {url}: {e}")
+        return None
+
+    def _fetch_pdfs(
+        self, paper_metadatas: Sequence[PaperMetadata], db: str = "pmc"
     ) -> Tuple[List[PaperContent], List[int], List[int]]:
+        succesful_paper_ids: list[int] = []
+        paper_contents: List[PaperContent] = []
+
+        for paper_metadata in paper_metadatas:
+            pmcid = self._normalize_pmcid(paper_metadata.pmcid)
+            if not pmcid:
+                continue
+
+            downloaded = self._download_pmc_pdf(pmcid)
+            if not downloaded:
+                logger.info(
+                    f"Failed to download PDF from PMC for paper {paper_metadata.id} ({pmcid})"
+                )
+                continue
+
+            pdf_bytes, pdf_url = downloaded
+            file_id = (
+                doi_to_filename(paper_metadata.doi)
+                or pmcid
+                or f"paper_{paper_metadata.id}"
+            )
+            blob_url = upload_pdf(
+                pdf_content=pdf_bytes,
+                doi=file_id,
+            )
+            paper_content = PaperContent(
+                paper_id=paper_metadata.id,
+                paper=paper_metadata,
+                blob_url=blob_url,
+                pdf_url=pdf_url,
+                format="pdf",
+                source=db,
+            )
+            paper_contents.append(paper_content)
+            succesful_paper_ids.append(paper_metadata.id)
+
+        failed_paper_ids = [
+            paper.id for paper in paper_metadatas if paper.id not in succesful_paper_ids
+        ]
+        return paper_contents, succesful_paper_ids, failed_paper_ids
+
+    def fetch(
+        self,
+        paper_metadatas: Sequence[PaperMetadata],
+        db="pmc",
+        batch_size=10,
+        format: str = "xml",
+    ) -> Tuple[List[PaperContent], List[int], List[int]]:
+        normalized_format = format.lower().strip()
+        if normalized_format == "pdf":
+            return self._fetch_pdfs(paper_metadatas, db=db)
+        if normalized_format != "xml":
+            raise ValueError(
+                f"Unsupported format '{format}' for NCBIProvider.fetch. Expected 'xml' or 'pdf'."
+            )
+
         num_records = len(paper_metadatas)
         pmcid_list = [paper.pmcid for paper in paper_metadatas]
 

@@ -163,6 +163,13 @@ def run_pipeline(config, log_to_file):
         retry_opts = {
             k: ft_cfg[k] for k in ("max_retries", "retry_delay") if k in ft_cfg
         }
+        fetch_kwargs = dict(ft_cfg.get("kwargs", {}))
+        if "content_format" in ft_cfg:
+            fetch_kwargs.setdefault("content_format", ft_cfg["content_format"])
+        elif "format" in ft_cfg:
+            fetch_kwargs.setdefault("content_format", ft_cfg["format"])
+        if "skip_existing_content" in ft_cfg:
+            fetch_kwargs.setdefault("skip_existing_content", ft_cfg["skip_existing_content"])
         with step_logger("fetch", run_identifier, enabled=step_enabled):
             logger.info("Fetching fulltexts...")
             success, fails, identifier = fetch_paper_fulltexts(
@@ -171,7 +178,7 @@ def run_pipeline(config, log_to_file):
                 run_identifier=run_identifier,
                 log_to_file=step_enabled,
                 **retry_opts,
-                **ft_cfg.get("kwargs", {}),
+                **fetch_kwargs,
             )
             logger.info(
                 f"Fetch Fulltext Success: {success}, Fails: {fails}, Identifier: {identifier}"
@@ -184,6 +191,19 @@ def run_pipeline(config, log_to_file):
         retry_opts = {
             k: ext_cfg[k] for k in ("max_retries", "retry_delay") if k in ext_cfg
         }
+        ext_kwargs = dict(ext_cfg.get("kwargs", {}))
+        for opt in (
+            "content_format",
+            "pass_pdf_directly",
+            "tables_as_images",
+            "images_as_images",
+            "table_image_layout",
+            "factored_extraction",
+            "table_provider",
+            "table_model_name",
+        ):
+            if opt in ext_cfg:
+                ext_kwargs.setdefault(opt, ext_cfg[opt])
         with step_logger("extraction", run_identifier, enabled=step_enabled):
             logger.info("Running extraction...")
             start_time = time.time()
@@ -194,7 +214,7 @@ def run_pipeline(config, log_to_file):
                 run_identifier=run_identifier,
                 log_to_file=step_enabled,
                 **retry_opts,
-                **ext_cfg.get("kwargs", {}),
+                **ext_kwargs,
             )
             end_time = time.time()
             logger.info(
