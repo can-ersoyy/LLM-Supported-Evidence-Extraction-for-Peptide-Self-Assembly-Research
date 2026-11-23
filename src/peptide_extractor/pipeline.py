@@ -94,6 +94,9 @@ def retrive_ncbi_by_query(
     delete_raw_records=True,
     run_identifier: Optional[int] = None,
     log_to_file: Optional[bool] = None,
+    use_history: bool = True,
+    max_retries: int = 0,
+    retry_delay: float = 2.0,
 ):
     """Wrapper method for doing query search on pubmed/pmc from ncbi provider."""
     if run_identifier is None:
@@ -107,7 +110,18 @@ def retrive_ncbi_by_query(
         raw_records = []
         for query in query_list:
             logger.info(f"Query: {query}")
-            raw_records.extend(ncbi_provider.search_by_query(query, db=db))
+            if isinstance(ncbi_provider, NCBIProvider):
+                raw_records.extend(
+                    ncbi_provider.search_by_query(
+                        query,
+                        db=db,
+                        use_history=use_history,
+                        max_retries=max_retries,
+                        retry_delay=retry_delay,
+                    )
+                )
+            else:
+                raw_records.extend(ncbi_provider.search_by_query(query, db=db))
         ncbi_metadatas = ncbi_provider.parse_raw_search_records(raw_records)
 
         for metadata in ncbi_metadatas:
@@ -406,82 +420,147 @@ def run_bulk_relevance_screening(
 
 def fetch_paper_fulltexts(
     session: Optional[Session] = None,
-    ncbi_provider: NCBIProvider = None,
-    open_alex_provider: OpenAlexProvider = None,
+    ncbi_provider: Optional[NCBIProvider] = None,
+    open_alex_provider: Optional[OpenAlexProvider] = None,
     skip_existing_content: bool = True,
     run_identifier: Optional[int] = None,
     log_to_file: Optional[bool] = None,
+    ncbi_batch_size: int = 20,
+    openalex_batch_size: int = 50,
     max_retries: int = 0,
     retry_delay: float = 2.0,
     **kwargs,
 ):
-    """Retrieve fulltexts according to db query"""
+    """Retrieve fulltexts in bulk according to db query."""
     if run_identifier is None:
         run_identifier = int(time.time())
+
+    def _save_paper_contents(
+        contents: Sequence[Optional[PaperContent]],
+        paper_by_id: dict[int, PaperMetadata],
+        saved_ids: set[int],
+    ) -> int:
+        saved = 0
+        for paper_content in contents:
+            if paper_content is None:
+                continue
+            try:
+                paper_content.run_identifier = run_identifier
+                session.add(paper_content)
+                session.commit()
+                saved += 1
+                if paper_content.paper_id is not None:
+                    saved_ids.add(paper_content.paper_id)
+            except Exception as e:
+                session.rollback()
+                paper = (
+                    paper_by_id.get(paper_content.paper_id)
+                    if paper_content.paper_id is not None
+                    else None
+                )
+                doi_label = paper.doi if paper is not None else None
+                logger.error(
+                    f"Failed to save fulltext for paper {paper_content.paper_id} ({doi_label}): {e}"
+                )
+        return saved
 
     def _fetch(session: Session):
         papers_to_retrieve = get_paper_metadatas(**kwargs, session=session)
         logger.info(papers_to_retrieve)
 
-        success_count = 0
-        fail_count = 0
-        failed_paper_ids = []
-
+        pending_papers: List[PaperMetadata] = []
         for paper in papers_to_retrieve:
-            paper_content: Optional[PaperContent] = get_paper_content_by_paper_id(
+            existing_content: Optional[PaperContent] = get_paper_content_by_paper_id(
                 paper.id, session
             )
-
-            if skip_existing_content and paper_content is not None:
+            if skip_existing_content and existing_content is not None:
                 logger.info(f"Paper {paper.id} already has content")
                 continue
+            pending_papers.append(paper)
 
-            # normally it is better to batch retrieve from pubmed but for now just singular fetch
+        paper_by_id = {p.id: p for p in pending_papers if p.id is not None}
+        saved_paper_ids: set[int] = set()
+        success_count = 0
+
+        # 1. Bulk fetch XML fulltexts from NCBI PMC
+        if ncbi_provider is not None and pending_papers:
+            ncbi_contents: List[PaperContent] = []
             try:
-                paper_contents, _, _ = retry_on_external_error(
-                    ncbi_provider.fetch,
-                    [paper],
-                    max_retries=max_retries,
-                    retry_delay=retry_delay,
-                    context=f"ncbi fetch paper {paper.id}",
-                )
-                paper_content = paper_contents[0]
-            except Exception as e:
-                logger.info(f"Failed to retrieve fulltext for paper {paper.id} ({paper.doi}): {e}")
-                logger.info("Trying pdf retrieval")
-                try:
-                    paper_content = retry_on_external_error(
-                        open_alex_provider.fetch,
-                        paper,
+                if isinstance(ncbi_provider, NCBIProvider):
+                    ncbi_candidates = [
+                        p
+                        for p in pending_papers
+                        if p.pmcid and str(p.pmcid).strip()
+                    ]
+                    if ncbi_candidates:
+                        ncbi_contents, _, _ = ncbi_provider.fetch(
+                            ncbi_candidates,
+                            batch_size=ncbi_batch_size,
+                            max_retries=max_retries,
+                            retry_delay=retry_delay,
+                        )
+                else:
+                    ncbi_contents, _, _ = retry_on_external_error(
+                        ncbi_provider.fetch,
+                        pending_papers,
                         max_retries=max_retries,
                         retry_delay=retry_delay,
-                        context=f"openalex fetch paper {paper.id}",
+                        context="ncbi bulk fetch",
                     )
+            except Exception as e:
+                logger.info(f"Failed bulk NCBI fulltext retrieval: {e}")
 
-                except Exception as e:
-                    logger.error(f"Failed to retrieve fulltext for paper {paper.id} ({paper.doi}): {e}")
+            success_count += _save_paper_contents(
+                ncbi_contents, paper_by_id, saved_paper_ids
+            )
 
-            if paper_content is not None:
-                try:
-                    paper_content.run_identifier = run_identifier
-                    session.add(paper_content)
-                    session.commit()
-                    success_count += 1
-                except Exception as e:
-                    session.rollback()
-                    fail_count += 1
-                    failed_paper_ids.append(paper.id)
-                    logger.error(
-                        f"Failed to save fulltext for paper {paper.id} ({paper.doi}): {e}"
-                    )
+        # 2. Fall back to OpenAlex PDF retrieval for papers not resolved via NCBI
+        remaining_papers = [
+            p for p in pending_papers if p.id not in saved_paper_ids
+        ]
+        if open_alex_provider is not None and remaining_papers:
+            logger.info(
+                f"Trying pdf retrieval via OpenAlex for {len(remaining_papers)} paper(s)"
+            )
+            if isinstance(open_alex_provider, OpenAlexProvider):
+                oa_contents, _, _ = open_alex_provider.fetch_batch(
+                    remaining_papers,
+                    batch_size=openalex_batch_size,
+                    max_retries=max_retries,
+                    retry_delay=retry_delay,
+                )
+                success_count += _save_paper_contents(
+                    oa_contents, paper_by_id, saved_paper_ids
+                )
             else:
-                fail_count += 1
-                failed_paper_ids.append(paper.id)
+                for paper in remaining_papers:
+                    paper_content = None
+                    try:
+                        paper_content = retry_on_external_error(
+                            open_alex_provider.fetch,
+                            paper,
+                            max_retries=max_retries,
+                            retry_delay=retry_delay,
+                            context=f"openalex fetch paper {paper.id}",
+                        )
+                    except Exception as e:
+                        logger.error(
+                            f"Failed to retrieve fulltext for paper {paper.id} ({paper.doi}): {e}"
+                        )
+                    if paper_content is not None:
+                        success_count += _save_paper_contents(
+                            [paper_content], paper_by_id, saved_paper_ids
+                        )
+
+        failed_paper_ids = [
+            paper.id for paper in pending_papers if paper.id not in saved_paper_ids
+        ]
+        fail_count = len(failed_paper_ids)
+        for paper in pending_papers:
+            if paper.id not in saved_paper_ids:
                 logger.error(
                     f"Failed to retrieve fulltext for paper {paper.id} ({paper.doi}): no content returned"
                 )
-
-            time.sleep(1)
 
         logger.info(f"Success: {success_count}, Fail: {fail_count}")
         if failed_paper_ids:

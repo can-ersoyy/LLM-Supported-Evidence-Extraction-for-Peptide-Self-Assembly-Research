@@ -91,6 +91,9 @@ def run_pipeline(config, log_to_file):
         search_cfg = cfg.get("search", {})
         run_identifier = search_cfg.get("run_identifier") or int(time.time())
         step_enabled = is_step_log_enabled("search")
+        retry_opts = {
+            k: search_cfg[k] for k in ("max_retries", "retry_delay") if k in search_cfg
+        }
         with step_logger("search", run_identifier, enabled=step_enabled):
             logger.info("Running query search...")
             queries = search_cfg.get("queries", [])
@@ -101,6 +104,8 @@ def run_pipeline(config, log_to_file):
                 query_list=queries,
                 run_identifier=run_identifier,
                 log_to_file=step_enabled,
+                use_history=search_cfg.get("use_history", True),
+                **retry_opts,
             )
 
     if "deduplicate" in steps:
@@ -163,6 +168,13 @@ def run_pipeline(config, log_to_file):
         retry_opts = {
             k: ft_cfg[k] for k in ("max_retries", "retry_delay") if k in ft_cfg
         }
+        batch_opts = {}
+        if "ncbi_batch_size" in ft_cfg or "batch_size" in ft_cfg:
+            batch_opts["ncbi_batch_size"] = ft_cfg.get(
+                "ncbi_batch_size", ft_cfg.get("batch_size")
+            )
+        if "openalex_batch_size" in ft_cfg:
+            batch_opts["openalex_batch_size"] = ft_cfg["openalex_batch_size"]
         with step_logger("fetch", run_identifier, enabled=step_enabled):
             logger.info("Fetching fulltexts...")
             success, fails, identifier = fetch_paper_fulltexts(
@@ -170,6 +182,7 @@ def run_pipeline(config, log_to_file):
                 open_alex_provider=open_alex_provider,
                 run_identifier=run_identifier,
                 log_to_file=step_enabled,
+                **batch_opts,
                 **retry_opts,
                 **ft_cfg.get("kwargs", {}),
             )

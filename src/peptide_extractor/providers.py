@@ -1,10 +1,15 @@
 import logging
+import os
 
 logger = logging.getLogger(__name__)
-from peptide_extractor.utils import convert_pmc_to_pmid_batch
+from peptide_extractor.utils import (
+    convert_pmc_to_pmid_batch,
+    doi_to_filename,
+    normalize_doi,
+    retry_on_external_error,
+)
 from peptide_extractor.db.raw_provider_record import save_raw_provider_record
 from peptide_extractor.db.raw_provider_record import RawProviderRecord
-from peptide_extractor.utils import doi_to_filename
 from abc import ABC, abstractmethod
 from typing import List, Optional, Sequence, Tuple
 
@@ -52,8 +57,60 @@ class BaseProvider(ABC):
 class NCBIProvider(BaseProvider):
     BASE_URL = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/"
 
-    def __init__(self, api_key: Optional[str] = None, batch_size: int = 100):
+    def __init__(
+        self,
+        api_key: Optional[str] = None,
+        batch_size: int = 100,
+        rate_limit_delay: Optional[float] = None,
+    ):
         super().__init__(api_key, batch_size)
+        # NCBI allows 10 req/s with an API key (0.11s) and 3 req/s without (0.35s)
+        self.rate_limit_delay = (
+            rate_limit_delay
+            if rate_limit_delay is not None
+            else (0.11 if api_key else 0.35)
+        )
+        self._last_request_time: Optional[float] = None
+
+    def _wait_for_rate_limit(self) -> None:
+        if self._last_request_time is not None and self.rate_limit_delay > 0:
+            elapsed = time.monotonic() - self._last_request_time
+            remaining = self.rate_limit_delay - elapsed
+            if remaining > 0:
+                time.sleep(remaining)
+        self._last_request_time = time.monotonic()
+
+    def _get_with_retry(
+        self,
+        url: str,
+        params: dict,
+        max_retries: int = 0,
+        retry_delay: float = 2.0,
+        context: str = "",
+    ) -> requests.Response:
+        def _do_get() -> requests.Response:
+            self._wait_for_rate_limit()
+            response = requests.get(url, params=params)
+            response.raise_for_status()
+            return response
+
+        return retry_on_external_error(
+            _do_get,
+            max_retries=max_retries,
+            retry_delay=retry_delay,
+            context=context,
+        )
+
+    @staticmethod
+    def _normalize_pmcid(pmcid: Optional[str]) -> Optional[str]:
+        if not pmcid:
+            return None
+        cleaned = str(pmcid).replace("pmc-id:", "").replace(";", "").strip()
+        if not cleaned:
+            return None
+        if not cleaned.upper().startswith("PMC"):
+            return f"PMC{cleaned}"
+        return f"PMC{cleaned[3:]}"
 
     def extract_match_count(self, response):
         obj = json.loads(response)
@@ -63,13 +120,87 @@ class NCBIProvider(BaseProvider):
         obj = json.loads(response)
         return obj["esearchresult"]["idlist"]
 
-    def search_by_query(self, query: str, db="pubmed") -> List[RawProviderRecord]:
+    def search_by_query(
+        self,
+        query: str,
+        db: str = "pubmed",
+        use_history: bool = False,
+        max_retries: int = 0,
+        retry_delay: float = 2.0,
+    ) -> List[RawProviderRecord]:
         """
         The usage of efetch here is to retrieve the abstract and title of the
-        papers for metadata object before retrieving the fulltext. Hence db=pubmed
+        papers for metadata object before retrieving the fulltext. Hence db=pubmed.
+        When ``use_history=True`` and ``db=="pubmed"``, uses NCBI Entrez WebEnv/query_key
+        to page ``efetch`` directly without per-batch ``esearch`` round-trips.
         """
-
         results: list[RawProviderRecord] = []
+
+        if use_history and db == "pubmed":
+            init_params = {
+                "term": query,
+                "retmax": 0,
+                "db": db,
+                "retmode": "json",
+                "usehistory": "y",
+                "api_key": self.api_key,
+            }
+            try:
+                response = self._get_with_retry(
+                    f"{self.BASE_URL}esearch.fcgi",
+                    params=init_params,
+                    max_retries=max_retries,
+                    retry_delay=retry_delay,
+                    context="ncbi esearch history init",
+                )
+            except Exception as e:
+                logger.info(f"Error: {e}")
+                return []
+
+            esearch_res = json.loads(response.content).get("esearchresult", {})
+            matches = int(esearch_res.get("count", 0))
+            web_env = esearch_res.get("webenv")
+            query_key = esearch_res.get("querykey")
+
+            if matches == 0:
+                return []
+
+            if web_env and query_key:
+                for index_counter in range(0, matches, self.batch_size):
+                    try:
+                        fetch_params = {
+                            "db": "pubmed",
+                            "retmode": "xml",
+                            "WebEnv": web_env,
+                            "query_key": query_key,
+                            "retstart": index_counter,
+                            "retmax": self.batch_size,
+                            "api_key": self.api_key,
+                        }
+                        fetch_res = self._get_with_retry(
+                            f"{self.BASE_URL}efetch.fcgi",
+                            params=fetch_params,
+                            max_retries=max_retries,
+                            retry_delay=retry_delay,
+                            context=f"ncbi efetch history batch {index_counter}",
+                        )
+                        root = ET.fromstring(fetch_res.content)
+                        for article_elem in root:
+                            xml_str = ET.tostring(article_elem, encoding="unicode")
+                            record = RawProviderRecord(
+                                provider="ncbi",
+                                search_query=query,
+                                raw_data={"xml": xml_str},
+                            )
+                            save_raw_provider_record(record)
+                            results.append(record)
+                    except Exception as e:
+                        logger.info(
+                            f"Error processing batch {index_counter}: {e}. Skipping it."
+                        )
+                        continue
+                return results
+
         params = {
             "term": query,
             "retmax": 1,
@@ -80,39 +211,42 @@ class NCBIProvider(BaseProvider):
 
         # initial request to retrieve query match count
         try:
-            response = requests.get(f"{self.BASE_URL}esearch.fcgi", params=params)
-            response.raise_for_status()
+            response = self._get_with_retry(
+                f"{self.BASE_URL}esearch.fcgi",
+                params=params,
+                max_retries=max_retries,
+                retry_delay=retry_delay,
+                context="ncbi esearch count",
+            )
         except Exception as e:
             logger.info(f"Error: {e}")
             return []
 
         matches = int(self.extract_match_count(response.content))
-        time.sleep(0.1)
 
         for index_counter in range(0, matches, self.batch_size):
             try:
-                params = {
+                batch_params = {
                     "term": query,
-                    "retmax": 1,
+                    "retstart": index_counter,
+                    "retmax": self.batch_size,
                     "db": db,
                     "retmode": "json",
                     "api_key": self.api_key,
                 }
 
-                params["retstart"] = index_counter
-                params["retmax"] = self.batch_size
-
                 try:
-                    response = requests.get(
-                        f"{self.BASE_URL}esearch.fcgi", params=params
+                    response = self._get_with_retry(
+                        f"{self.BASE_URL}esearch.fcgi",
+                        params=batch_params,
+                        max_retries=max_retries,
+                        retry_delay=retry_delay,
+                        context=f"ncbi esearch batch {index_counter}",
                     )
-                    response.raise_for_status()
-                    # logger.info(f"Response for batch {index_counter} retreived: {response.content}")
                 except Exception as e:
                     logger.info(f"Error: {e}")
                     continue
 
-                time.sleep(0.2)
                 id_list = self.extract_id_list(response.content)
                 logger.info(id_list)
 
@@ -124,9 +258,21 @@ class NCBIProvider(BaseProvider):
                         f"PMC{i}" if not str(i).startswith("PMC") else str(i)
                         for i in id_list
                     ]
-                    id_map = convert_pmc_to_pmid_batch(
-                        formatted_pmcids, self.api_key
-                    )  # since db is pmc, returned ids are pmc and need to be turned into pmid before using pubmed esearch
+
+                    def _convert_ids():
+                        self._wait_for_rate_limit()
+                        return convert_pmc_to_pmid_batch(
+                            email=os.getenv("NCBI_EMAIL", ""),
+                            pmc_ids=formatted_pmcids,
+                            api_key=self.api_key,
+                        )
+
+                    id_map = retry_on_external_error(
+                        _convert_ids,
+                        max_retries=max_retries,
+                        retry_delay=retry_delay,
+                        context=f"ncbi idconv batch {index_counter}",
+                    )
 
                     pmid_list = [
                         id_map[pid]["pmid"]
@@ -139,7 +285,7 @@ class NCBIProvider(BaseProvider):
 
                     id_list = pmid_list
 
-                params = {
+                fetch_params = {
                     "db": "pubmed",  # we always want to search here from pubmed since pmc returns fulltext and not only abstract
                     "retmode": "xml",
                     "api_key": self.api_key,
@@ -147,15 +293,17 @@ class NCBIProvider(BaseProvider):
                 }
 
                 try:
-                    fetch_res = requests.get(
-                        f"{self.BASE_URL}efetch.fcgi", params=params
+                    fetch_res = self._get_with_retry(
+                        f"{self.BASE_URL}efetch.fcgi",
+                        params=fetch_params,
+                        max_retries=max_retries,
+                        retry_delay=retry_delay,
+                        context=f"ncbi efetch batch {index_counter}",
                     )
-                    fetch_res.raise_for_status()
                 except Exception as e:
                     logger.info(f"Error: {e}")
                     continue
 
-                time.sleep(0.2)
                 root = ET.fromstring(fetch_res.content)
 
                 for article_elem in root:
@@ -180,6 +328,8 @@ class NCBIProvider(BaseProvider):
         id_list: List[str],
         db: str = "pubmed",
         search_query: str = "id_list_search",
+        max_retries: int = 0,
+        retry_delay: float = 2.0,
     ) -> List[RawProviderRecord]:
         results: list[RawProviderRecord] = []
         num_records = len(id_list)
@@ -197,9 +347,13 @@ class NCBIProvider(BaseProvider):
                 "id": ",".join(cleaned_batch),
             }
 
-            fetch_res = requests.get(f"{self.BASE_URL}efetch.fcgi", params=params)
-            fetch_res.raise_for_status()
-            time.sleep(0.2)
+            fetch_res = self._get_with_retry(
+                f"{self.BASE_URL}efetch.fcgi",
+                params=params,
+                max_retries=max_retries,
+                retry_delay=retry_delay,
+                context=f"ncbi search_by_ids batch {i}",
+            )
 
             root = ET.fromstring(fetch_res.content)
             for article_elem in root:
@@ -333,22 +487,25 @@ class NCBIProvider(BaseProvider):
         return paper_metadatas
 
     def fetch(
-        self, paper_metadatas: Sequence[PaperMetadata], db="pmc", batch_size=10
+        self,
+        paper_metadatas: Sequence[PaperMetadata],
+        db: str = "pmc",
+        batch_size: int = 20,
+        max_retries: int = 0,
+        retry_delay: float = 2.0,
     ) -> Tuple[List[PaperContent], List[int], List[int]]:
-        num_records = len(paper_metadatas)
-        pmcid_list = [paper.pmcid for paper in paper_metadatas]
+        papers_with_pmcid: list[tuple[PaperMetadata, str]] = []
+        for paper in paper_metadatas:
+            norm_pmcid = self._normalize_pmcid(paper.pmcid)
+            if norm_pmcid:
+                papers_with_pmcid.append((paper, norm_pmcid))
 
         succesful_paper_ids: list[int] = []
-        failed_paper_ids: list[int] = []
         paper_contents: List[PaperContent] = []
 
-        for i in range(0, num_records, batch_size):
-            batch_pmcids = pmcid_list[i : i + batch_size]
-            valid_pmcids = [
-                str(x).strip() for x in batch_pmcids if x and str(x).strip()
-            ]
-            if not valid_pmcids:
-                continue
+        for i in range(0, len(papers_with_pmcid), batch_size):
+            batch = papers_with_pmcid[i : i + batch_size]
+            valid_pmcids = [pmcid for _, pmcid in batch]
 
             params = {
                 "db": db,
@@ -357,12 +514,24 @@ class NCBIProvider(BaseProvider):
                 "id": ",".join(valid_pmcids),
             }
 
-            response = requests.get(f"{self.BASE_URL}efetch.fcgi", params=params)
-            response.raise_for_status()
-            time.sleep(0.2)
+            try:
+                response = self._get_with_retry(
+                    f"{self.BASE_URL}efetch.fcgi",
+                    params=params,
+                    max_retries=max_retries,
+                    retry_delay=retry_delay,
+                    context=f"ncbi fetch batch {i // batch_size + 1}",
+                )
+                root = ET.fromstring(response.content)
+            except Exception as e:
+                logger.error(
+                    f"NCBI fetch failed for batch {i // batch_size + 1} "
+                    f"(PMCIDs={valid_pmcids}): {e}"
+                )
+                continue
 
-            root = ET.fromstring(response.content)
             logger.info("inside")
+            batch_by_pmcid = {pmcid: paper for paper, pmcid in batch}
 
             for article_elem in root.findall("article"):
                 body = article_elem.find("body")
@@ -370,21 +539,14 @@ class NCBIProvider(BaseProvider):
                     pmcid_node = article_elem.find(
                         ".//front/article-meta/article-id[@pub-id-type='pmcid']"
                     )
-                    pmcid_text = (
-                        pmcid_node.text.strip()
+                    pmcid_text = self._normalize_pmcid(
+                        pmcid_node.text
                         if pmcid_node is not None and pmcid_node.text
                         else None
                     )
-                    if pmcid_text and not pmcid_text.upper().startswith("PMC"):
-                        pmcid_text = f"PMC{pmcid_text}"
 
-                    paper_metadata = next(
-                        (
-                            p
-                            for p in paper_metadatas[i : i + batch_size]
-                            if p.pmcid == pmcid_text
-                        ),
-                        None,
+                    paper_metadata = (
+                        batch_by_pmcid.get(pmcid_text) if pmcid_text else None
                     )
                     if paper_metadata:
                         clean_doi = doi_to_filename(paper_metadata.doi)
@@ -404,8 +566,9 @@ class NCBIProvider(BaseProvider):
                         paper_contents.append(paper_content)
                         succesful_paper_ids.append(paper_metadata.id)
 
+        successful_set = set(succesful_paper_ids)
         failed_paper_ids = [
-            paper.id for paper in paper_metadatas if paper.id not in succesful_paper_ids
+            paper.id for paper in paper_metadatas if paper.id not in successful_set
         ]
 
         return paper_contents, succesful_paper_ids, failed_paper_ids
@@ -515,8 +678,49 @@ class OpenAlexProvider:
 
     BASE_URL = "https://api.openalex.org/works/"
 
-    def __init__(self, api_key):
+    def __init__(
+        self,
+        api_key: Optional[str] = None,
+        batch_size: int = 50,
+        rate_limit_delay: Optional[float] = None,
+    ):
         self.api_key = api_key
+        self.batch_size = batch_size
+        self.rate_limit_delay = (
+            rate_limit_delay
+            if rate_limit_delay is not None
+            else (0.11 if api_key else 0.25)
+        )
+        self._last_request_time: Optional[float] = None
+
+    def _wait_for_rate_limit(self) -> None:
+        if self._last_request_time is not None and self.rate_limit_delay > 0:
+            elapsed = time.monotonic() - self._last_request_time
+            remaining = self.rate_limit_delay - elapsed
+            if remaining > 0:
+                time.sleep(remaining)
+        self._last_request_time = time.monotonic()
+
+    def _get_with_retry(
+        self,
+        url: str,
+        params: Optional[dict] = None,
+        max_retries: int = 0,
+        retry_delay: float = 2.0,
+        context: str = "",
+    ) -> requests.Response:
+        def _do_get() -> requests.Response:
+            self._wait_for_rate_limit()
+            response = requests.get(url, params=params)
+            response.raise_for_status()
+            return response
+
+        return retry_on_external_error(
+            _do_get,
+            max_retries=max_retries,
+            retry_delay=retry_delay,
+            context=context,
+        )
 
     def reconstruct_abstract(self, inverted_index: dict[str, list[int]] | None) -> str:
         """
@@ -537,9 +741,10 @@ class OpenAlexProvider:
     def get_abstract_by_doi(self, doi: str) -> str | None:
         url = f"{self.BASE_URL}https://doi.org/{doi}?select=abstract_inverted_index"
 
-        params = {"api_key": self.api_key}
-        response = requests.get(url, params)
-        response.raise_for_status()
+        params = {"api_key": self.api_key} if self.api_key else None
+        response = self._get_with_retry(
+            url, params=params, context=f"openalex abstract {doi}"
+        )
         data = response.json()
         abstract_list = data.get("abstract_inverted_index", {})
 
@@ -547,33 +752,45 @@ class OpenAlexProvider:
         return None if abstract == "None" or abstract == "" else abstract
 
     def fetch(
-        self, paper_metadata: PaperMetadata, download_pdf: bool = True
-    ) -> PaperContent:
+        self,
+        paper_metadata: PaperMetadata,
+        download_pdf: bool = True,
+        max_retries: int = 0,
+        retry_delay: float = 2.0,
+    ) -> Optional[PaperContent]:
+        if not paper_metadata.doi:
+            return None
 
         url = f"{self.BASE_URL}https://doi.org/{paper_metadata.doi}"
+        params = {"api_key": self.api_key} if self.api_key else None
 
-        params = {"api_key": self.api_key}
-
-        data = None
         try:
-            response = requests.get(url, params)
-            response.raise_for_status()
+            response = self._get_with_retry(
+                url,
+                params=params,
+                max_retries=max_retries,
+                retry_delay=retry_delay,
+                context=f"openalex metadata {paper_metadata.doi}",
+            )
             data = response.json()
         except Exception as e:
             logger.info(f"Failed to retrieve paper {paper_metadata.doi}: {e}")
             return None
 
-        primary_location = data.get("primary_location", {})
+        primary_location = data.get("primary_location") or {}
         pdf_url = primary_location.get("pdf_url", None)
 
         if pdf_url is None:
-            return
+            return None
 
         if download_pdf:
-            pdf_content = None
             try:
-                response = requests.get(pdf_url)
-                response.raise_for_status()
+                response = self._get_with_retry(
+                    pdf_url,
+                    max_retries=max_retries,
+                    retry_delay=retry_delay,
+                    context=f"openalex pdf {paper_metadata.doi}",
+                )
                 pdf_content = response.content
             except Exception as e:
                 logger.info(f"Failed to retrieve pdf {pdf_url}: {e}")
@@ -596,6 +813,99 @@ class OpenAlexProvider:
             return paper_content
 
         return None
+
+    def fetch_batch(
+        self,
+        paper_metadatas: Sequence[PaperMetadata],
+        download_pdf: bool = True,
+        batch_size: Optional[int] = None,
+        max_retries: int = 0,
+        retry_delay: float = 2.0,
+    ) -> Tuple[List[PaperContent], List[int], List[int]]:
+        """Batch-resolve OpenAlex PDF URLs via ``filter=doi:...`` and download PDFs."""
+        effective_batch_size = min(batch_size or self.batch_size, 50)
+        papers_with_doi: list[tuple[PaperMetadata, str]] = []
+        for paper in paper_metadatas:
+            norm_doi = normalize_doi(paper.doi)
+            if norm_doi:
+                papers_with_doi.append((paper, norm_doi))
+
+        pdf_url_by_doi: dict[str, str] = {}
+        works_url = self.BASE_URL.rstrip("/")
+
+        for i in range(0, len(papers_with_doi), effective_batch_size):
+            batch = papers_with_doi[i : i + effective_batch_size]
+            doi_filter = "|".join(f"https://doi.org/{d}" for _, d in batch)
+            params: dict = {
+                "filter": f"doi:{doi_filter}",
+                "select": "doi,primary_location",
+                "per-page": len(batch),
+            }
+            if self.api_key:
+                params["api_key"] = self.api_key
+
+            try:
+                response = self._get_with_retry(
+                    works_url,
+                    params=params,
+                    max_retries=max_retries,
+                    retry_delay=retry_delay,
+                    context=f"openalex batch works {i // effective_batch_size + 1}",
+                )
+                results = response.json().get("results", [])
+                for work in results:
+                    work_doi = normalize_doi(work.get("doi"))
+                    primary_location = work.get("primary_location") or {}
+                    pdf_url = primary_location.get("pdf_url")
+                    if work_doi and pdf_url:
+                        pdf_url_by_doi[work_doi] = pdf_url
+            except Exception as e:
+                logger.error(
+                    f"OpenAlex batch metadata lookup failed for batch {i // effective_batch_size + 1}: {e}"
+                )
+                continue
+
+        paper_contents: List[PaperContent] = []
+        successful_paper_ids: list[int] = []
+
+        if download_pdf:
+            for paper, norm_doi in papers_with_doi:
+                pdf_url = pdf_url_by_doi.get(norm_doi)
+                if not pdf_url:
+                    continue
+                try:
+                    response = self._get_with_retry(
+                        pdf_url,
+                        max_retries=max_retries,
+                        retry_delay=retry_delay,
+                        context=f"openalex pdf paper {paper.id}",
+                    )
+                    pdf_content = response.content
+                except Exception as e:
+                    logger.info(f"Failed to retrieve pdf {pdf_url}: {e}")
+                    continue
+
+                clean_doi = doi_to_filename(paper.doi)
+                blob_url = upload_pdf(
+                    pdf_content=pdf_content,
+                    doi=clean_doi,
+                )
+                paper_content = PaperContent(
+                    pdf_url=pdf_url,
+                    blob_url=blob_url,
+                    paper=paper,
+                    paper_id=paper.id,
+                    format="pdf",
+                    source="openalex",
+                )
+                paper_contents.append(paper_content)
+                successful_paper_ids.append(paper.id)
+
+        successful_set = set(successful_paper_ids)
+        failed_paper_ids = [
+            paper.id for paper in paper_metadatas if paper.id not in successful_set
+        ]
+        return paper_contents, successful_paper_ids, failed_paper_ids
 
 
 """
