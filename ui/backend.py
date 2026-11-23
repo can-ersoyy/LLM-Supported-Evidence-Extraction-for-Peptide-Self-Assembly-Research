@@ -613,6 +613,133 @@ def search_peptides(
     }
 
 
+def search_papers(
+    query: Optional[str] = None,
+    status: Optional[str] = None,
+    dataset_subset: Optional[str] = None,
+    limit: int = 100,
+    db_path: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Search PaperMetadata by PMID, DOI, or title substring."""
+    target_engine = _get_target_engine(db_path)
+    init_db(target_engine)
+    with get_session_context(db_engine=target_engine) as session:
+        stmt = select(PaperMetadata)
+        if query and query.strip():
+            q = query.strip().lower()
+            stmt = stmt.where(
+                func.lower(func.coalesce(PaperMetadata.pmid, "")).contains(q)
+                | func.lower(func.coalesce(PaperMetadata.doi, "")).contains(q)
+                | func.lower(func.coalesce(PaperMetadata.title, "")).contains(q)
+            )
+        if status and status.strip():
+            stmt = stmt.where(PaperMetadata.status == status.strip())
+        if dataset_subset and dataset_subset.strip():
+            stmt = stmt.where(PaperMetadata.dataset_subset == dataset_subset.strip())
+        stmt = stmt.limit(limit)
+        papers = list(session.exec(stmt).all())
+        rows = []
+        for p in papers:
+            d = _serialize_value(p.model_dump())
+            d["pubmed_url"] = (
+                f"https://pubmed.ncbi.nlm.nih.gov/{p.pmid}/" if p.pmid else None
+            )
+            d["doi_url"] = f"https://doi.org/{p.doi}" if p.doi else None
+            rows.append(d)
+    return {"count": len(rows), "rows": rows}
+
+
+def get_paper_detail(
+    paper_id: Optional[int] = None,
+    pmid: Optional[str] = None,
+    doi: Optional[str] = None,
+    db_path: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Fetch unified paper details: metadata, relevance, contents, peptides, evaluations."""
+    import json
+
+    target_engine = _get_target_engine(db_path)
+    init_db(target_engine)
+    with get_session_context(db_engine=target_engine) as session:
+        paper: Optional[PaperMetadata] = None
+        if paper_id is not None:
+            paper = session.get(PaperMetadata, int(paper_id))
+        elif pmid:
+            paper = session.exec(
+                select(PaperMetadata).where(PaperMetadata.pmid == pmid.strip())
+            ).first()
+        elif doi:
+            paper = session.exec(
+                select(PaperMetadata).where(
+                    func.lower(PaperMetadata.doi) == doi.strip().lower()
+                )
+            ).first()
+
+        if paper is None or paper.id is None:
+            raise ValueError("Paper not found.")
+
+        p_dict = _serialize_value(paper.model_dump())
+        p_dict["pubmed_url"] = (
+            f"https://pubmed.ncbi.nlm.nih.gov/{paper.pmid}/" if paper.pmid else None
+        )
+        p_dict["doi_url"] = f"https://doi.org/{paper.doi}" if paper.doi else None
+
+        relevances = [
+            _serialize_value(r.model_dump())
+            for r in session.exec(
+                select(PaperRelevance).where(PaperRelevance.paper_id == paper.id)
+            ).all()
+        ]
+        contents = [
+            {
+                "id": c.id,
+                "format": c.format,
+                "source": c.source,
+                "run_identifier": c.run_identifier,
+            }
+            for c in session.exec(
+                select(PaperContent).where(PaperContent.paper_id == paper.id)
+            ).all()
+        ]
+
+        entries = list(
+            session.exec(
+                select(PeptideEntry).where(PeptideEntry.paper_id == paper.id)
+            ).all()
+        )
+        entry_dicts: List[Dict[str, Any]] = []
+        entry_ids: List[int] = []
+        for e in entries:
+            ed = _serialize_value(e.model_dump())
+            if isinstance(ed.get("evidence_span"), str):
+                try:
+                    ed["evidence_span_parsed"] = json.loads(ed["evidence_span"])
+                except Exception:
+                    pass
+            entry_dicts.append(ed)
+            if e.id is not None:
+                entry_ids.append(e.id)
+
+        evaluations: List[Dict[str, Any]] = []
+        if entry_ids:
+            evaluations = [
+                _serialize_value(ev.model_dump())
+                for ev in session.exec(
+                    select(ExtractionEvaluation).where(
+                        ExtractionEvaluation.peptide_entry_id.in_(entry_ids)  # type: ignore[union-attr]
+                    )
+                ).all()
+            ]
+
+    return {
+        "paper": p_dict,
+        "relevance": relevances,
+        "contents": contents,
+        "peptide_entries": entry_dicts,
+        "evaluations": evaluations,
+    }
+
+
 def _parse_id_list(val: Any) -> Any:
     if val is None or val == "":
         return None

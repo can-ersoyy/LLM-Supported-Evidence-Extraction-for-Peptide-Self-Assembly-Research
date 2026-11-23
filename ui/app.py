@@ -199,11 +199,12 @@ def _render_sidebar(client: PipelineClient) -> str:
 
     st.sidebar.divider()
     if read_only and st.session_state["conn_mode"] == "Local (In-Process)":
-        nav_options = ["Overview & DB", "Peptide Search", "Results & Plots"]
+        nav_options = ["Overview & DB", "Peptide Search", "Paper Inspector", "Results & Plots"]
     else:
         nav_options = [
             "Overview & DB",
             "Peptide Search",
+            "Paper Inspector",
             "Run Pipeline",
             "PDF Ingestion",
             "DB Sync & Admin",
@@ -1011,6 +1012,129 @@ def page_peptide_search(client: PipelineClient) -> None:
     )
 
 
+def page_paper_inspector(client: PipelineClient) -> None:
+    st.header("Paper Inspector")
+    session_db = st.session_state.get("session_db_path")
+
+    c1, c2, c3 = st.columns([2, 1, 1])
+    query = c1.text_input(
+        "Search by PMID, DOI, or Title",
+        value=st.session_state.get("inspector_query_prefill", ""),
+        placeholder="e.g. 18052148, 10.1021/..., hydrogel",
+    )
+    status_f = c2.selectbox("Status", ["", "usable", "not_processed", "discard"], key="pi_status")
+    subset_f = c3.selectbox("Subset", ["", "golden_benchmark", "scraped"], key="pi_subset")
+
+    try:
+        search_res = client.search_papers(
+            query=query or None,
+            status=status_f or None,
+            dataset_subset=subset_f or None,
+            limit=100,
+            db_path=session_db,
+        )
+    except Exception as exc:
+        st.error(f"Paper search failed: {exc}")
+        return
+
+    papers = search_res.get("rows", [])
+    if not papers:
+        st.info("No matching papers found.")
+        return
+
+    options = {
+        f"[{p['id']}] PMID:{p.get('pmid') or '-'} | {p.get('title', '')[:80]}": p["id"]
+        for p in papers
+    }
+    labels = list(options.keys())
+    default_idx = 0
+    prefill_pid = st.session_state.get("inspector_paper_id_prefill")
+    if prefill_pid is not None:
+        for i, lbl in enumerate(labels):
+            if options[lbl] == prefill_pid:
+                default_idx = i
+                break
+
+    selected_label = st.selectbox("Select Paper", labels, index=default_idx)
+    selected_id = options[selected_label]
+
+    try:
+        detail = client.get_paper_detail(paper_id=selected_id, db_path=session_db)
+    except Exception as exc:
+        st.error(f"Could not load paper details: {exc}")
+        return
+
+    paper = detail["paper"]
+    st.subheader(paper.get("title") or "(No title)")
+    meta_parts = [
+        f"ID: `{paper.get('id')}`",
+        f"Status: `{paper.get('status')}`",
+        f"Subset: `{paper.get('dataset_subset')}`",
+    ]
+    if paper.get("pmid"):
+        meta_parts.append(f"[PubMed ({paper['pmid']})]({paper['pubmed_url']})")
+    if paper.get("doi"):
+        meta_parts.append(f"[DOI ({paper['doi']})]({paper['doi_url']})")
+    st.markdown(" | ".join(meta_parts))
+
+    with st.expander("Abstract", expanded=True):
+        st.write(paper.get("abstract") or "_No abstract available._")
+
+    relevances = detail.get("relevance", [])
+    if relevances:
+        with st.expander(f"Relevance Screening ({len(relevances)})", expanded=True):
+            for rel in relevances:
+                r1, r2, r3 = st.columns(3)
+                r1.metric("Relevant", str(rel.get("is_relevant")))
+                r2.metric(
+                    "Confidence",
+                    f"{rel['confidence']:.2f}" if rel.get("confidence") is not None else "-",
+                )
+                r3.metric("Model", f"{rel.get('provider')}/{rel.get('model_name')}")
+                if rel.get("explanation"):
+                    st.write(rel["explanation"])
+
+    entries = detail.get("peptide_entries", [])
+    st.subheader(f"Extracted Peptide Entries ({len(entries)})")
+    if entries:
+        manual_entries = [e for e in entries if e.get("extraction_mode") == "manual"]
+        llm_entries = [e for e in entries if e.get("extraction_mode") == "llm"]
+
+        if manual_entries and llm_entries:
+            col_m, col_l = st.columns(2)
+            with col_m:
+                st.markdown("**Golden / Manual Entries**")
+                st.dataframe(pd.DataFrame(manual_entries), use_container_width=True)
+            with col_l:
+                st.markdown("**LLM Extracted Entries**")
+                st.dataframe(pd.DataFrame(llm_entries), use_container_width=True)
+        else:
+            st.dataframe(pd.DataFrame(entries), use_container_width=True)
+
+        evals = detail.get("evaluations", [])
+        evals_by_entry: Dict[int, list] = {}
+        for ev in evals:
+            eid = ev.get("peptide_entry_id")
+            if eid is not None:
+                evals_by_entry.setdefault(eid, []).append(ev)
+
+        with st.expander("Evidence Spans & Evaluation Scores"):
+            for e in entries:
+                st.markdown(
+                    f"**Entry #{e.get('id')}** — `{e.get('sequence')}` "
+                    f"(`{e.get('extraction_mode')}`, model=`{e.get('model')}`, run=`{e.get('run_identifier')}`)"
+                )
+                if e.get("evidence_span_parsed"):
+                    st.json(e["evidence_span_parsed"])
+                elif e.get("evidence_span"):
+                    st.code(str(e["evidence_span"]))
+                entry_evals = evals_by_entry.get(e.get("id"), [])
+                if entry_evals:
+                    st.json(entry_evals)
+    else:
+        st.info("No peptide entries recorded for this paper.")
+
+
 def main() -> None:
     st.session_state.setdefault("session_id", uuid.uuid4().hex[:12])
     _load_streamlit_secrets()
@@ -1022,6 +1146,8 @@ def main() -> None:
         page_overview(client)
     elif page == "Peptide Search":
         page_peptide_search(client)
+    elif page == "Paper Inspector":
+        page_paper_inspector(client)
     elif page == "Run Pipeline":
         page_run_pipeline(client)
     elif page == "PDF Ingestion":

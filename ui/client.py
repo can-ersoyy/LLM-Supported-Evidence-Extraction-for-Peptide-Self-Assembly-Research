@@ -99,6 +99,53 @@ class PipelineClient:
             json=criteria,
         ).json()
 
+    def search_papers(
+        self,
+        query: Optional[str] = None,
+        status: Optional[str] = None,
+        dataset_subset: Optional[str] = None,
+        limit: int = 100,
+        db_path: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        if self.mode == "local":
+            return backend.search_papers(
+                query=query,
+                status=status,
+                dataset_subset=dataset_subset,
+                limit=limit,
+                db_path=db_path,
+            )
+        return self._request(
+            "POST",
+            "/db/papers/search",
+            json={
+                "query": query,
+                "status": status,
+                "dataset_subset": dataset_subset,
+                "limit": limit,
+            },
+        ).json()
+
+    def get_paper_detail(
+        self,
+        paper_id: Optional[int] = None,
+        pmid: Optional[str] = None,
+        doi: Optional[str] = None,
+        db_path: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        if self.mode == "local":
+            return backend.get_paper_detail(
+                paper_id=paper_id, pmid=pmid, doi=doi, db_path=db_path
+            )
+        params: Dict[str, Any] = {}
+        if paper_id is not None:
+            params["paper_id"] = paper_id
+        if pmid:
+            params["pmid"] = pmid
+        if doi:
+            params["doi"] = doi
+        return self._request("GET", "/db/papers/detail", params=params).json()
+
     def download_db(self) -> bytes:
         if self.mode == "local":
             db_path = backend.get_db_file_path()

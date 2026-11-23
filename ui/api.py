@@ -71,6 +71,23 @@ def db_peptides_search(req: Dict[str, Any]) -> Dict[str, Any]:
     return backend.search_peptides(**req)
 
 
+@app.post("/db/papers/search", dependencies=[Depends(_verify_api_key)])
+def db_papers_search(req: Dict[str, Any]) -> Dict[str, Any]:
+    return backend.search_papers(**req)
+
+
+@app.get("/db/papers/detail", dependencies=[Depends(_verify_api_key)])
+def db_papers_detail(
+    paper_id: Optional[int] = Query(default=None),
+    pmid: Optional[str] = Query(default=None),
+    doi: Optional[str] = Query(default=None),
+) -> Dict[str, Any]:
+    try:
+        return backend.get_paper_detail(paper_id=paper_id, pmid=pmid, doi=doi)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
 @app.get("/db/download", dependencies=[Depends(_verify_api_key)])
 def db_download() -> FileResponse:
     db_path = backend.get_db_file_path()

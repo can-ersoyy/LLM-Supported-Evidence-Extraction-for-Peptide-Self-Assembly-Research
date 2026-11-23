@@ -341,4 +341,62 @@ def test_search_peptides_and_links(temp_db):
     assert row["doi_url"] == "https://doi.org/10.1000/test1"
 
 
+def test_paper_search_and_detail(temp_db):
+    from peptide_extractor.db import ExtractionEvaluation, ExtractionMode, PaperRelevance, PeptideEntry
+
+    _, test_engine = temp_db
+    with get_session_context(db_engine=test_engine) as s:
+        s.add(
+            PaperRelevance(
+                paper_id=1,
+                is_relevant=True,
+                confidence=0.95,
+                explanation="Experimental hydrogel reported",
+                provider="google",
+                model_name="gemini-3.5-flash-lite",
+                run_identifier=10,
+            )
+        )
+        entry = PeptideEntry(
+            paper_id=1,
+            sequence="FF",
+            length=2,
+            type="hydrogel",
+            evidence_span='{"sequence": "[sec-1/p-1]"}',
+            pmid="123456",
+            extraction_mode=ExtractionMode.LLM,
+            run_identifier=42,
+        )
+        s.add(entry)
+        s.commit()
+        s.refresh(entry)
+        s.add(
+            ExtractionEvaluation(
+                peptide_entry_id=entry.id,
+                groundness_rate=1.0,
+                faithfulness_rate=0.9,
+                completeness_rate=0.8,
+                run_identifier=42,
+            )
+        )
+        s.commit()
+
+    client = TestClient(api.app)
+    s_resp = client.post("/db/papers/search", json={"query": "123456"})
+    assert s_resp.status_code == 200
+    assert s_resp.json()["count"] == 1
+
+    d_resp = client.get("/db/papers/detail", params={"pmid": "123456"})
+    assert d_resp.status_code == 200
+    detail = d_resp.json()
+    assert detail["paper"]["title"] == "Test Peptide Paper"
+    assert len(detail["relevance"]) == 1
+    assert len(detail["peptide_entries"]) == 1
+    assert detail["peptide_entries"][0]["evidence_span_parsed"] == {
+        "sequence": "[sec-1/p-1]"
+    }
+    assert len(detail["evaluations"]) == 1
+
+
+
 
