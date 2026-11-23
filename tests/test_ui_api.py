@@ -479,6 +479,37 @@ def test_overview_charts_data(temp_db):
     assert data["relevance_confidence"][0]["outcome"] == "relevant"
 
 
+def test_pipeline_demo_end_to_end(tmp_path: Path):
+    from ui import backend
+    from ui.demo import init_demo_db, reset_demo_db, submit_demo_step
+
+    demo_db = str(tmp_path / "demo.db")
+    init_demo_db(demo_db)
+
+    job = submit_demo_step("all", demo_db)
+    for _ in range(50):
+        j = backend.job_manager.get_job(job["id"])
+        if j["status"] in {"completed", "failed"}:
+            break
+        time.sleep(0.1)
+
+    assert j["status"] == "completed"
+    stats = backend.get_db_stats(db_path=demo_db)
+    tables = stats["tables"]
+    assert tables["paper_metadata"]["total"] == 4
+    assert tables["paper_metadata"]["by_status"]["usable"] == 3
+    assert tables["paper_metadata"]["by_status"]["discard"] == 1
+    assert tables["paper_relevance"]["total"] == 4
+    assert tables["paper_content"]["total"] == 3
+    assert tables["peptide_entry"]["total"] == 4  # 3 LLM + 1 golden manual
+    assert tables["extraction_evaluation"]["total"] == 3
+
+    reset_demo_db(demo_db)
+    stats_after = backend.get_db_stats(db_path=demo_db)
+    assert stats_after["tables"]["paper_metadata"]["total"] == 0
+
+
+
 
 
 

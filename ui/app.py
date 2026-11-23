@@ -199,12 +199,19 @@ def _render_sidebar(client: PipelineClient) -> str:
 
     st.sidebar.divider()
     if read_only and st.session_state["conn_mode"] == "Local (In-Process)":
-        nav_options = ["Overview & DB", "Peptide Search", "Paper Inspector", "Results & Plots"]
+        nav_options = [
+            "Overview & DB",
+            "Peptide Search",
+            "Paper Inspector",
+            "Results & Plots",
+            "Pipeline Demo",
+        ]
     else:
         nav_options = [
             "Overview & DB",
             "Peptide Search",
             "Paper Inspector",
+            "Pipeline Demo",
             "Run Pipeline",
             "PDF Ingestion",
             "DB Sync & Admin",
@@ -1292,6 +1299,80 @@ def _apply_query_params() -> None:
         st.session_state["nav_page"] = str(page_param)
 
 
+def page_pipeline_demo(client: PipelineClient) -> None:
+    from ui import backend
+    from ui.demo import init_demo_db, reset_demo_db, submit_demo_step
+
+    st.header("Interactive Pipeline Sandbox (Demo)")
+    st.info(
+        "This sandbox runs mocked pipeline steps against an **isolated temporary SQLite DB** "
+        "for your session only. It never calls external APIs or modifies your Azure database."
+    )
+
+    if "demo_db_path" not in st.session_state:
+        tmp = tempfile.NamedTemporaryFile(delete=False, suffix="_demo.db")
+        tmp.close()
+        init_demo_db(tmp.name)
+        st.session_state["demo_db_path"] = tmp.name
+
+    demo_db = st.session_state["demo_db_path"]
+
+    c_top1, c_top2, c_top3 = st.columns(3)
+    using_demo = st.session_state.get("session_db_path") == demo_db
+    if not using_demo:
+        if c_top1.button("Use Demo DB in Explorer / Inspector", type="primary"):
+            st.session_state["session_db_path"] = demo_db
+            st.session_state["_session_db_name"] = "demo_sandbox.db"
+            st.rerun()
+    else:
+        if c_top1.button("Switch Back to Azure / Default DB"):
+            st.session_state.pop("session_db_path", None)
+            st.session_state.pop("_session_db_name", None)
+            st.rerun()
+
+    if c_top2.button("Run All 6 Steps"):
+        _submit_and_track(submit_demo_step("all", demo_db))
+
+    if c_top3.button("Reset Demo DB"):
+        reset_demo_db(demo_db)
+        st.success("Demo DB cleared.")
+        st.rerun()
+
+    try:
+        stats = backend.get_db_stats(db_path=demo_db)
+        tables = stats.get("tables", {})
+        m1, m2, m3, m4, m5 = st.columns(5)
+        m1.metric("Papers", tables.get("paper_metadata", {}).get("total", 0))
+        m2.metric("Relevance", tables.get("paper_relevance", {}).get("total", 0))
+        m3.metric("Fulltexts", tables.get("paper_content", {}).get("total", 0))
+        m4.metric("Peptides", tables.get("peptide_entry", {}).get("total", 0))
+        m5.metric("Evaluations", tables.get("extraction_evaluation", {}).get("total", 0))
+    except Exception as exc:
+        st.error(f"Could not read demo DB: {exc}")
+
+    st.subheader("Run Individual Stages")
+    s1, s2, s3, s4, s5, s6 = st.columns(6)
+    if s1.button("1. Search"):
+        _submit_and_track(submit_demo_step("search", demo_db))
+    if s2.button("2. Clean"):
+        _submit_and_track(submit_demo_step("clean", demo_db))
+    if s3.button("3. Relevance"):
+        _submit_and_track(submit_demo_step("relevance", demo_db))
+    if s4.button("4. Fulltext"):
+        _submit_and_track(submit_demo_step("fetch_fulltext", demo_db))
+    if s5.button("5. Extract"):
+        _submit_and_track(submit_demo_step("extraction", demo_db))
+    if s6.button("6. Evaluate"):
+        _submit_and_track(submit_demo_step("evaluation", demo_db))
+
+    st.divider()
+    st.subheader("Demo Log Window")
+    local_client = PipelineClient(mode="local")
+    _render_job_log_window(
+        local_client, st.session_state.get("active_job_id"), key_prefix="demo_log"
+    )
+
+
 def main() -> None:
     st.session_state.setdefault("session_id", uuid.uuid4().hex[:12])
     _load_streamlit_secrets()
@@ -1310,6 +1391,8 @@ def main() -> None:
         page_peptide_search(client)
     elif page == "Paper Inspector":
         page_paper_inspector(client)
+    elif page == "Pipeline Demo":
+        page_pipeline_demo(client)
     elif page == "Run Pipeline":
         page_run_pipeline(client)
     elif page == "PDF Ingestion":
