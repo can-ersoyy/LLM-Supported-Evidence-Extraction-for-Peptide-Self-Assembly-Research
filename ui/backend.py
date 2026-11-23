@@ -17,6 +17,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
+import requests
 from sqlalchemy import func
 from sqlmodel import select
 
@@ -30,6 +31,7 @@ from peptide_extractor.db import (
     PaperRelevance,
     PaperStatus,
     PeptideEntry,
+    get_engine,
     get_records,
     get_session_context,
     init_db,
@@ -267,19 +269,103 @@ def get_db_file_path() -> Optional[Path]:
     return DEFAULT_DB_PATH.resolve()
 
 
-def get_db_stats() -> Dict[str, Any]:
-    """Return summary counts across all database tables."""
+def _get_target_engine(db_path: Optional[str] = None):
+    if db_path:
+        return get_engine(f"sqlite:///{Path(db_path).resolve()}")
+    return None
+
+
+def is_azure_db_configured() -> bool:
+    """Return True if Azure DB download env vars are configured."""
+    return bool(
+        os.getenv("AZURE_DB_SAS_URL")
+        or os.getenv("AZURE_STORAGE_CONNECTION_STRING")
+    )
+
+
+def sync_db_from_azure(force: bool = False) -> Dict[str, Any]:
+    """Download the SQLite database snapshot from Azure Blob Storage if needed.
+
+    Supports either:
+    - AZURE_DB_SAS_URL: direct HTTPS read-only SAS URL to the .db blob.
+    - AZURE_STORAGE_CONNECTION_STRING (+ AZURE_STORAGE_CONTAINER / AZURE_DB_BLOB_NAME).
+    """
+    sas_url = os.getenv("AZURE_DB_SAS_URL")
+    conn_str = os.getenv("AZURE_STORAGE_CONNECTION_STRING")
+    if not sas_url and not conn_str:
+        return {"status": "skipped", "reason": "Azure DB source not configured"}
+
     db_path = get_db_file_path()
+    if db_path is None:
+        raise ValueError("Azure DB snapshot sync requires a SQLite DATABASE_URL.")
+
+    ttl = int(os.getenv("AZURE_DB_REFRESH_TTL_SECONDS", "3600"))
+    if not force and db_path.exists() and db_path.stat().st_size > 0:
+        age = time.time() - db_path.stat().st_mtime
+        if ttl <= 0 or age < ttl:
+            return {
+                "status": "cached",
+                "db_path": str(db_path),
+                "age_seconds": round(age, 1),
+            }
+
+    if sas_url:
+        resp = requests.get(sas_url, timeout=120)
+        resp.raise_for_status()
+        raw_bytes = resp.content
+        source_desc = "AZURE_DB_SAS_URL"
+    else:
+        from peptide_extractor.azure_storage import get_blob_service_client
+
+        container = os.getenv("AZURE_STORAGE_CONTAINER", "papers")
+        blob_name = os.getenv("AZURE_DB_BLOB_NAME", "peptide-extractor.db")
+        service = get_blob_service_client(conn_str)
+        blob_client = service.get_container_client(container).get_blob_client(
+            blob_name
+        )
+        raw_bytes = blob_client.download_blob().readall()
+        source_desc = f"{container}/{blob_name}"
+
+    if not raw_bytes.startswith(b"SQLite format 3\x00"):
+        raise ValueError(
+            f"Downloaded file from {source_desc} is not a valid SQLite 3 database."
+        )
+
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = db_path.with_suffix(".db.azure_tmp")
+    tmp_path.write_bytes(raw_bytes)
+    os.replace(tmp_path, db_path)
+
+    return {
+        "status": "downloaded",
+        "source": source_desc,
+        "db_path": str(db_path),
+        "size_bytes": db_path.stat().st_size,
+    }
+
+
+def get_db_stats(db_path: Optional[str] = None) -> Dict[str, Any]:
+    """Return summary counts across all database tables."""
+    target_path = Path(db_path).resolve() if db_path else get_db_file_path()
     stats: Dict[str, Any] = {
-        "database_url": os.getenv("DATABASE_URL", DATABASE_URL),
-        "db_path": str(db_path) if db_path else None,
-        "db_exists": bool(db_path and db_path.exists()),
-        "db_size_bytes": db_path.stat().st_size if db_path and db_path.exists() else 0,
+        "database_url": (
+            f"sqlite:///{target_path}"
+            if db_path
+            else os.getenv("DATABASE_URL", DATABASE_URL)
+        ),
+        "db_path": str(target_path) if target_path else None,
+        "db_exists": bool(target_path and target_path.exists()),
+        "db_size_bytes": (
+            target_path.stat().st_size
+            if target_path and target_path.exists()
+            else 0
+        ),
         "tables": {},
     }
 
-    init_db()
-    with get_session_context() as session:
+    target_engine = _get_target_engine(db_path)
+    init_db(target_engine)
+    with get_session_context(db_engine=target_engine) as session:
         # PaperMetadata
         pm_total = session.exec(select(func.count()).select_from(PaperMetadata)).one()
         pm_status = {
@@ -354,9 +440,11 @@ def query_records(
     limit: int = 100,
     offset: int = 0,
     filters: Optional[Dict[str, Any]] = None,
+    db_path: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Query records from a DB table and serialize them for UI/API consumption."""
-    init_db()
+    target_engine = _get_target_engine(db_path)
+    init_db(target_engine)
     model = _resolve_model(table_name)
     clean_filters: Dict[str, Any] = {}
     for k, v in (filters or {}).items():
@@ -374,7 +462,7 @@ def query_records(
         else:
             clean_filters[k] = v
 
-    with get_session_context() as session:
+    with get_session_context(db_engine=target_engine) as session:
         records = get_records(
             model,
             session=session,

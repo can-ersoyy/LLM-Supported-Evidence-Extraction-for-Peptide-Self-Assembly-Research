@@ -48,3 +48,21 @@ uv run streamlit run ui/app.py
 ```
 
 In the sidebar, select `Remote API Server`, enter the server URL (and API key if configured), and click **Test Connection**.
+
+## Mode 3: Streamlit Community Cloud (Always-On Read-Only + Azure DB Snapshot)
+
+1. In [Streamlit Community Cloud](https://share.streamlit.io), create a new app pointing to this repository with **Main file path** set to `ui/app.py`.
+2. In **App Settings → Sharing**, set the app to **Private** if you want to restrict access to invited emails/accounts.
+3. In **App Settings → Secrets**, add your read-only configuration:
+
+```toml
+PEPTIDE_READ_ONLY = "true"
+AZURE_DB_SAS_URL = "https://<account>.blob.core.windows.net/<container>/peptide-extractor.db?<sas_token>"
+# Optional: refresh interval in seconds (default: 3600)
+AZURE_DB_REFRESH_TTL_SECONDS = "3600"
+```
+
+*(Alternatively, instead of `AZURE_DB_SAS_URL`, you can set `AZURE_STORAGE_CONNECTION_STRING`, `AZURE_STORAGE_CONTAINER`, and `AZURE_DB_BLOB_NAME`.)*
+
+On startup, the app downloads the latest SQLite snapshot from Azure. Visitors can also upload their own `.db` file in the sidebar's **Database Source (Session)** expander to inspect it in isolation without affecting other users.
+

@@ -54,10 +54,15 @@ class PipelineClient:
         data["mode"] = "remote"
         return data
 
-    def get_db_stats(self) -> Dict[str, Any]:
+    def get_db_stats(self, db_path: Optional[str] = None) -> Dict[str, Any]:
         if self.mode == "local":
-            return backend.get_db_stats()
+            return backend.get_db_stats(db_path=db_path)
         return self._request("GET", "/db/stats").json()
+
+    def sync_db_from_azure(self, force: bool = False) -> Dict[str, Any]:
+        if self.mode == "local":
+            return backend.sync_db_from_azure(force=force)
+        return {"status": "skipped", "reason": "Handled by remote server"}
 
     def query_records(
         self,
@@ -65,6 +70,7 @@ class PipelineClient:
         limit: int = 100,
         offset: int = 0,
         filters: Optional[Dict[str, Any]] = None,
+        db_path: Optional[str] = None,
     ) -> Dict[str, Any]:
         if self.mode == "local":
             return backend.query_records(
@@ -72,6 +78,7 @@ class PipelineClient:
                 limit=limit,
                 offset=offset,
                 filters=filters,
+                db_path=db_path,
             )
         return self._request(
             "POST",

@@ -6,6 +6,7 @@ import json
 import os
 import shlex
 import sys
+import tempfile
 import time
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -26,6 +27,38 @@ st.set_page_config(
     page_icon="🧬",
     layout="wide",
 )
+
+
+def _load_streamlit_secrets() -> None:
+    """Copy top-level scalar secrets from st.secrets into os.environ if present."""
+    try:
+        for k, v in st.secrets.items():
+            if isinstance(v, (str, int, float, bool)):
+                os.environ.setdefault(str(k), str(v))
+    except Exception:
+        pass
+
+
+def _is_read_only() -> bool:
+    return os.getenv("PEPTIDE_READ_ONLY", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
+def _ensure_azure_db_synced(client: PipelineClient, force: bool = False) -> None:
+    if client.mode != "local":
+        return
+    if not force and st.session_state.get("_azure_sync_attempted"):
+        return
+    st.session_state["_azure_sync_attempted"] = True
+    try:
+        res = client.sync_db_from_azure(force=force)
+        st.session_state["_azure_sync_status"] = res
+    except Exception as exc:
+        st.session_state["_azure_sync_status"] = {"status": "error", "error": str(exc)}
 
 
 def _get_client() -> PipelineClient:
@@ -95,6 +128,10 @@ def _render_job_log_window(
 def _render_sidebar(client: PipelineClient) -> str:
     st.sidebar.title("Peptide Extractor")
 
+    read_only = _is_read_only()
+    if read_only:
+        st.sidebar.info("Read-Only Mode")
+
     default_mode = (
         "Remote API Server" if os.getenv("PEPTIDE_API_URL") else "Local (In-Process)"
     )
@@ -124,18 +161,53 @@ def _render_sidebar(client: PipelineClient) -> str:
             except Exception as exc:
                 st.sidebar.error(f"Connection failed: {exc}")
 
+    if st.session_state["conn_mode"] == "Local (In-Process)":
+        with st.sidebar.expander("Database Source (Session)", expanded=False):
+            if st.button("Refresh DB from Azure"):
+                _ensure_azure_db_synced(client, force=True)
+            az_status = st.session_state.get("_azure_sync_status")
+            if az_status and az_status.get("status") != "skipped":
+                st.caption(f"Azure sync: `{az_status.get('status')}`")
+                if az_status.get("error"):
+                    st.error(az_status["error"])
+
+            session_upload = st.file_uploader(
+                "Load local .db (this session only)",
+                type=["db", "sqlite", "sqlite3"],
+                key="session_db_uploader",
+            )
+            if session_upload is not None:
+                raw = session_upload.read()
+                if not raw.startswith(b"SQLite format 3\x00"):
+                    st.error("Invalid SQLite 3 file.")
+                elif st.session_state.get("_session_db_name") != session_upload.name:
+                    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".db")
+                    tmp.write(raw)
+                    tmp.close()
+                    st.session_state["session_db_path"] = tmp.name
+                    st.session_state["_session_db_name"] = session_upload.name
+                    st.success(f"Using session DB: `{session_upload.name}`")
+
+            if st.session_state.get("session_db_path"):
+                st.caption(f"Active: `{st.session_state.get('_session_db_name')}`")
+                if st.button("Reset to Default / Azure DB"):
+                    st.session_state.pop("session_db_path", None)
+                    st.session_state.pop("_session_db_name", None)
+                    st.rerun()
+
     st.sidebar.divider()
-    page = st.sidebar.radio(
-        "Navigation",
-        [
+    if read_only and st.session_state["conn_mode"] == "Local (In-Process)":
+        nav_options = ["Overview & DB", "Results & Plots"]
+    else:
+        nav_options = [
             "Overview & DB",
             "Run Pipeline",
             "PDF Ingestion",
             "DB Sync & Admin",
             "Results & Plots",
             "Logs & Jobs",
-        ],
-    )
+        ]
+    page = st.sidebar.radio("Navigation", nav_options)
 
     st.sidebar.divider()
     active_job_id = st.session_state.get("active_job_id")
@@ -157,8 +229,9 @@ def page_overview(client: PipelineClient) -> None:
     if st.button("Refresh Stats"):
         st.rerun()
 
+    session_db = st.session_state.get("session_db_path")
     try:
-        stats = client.get_db_stats()
+        stats = client.get_db_stats(db_path=session_db)
     except Exception as exc:
         st.error(f"Could not load database stats: {exc}")
         return
@@ -633,8 +706,15 @@ def page_results(client: PipelineClient) -> None:
             if mode_f:
                 filters["extraction_mode"] = mode_f
 
+        session_db = st.session_state.get("session_db_path")
         try:
-            data = client.query_records(table, limit=int(limit), offset=0, filters=filters)
+            data = client.query_records(
+                table,
+                limit=int(limit),
+                offset=0,
+                filters=filters,
+                db_path=session_db,
+            )
             rows = data.get("rows", [])
             st.caption(f"Showing {len(rows)} row(s) from `{table}`")
             if rows:
@@ -785,7 +865,9 @@ def page_logs_and_jobs(client: PipelineClient) -> None:
 
 
 def main() -> None:
+    _load_streamlit_secrets()
     client = _get_client()
+    _ensure_azure_db_synced(client)
     page = _render_sidebar(client)
 
     if page == "Overview & DB":

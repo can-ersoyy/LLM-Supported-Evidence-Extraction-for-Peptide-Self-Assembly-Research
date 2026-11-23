@@ -179,3 +179,68 @@ def test_local_pipeline_client(temp_db):
     assert stats["tables"]["paper_metadata"]["total"] == 1
     res = local_client.query_records("paper_metadata", limit=5)
     assert res["count"] == 1
+
+
+def test_azure_db_snapshot_sync(tmp_path: Path, monkeypatch, temp_db):
+    from types import SimpleNamespace
+    from ui import backend
+
+    src_db_file, _ = temp_db
+    valid_bytes = src_db_file.read_bytes()
+
+    target_db = tmp_path / "azure_synced.db"
+    monkeypatch.setenv("DATABASE_URL", f"sqlite:///{target_db}")
+    monkeypatch.setattr("ui.backend.DATABASE_URL", f"sqlite:///{target_db}")
+    monkeypatch.setenv("AZURE_DB_SAS_URL", "https://example.blob.core.windows.net/db.sqlite?sig=abc")
+    monkeypatch.setenv("AZURE_DB_REFRESH_TTL_SECONDS", "3600")
+
+    fake_resp = SimpleNamespace(content=valid_bytes, raise_for_status=lambda: None)
+    with patch("ui.backend.requests.get", return_value=fake_resp) as mock_get:
+        res1 = backend.sync_db_from_azure(force=False)
+        assert res1["status"] == "downloaded"
+        assert target_db.exists()
+        assert mock_get.call_count == 1
+
+        # Second call within TTL uses cached file
+        res2 = backend.sync_db_from_azure(force=False)
+        assert res2["status"] == "cached"
+        assert mock_get.call_count == 1
+
+        # Force=True re-downloads
+        res3 = backend.sync_db_from_azure(force=True)
+        assert res3["status"] == "downloaded"
+        assert mock_get.call_count == 2
+
+
+def test_session_isolated_db_query(tmp_path: Path, temp_db):
+    other_db = tmp_path / "session_other.db"
+    other_engine = create_engine(
+        f"sqlite:///{other_db}", connect_args={"check_same_thread": False}
+    )
+    init_db(other_engine)
+    with get_session_context(db_engine=other_engine) as s:
+        s.add(
+            PaperMetadata(
+                doi="10.1000/session-only",
+                pmid="999999",
+                title="Session Isolated Paper",
+                abstract="Isolated DB",
+                status=PaperStatus.DISCARD,
+                is_open_access=False,
+            )
+        )
+        s.commit()
+
+    local_client = PipelineClient(mode="local")
+    default_res = local_client.query_records("paper_metadata", limit=10)
+    assert default_res["rows"][0]["pmid"] == "123456"
+
+    session_res = local_client.query_records(
+        "paper_metadata", limit=10, db_path=str(other_db)
+    )
+    assert session_res["count"] == 1
+    assert session_res["rows"][0]["pmid"] == "999999"
+
+    session_stats = local_client.get_db_stats(db_path=str(other_db))
+    assert session_stats["tables"]["paper_metadata"]["by_status"]["discard"] == 1
+
