@@ -509,6 +509,37 @@ def test_pipeline_demo_end_to_end(tmp_path: Path):
     assert stats_after["tables"]["paper_metadata"]["total"] == 0
 
 
+def test_condition_phase_data(temp_db):
+    from peptide_extractor.db import ExtractionMode, PeptideEntry
+
+    _, test_engine = temp_db
+    with get_session_context(db_engine=test_engine) as s:
+        s.add(
+            PeptideEntry(
+                paper_id=1,
+                sequence="FF",
+                length=2,
+                type="hydrogel",
+                ph=7.4,
+                temperature=25.0,
+                peptide_concentration=5.0,
+                pmid="123456",
+                extraction_mode=ExtractionMode.LLM,
+                run_identifier=42,
+            )
+        )
+        s.commit()
+
+    client = TestClient(api.app)
+    resp = client.post("/db/peptides/phase", json={"sequence": "FF"})
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["count"] == 1
+    assert data["rows"][0]["ph"] == 7.4
+    assert data["rows"][0]["temperature"] == 25.0
+
+
+
 
 
 

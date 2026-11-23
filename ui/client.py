@@ -179,6 +179,13 @@ class PipelineClient:
             return backend.get_overview_charts_data(db_path=db_path)
         return self._request("GET", "/db/charts").json()
 
+    def get_condition_phase_data(
+        self, db_path: Optional[str] = None, **criteria: Any
+    ) -> Dict[str, Any]:
+        if self.mode == "local":
+            return backend.get_condition_phase_data(db_path=db_path, **criteria)
+        return self._request("POST", "/db/peptides/phase", json=criteria).json()
+
     def download_db(self) -> bytes:
         if self.mode == "local":
             db_path = backend.get_db_file_path()

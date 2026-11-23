@@ -916,6 +916,66 @@ def get_overview_charts_data(db_path: Optional[str] = None) -> Dict[str, Any]:
     }
 
 
+def get_condition_phase_data(
+    *,
+    sequence: Optional[str] = None,
+    morphology: Optional[str] = None,
+    extraction_mode: Optional[str] = None,
+    run_identifier: Optional[int] = None,
+    limit: int = 1000,
+    db_path: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Return PeptideEntry rows with numeric experimental conditions for phase plotting."""
+    target_engine = _get_target_engine(db_path)
+    init_db(target_engine)
+
+    with get_session_context(db_engine=target_engine) as session:
+        stmt = select(PeptideEntry)
+        if sequence and sequence.strip():
+            stmt = stmt.where(
+                func.upper(PeptideEntry.sequence).contains(sequence.strip().upper())
+            )
+        if morphology and morphology.strip():
+            stmt = stmt.where(
+                func.lower(PeptideEntry.type) == morphology.strip().lower()
+            )
+        if extraction_mode and extraction_mode.strip():
+            stmt = stmt.where(PeptideEntry.extraction_mode == extraction_mode.strip())
+        if run_identifier is not None:
+            stmt = stmt.where(PeptideEntry.run_identifier == int(run_identifier))
+        stmt = stmt.limit(limit)
+        entries = list(session.exec(stmt).all())
+
+    rows: List[Dict[str, Any]] = []
+    for e in entries:
+        if e.ph is None and e.temperature is None and e.peptide_concentration is None:
+            continue
+        rows.append(
+            {
+                "id": e.id,
+                "paper_id": e.paper_id,
+                "pmid": e.pmid,
+                "sequence": e.sequence,
+                "length": e.length,
+                "morphology": (e.type or "unspecified").strip().lower(),
+                "n_terminal": e.n_terminal,
+                "c_terminal": e.c_terminal,
+                "ph": e.ph,
+                "temperature": e.temperature,
+                "peptide_concentration": e.peptide_concentration,
+                "solvent": e.solvent or e.solution,
+                "extraction_mode": (
+                    e.extraction_mode.value
+                    if isinstance(e.extraction_mode, Enum)
+                    else str(e.extraction_mode)
+                ),
+                "run_identifier": e.run_identifier,
+            }
+        )
+
+    return {"count": len(rows), "rows": rows}
+
+
 def _parse_id_list(val: Any) -> Any:
     if val is None or val == "":
         return None

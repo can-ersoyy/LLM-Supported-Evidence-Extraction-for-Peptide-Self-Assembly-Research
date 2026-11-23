@@ -749,8 +749,8 @@ def page_db_sync(client: PipelineClient) -> None:
 
 def page_results(client: PipelineClient) -> None:
     st.header("Results & Visualizations")
-    tab_data, tab_viz, tab_cmp = st.tabs(
-        ["Data Explorer", "Visualizations", "Run Comparison"]
+    tab_data, tab_viz, tab_cmp, tab_phase = st.tabs(
+        ["Data Explorer", "Visualizations", "Run Comparison", "Condition Phase"]
     )
 
     with tab_data:
@@ -958,6 +958,85 @@ def page_results(client: PipelineClient) -> None:
                         st.code(bm["formatted_report"], language="text")
                     except Exception as exc:
                         st.error(f"Benchmark failed: {exc}")
+
+    with tab_phase:
+        st.subheader("Condition Phase Explorer (pH × Temperature × Concentration)")
+        session_db = st.session_state.get("session_db_path")
+        p1, p2, p3, p4 = st.columns(4)
+        ph_seq = p1.text_input("Sequence filter", key="phase_seq", placeholder="e.g. FF")
+        ph_morph = p2.selectbox(
+            "Morphology",
+            [
+                "",
+                "hydrogel",
+                "fiber",
+                "tube",
+                "nanosphere",
+                "ribbon",
+                "vesicle",
+                "particle",
+                "organogel",
+                "amyloid",
+                "none",
+            ],
+            key="phase_morph",
+        )
+        ph_mode = p3.selectbox("Mode", ["", "llm", "manual"], key="phase_mode")
+        ph_rid = p4.text_input("run_identifier", key="phase_rid")
+
+        ax1, ax2 = st.columns(2)
+        x_axis = ax1.selectbox("X-Axis", ["ph", "temperature", "peptide_concentration"], index=0)
+        y_axis = ax2.selectbox("Y-Axis", ["temperature", "ph", "peptide_concentration"], index=0)
+
+        try:
+            phase_res = client.get_condition_phase_data(
+                db_path=session_db,
+                sequence=ph_seq or None,
+                morphology=ph_morph or None,
+                extraction_mode=ph_mode or None,
+                run_identifier=int(ph_rid.strip()) if ph_rid.strip() else None,
+            )
+            p_rows = [
+                r
+                for r in phase_res.get("rows", [])
+                if r.get(x_axis) is not None and r.get(y_axis) is not None
+            ]
+        except Exception as exc:
+            st.error(f"Failed to load phase data: {exc}")
+            p_rows = []
+
+        if not p_rows:
+            st.info(
+                f"No entries found with both `{x_axis}` and `{y_axis}` populated."
+            )
+        else:
+            import altair as alt
+
+            st.caption(f"Plotting {len(p_rows)} entry(ies) with `{x_axis}` and `{y_axis}`.")
+            df_phase = pd.DataFrame(p_rows)
+            chart = (
+                alt.Chart(df_phase)
+                .mark_circle(size=90, opacity=0.8)
+                .encode(
+                    x=alt.X(f"{x_axis}:Q", title=x_axis),
+                    y=alt.Y(f"{y_axis}:Q", title=y_axis),
+                    color=alt.Color("morphology:N", title="Morphology"),
+                    tooltip=[
+                        "sequence:N",
+                        "morphology:N",
+                        "ph:Q",
+                        "temperature:Q",
+                        "peptide_concentration:Q",
+                        "solvent:N",
+                        "n_terminal:N",
+                        "pmid:N",
+                    ],
+                )
+                .interactive()
+                .properties(height=420)
+            )
+            st.altair_chart(chart, use_container_width=True)
+            st.dataframe(df_phase, use_container_width=True)
 
 
 def page_logs_and_jobs(client: PipelineClient) -> None:

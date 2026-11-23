@@ -109,6 +109,11 @@ def db_charts() -> Dict[str, Any]:
     return backend.get_overview_charts_data()
 
 
+@app.post("/db/peptides/phase", dependencies=[Depends(_verify_api_key)])
+def db_peptides_phase(req: Dict[str, Any]) -> Dict[str, Any]:
+    return backend.get_condition_phase_data(**req)
+
+
 @app.get("/db/download", dependencies=[Depends(_verify_api_key)])
 def db_download() -> FileResponse:
     db_path = backend.get_db_file_path()
