@@ -196,15 +196,31 @@ def deduplicate_by_doi(
         return _deduplicate(s)
 
 
-def find_abstracts_by_doi(open_alex_api_key):
-    init_db()
-    non_abstract_metadas = get_paper_metadatas(abstract="")
-    found_abstract_count = 0
+def find_abstracts_by_doi(
+    open_alex_api_key: Optional[str] = None,
+    session: Optional[Session] = None,
+    **filters: Any,
+) -> int:
+    if filters.get("id") == []:
+        return 0
 
-    semantic_scholar = SemanticScholarProvider()
-    open_alex = OpenAlexProvider(api_key=open_alex_api_key)
+    def _find(s: Session) -> int:
+        empty_str_papers = get_paper_metadatas(abstract="", session=s, **filters)
+        none_papers = get_paper_metadatas(abstract=None, session=s, **filters)
+        seen_ids = set()
+        non_abstract_metadas: List[PaperMetadata] = []
+        for paper in empty_str_papers + none_papers:
+            if paper.id not in seen_ids:
+                seen_ids.add(paper.id)
+                non_abstract_metadas.append(paper)
 
-    with get_session_context() as session:
+        if not non_abstract_metadas:
+            return 0
+
+        found_abstract_count = 0
+        semantic_scholar = SemanticScholarProvider()
+        open_alex = OpenAlexProvider(api_key=open_alex_api_key)
+
         for metadata in non_abstract_metadas:
             if metadata.doi is None:
                 logger.info(f"Skipping paper {metadata.id}: no DOI")
@@ -217,8 +233,8 @@ def find_abstracts_by_doi(open_alex_api_key):
                 if abstract is not None:
                     found_abstract_count += 1
                     metadata.abstract = abstract
-                    session.add(metadata)
-                    session.commit()
+                    s.add(metadata)
+                    s.commit()
                 else:
                     try:
                         abstract = open_alex.get_abstract_by_doi(metadata.doi)
@@ -226,8 +242,8 @@ def find_abstracts_by_doi(open_alex_api_key):
                         if abstract is not None:
                             found_abstract_count += 1
                             metadata.abstract = abstract
-                            session.add(metadata)
-                            session.commit()
+                            s.add(metadata)
+                            s.commit()
                     except Exception as e:
                         logger.info(
                             f"Failed to retrieve abstract for {metadata.doi}: {e}"
@@ -241,8 +257,8 @@ def find_abstracts_by_doi(open_alex_api_key):
                         if abstract is not None:
                             found_abstract_count += 1
                             metadata.abstract = abstract
-                            session.add(metadata)
-                            session.commit()
+                            s.add(metadata)
+                            s.commit()
                         logger.info(
                             f"Retrieved abstract for {metadata.doi}: {abstract}"
                         )
@@ -257,21 +273,40 @@ def find_abstracts_by_doi(open_alex_api_key):
         logger.info(
             f"Retrieved {found_abstract_count} abstracts out of {len(non_abstract_metadas)}"
         )
+        return found_abstract_count
+
+    if session is not None:
+        return _find(session)
+    init_db()
+    with get_session_context() as s:
+        return _find(s)
 
 
-def remove_empty_abstract_title_papers(session: Optional[Session] = None) -> int:
+def remove_empty_abstract_title_papers(
+    session: Optional[Session] = None,
+    **filters: Any,
+) -> int:
     """Returns removed count"""
+    if filters.get("id") == []:
+        return 0
 
-    def _remove(session: Session):
-        empty_abstract = get_paper_metadatas(abstract="", session=session)
-        empty_title = get_paper_metadatas(title="", session=session)
-        empty_papers = [paper for paper in empty_abstract + empty_title]
+    def _remove(s: Session) -> int:
+        empty_abstract = get_paper_metadatas(abstract="", session=s, **filters)
+        none_abstract = get_paper_metadatas(abstract=None, session=s, **filters)
+        empty_title = get_paper_metadatas(title="", session=s, **filters)
+
+        seen_ids = set()
+        empty_papers: List[PaperMetadata] = []
+        for paper in empty_abstract + none_abstract + empty_title:
+            if paper.id not in seen_ids:
+                seen_ids.add(paper.id)
+                empty_papers.append(paper)
 
         deleted_count = 0
         for paper in empty_papers:
-            session.delete(paper)
+            s.delete(paper)
             deleted_count += 1
-        session.commit()
+        s.commit()
         return deleted_count
 
     if session is not None:
@@ -801,6 +836,184 @@ def run_visualization(
         init_db()
         with get_session_context() as s:
             return _visualize(s)
+
+
+def run_full_pipeline(
+    queries: Optional[Sequence[str]] = None,
+    *,
+    db: str = "pmc",
+    paper_ids: Optional[Sequence[int]] = None,
+    pmids: Optional[Sequence[str]] = None,
+    provider: str = "google",
+    model_name: str = "gemini-3.5-flash-lite",
+    delay_seconds: float = 3.0,
+    batch_size: int = 50,
+    limit: Optional[int] = None,
+    run_identifier: Optional[int] = None,
+    log_to_file: Optional[bool] = None,
+    skip_visualization: bool = False,
+    ncbi_provider: Optional[NCBIProvider] = None,
+    open_alex_provider: Optional[OpenAlexProvider] = None,
+    session: Optional[Session] = None,
+) -> Dict[str, Any]:
+    """Run all pipeline steps end-to-end under one shared `run_identifier`.
+
+    Outputs from each step (newly discovered/surviving paper IDs, `USABLE` papers,
+    and extracted `PeptideEntry` IDs) flow automatically to the next step so you do
+    not need to pass inputs separately for each stage.
+    """
+    import os
+
+    run_id = run_identifier or int(time.time())
+    ncbi_key = os.getenv("NCBI_API_KEY")
+    oa_key = os.getenv("OPEN_ALEX_API_KEY")
+
+    if ncbi_provider is None:
+        ncbi_provider = NCBIProvider(api_key=ncbi_key, batch_size=100)
+    if open_alex_provider is None:
+        open_alex_provider = OpenAlexProvider(api_key=oa_key)
+
+    def _run(fn):
+        if session is not None:
+            return fn(session)
+        init_db()
+        with get_session_context() as s:
+            return fn(s)
+
+    active_ids: Optional[List[int]] = (
+        list(paper_ids) if paper_ids is not None else None
+    )
+    if active_ids is None and pmids is not None:
+        matched = _run(
+            lambda s: get_paper_metadatas(session=s, pmid=[str(p) for p in pmids])
+        )
+        active_ids = [p.id for p in matched if p.id is not None]
+
+    summary: Dict[str, Any] = {"run_identifier": run_id}
+
+    # 1. Search (only when queries are provided)
+    if queries:
+        retrive_ncbi_by_query(
+            ncbi_provider,
+            db=db,
+            query_list=list(queries),
+            run_identifier=run_id,
+            log_to_file=log_to_file,
+        )
+        added = _run(lambda s: get_paper_metadatas(session=s, run_identifier=run_id))
+        active_ids = [p.id for p in added if p.id is not None]
+        summary["search_count"] = len(active_ids)
+
+    # 2. Deduplicate, find missing abstracts, clean empty
+    summary["deduplicated"] = deduplicate_by_doi(session=session)
+    if active_ids is not None:
+        surviving = _run(lambda s: get_paper_metadatas(session=s, id=active_ids))
+        active_ids = [p.id for p in surviving if p.id is not None]
+
+    if active_ids != []:
+        scope = {"id": active_ids} if active_ids is not None else {}
+        summary["abstracts_found"] = find_abstracts_by_doi(
+            oa_key, session=session, **scope
+        )
+        summary["cleaned_empty"] = remove_empty_abstract_title_papers(
+            session=session, **scope
+        )
+        if active_ids is not None:
+            surviving = _run(lambda s: get_paper_metadatas(session=s, id=active_ids))
+            active_ids = [p.id for p in surviving if p.id is not None]
+
+    # 3. Relevance screening -> narrows active_ids to USABLE papers
+    if active_ids != []:
+        rel_filters = (
+            {"id": active_ids, "status": PaperStatus.NOT_PROCESSED}
+            if active_ids is not None
+            else {
+                "status": PaperStatus.NOT_PROCESSED,
+                "dataset_subset": DatasetSubset.SCRAPED,
+                **({"limit": limit} if limit is not None else {}),
+            }
+        )
+        screened, rel_fails, _ = run_bulk_relevance_screening(
+            model_name=model_name,
+            provider=provider,
+            delay_seconds=delay_seconds,
+            batch_size=batch_size,
+            run_identifier=run_id,
+            log_to_file=log_to_file,
+            session=session,
+            **rel_filters,
+        )
+        active_ids = [
+            item.id if hasattr(item, "id") else item
+            for item, res in screened
+            if getattr(res, "is_relevant", False)
+        ]
+        summary["relevance_usable"] = len(active_ids)
+        summary["relevance_failed"] = len(rel_fails)
+
+    # 4. Fetch fulltexts -> 5. Extraction -> 6. Evaluation -> 7. Visualization
+    if active_ids == []:
+        logger.info("No usable papers remaining; skipping fetch, extraction, evaluation.")
+        return summary
+
+    paper_scope = (
+        {"id": active_ids, "status": PaperStatus.USABLE}
+        if active_ids is not None
+        else {"status": PaperStatus.USABLE, **({"limit": limit} if limit is not None else {})}
+    )
+
+    fetch_ok, fetch_fail, _ = fetch_paper_fulltexts(
+        session=session,
+        ncbi_provider=ncbi_provider,
+        open_alex_provider=open_alex_provider,
+        run_identifier=run_id,
+        log_to_file=log_to_file,
+        **paper_scope,
+    )
+    summary["fetch_success"] = fetch_ok
+    summary["fetch_fail"] = fetch_fail
+
+    ext_fails, ext_run_id = run_peptide_extraction(
+        session=session,
+        provider=provider,
+        model_name=model_name,
+        delay_seconds=delay_seconds,
+        run_identifier=run_id,
+        log_to_file=log_to_file,
+        **paper_scope,
+    )
+    entries = _run(
+        lambda s: get_records(PeptideEntry, session=s, run_identifier=ext_run_id)
+    )
+    entry_ids = [e.id for e in entries if e.id is not None]
+    summary["extraction_entries"] = len(entry_ids)
+    summary["extraction_failed"] = len(ext_fails)
+
+    if entry_ids:
+        eval_fails, _ = run_evaluation(
+            session=session,
+            run_identifier=run_id,
+            log_to_file=log_to_file,
+            id=entry_ids,
+        )
+        summary["evaluation_failed"] = len(eval_fails)
+
+        if not skip_visualization:
+            viz_results, _ = run_visualization(
+                operations=[
+                    "peptide_column_completion",
+                    "peptide_morphology_distribution",
+                ],
+                model="peptide_entry",
+                session=session,
+                viz_run_identifier=run_id,
+                log_to_file=log_to_file,
+                run_identifier=ext_run_id,
+            )
+            summary["visualizations"] = [op.value for op in viz_results]
+
+    return summary
+
 
 
 # Not removing this for development/testing purposes

@@ -14,6 +14,7 @@ from peptide_extractor.pipeline import (
     run_peptide_extraction,
     run_evaluation,
     run_visualization,
+    run_full_pipeline,
 )
 from peptide_extractor.providers import NCBIProvider, OpenAlexProvider
 from peptide_extractor.logging_utils import step_logger
@@ -293,6 +294,56 @@ def visualize_cmd(model, operations, run_ids, output_dir, file_format, show):
     )
     for op, res in results.items():
         click.echo(f"[{op.value}] records={res.record_count} -> {res.output_path}")
+
+
+@cli.command(name="run_full_pipeline")
+@click.option(
+    "-q",
+    "--query",
+    "queries",
+    multiple=True,
+    help="PubMed/PMC search query (optional; if omitted, processes pending DB papers).",
+)
+@click.option("--db", default="pmc", show_default=True, help="NCBI database for search.")
+@click.option("--pmid", "pmids", multiple=True, help="Target PMID(s) to process.")
+@click.option("--paper-id", "paper_ids", multiple=True, type=int, help="Target PaperMetadata ID(s).")
+@click.option("--provider", default="google", show_default=True, help="LLM provider.")
+@click.option("--model", "model_name", default="gemini-3.5-flash-lite", show_default=True, help="LLM model name.")
+@click.option("--limit", type=int, default=None, help="Max papers when no IDs are given.")
+@click.option("--run-id", "run_identifier", type=int, default=None, help="Shared run_identifier.")
+@click.option("--skip-visualization", is_flag=True, default=False, help="Skip diagram generation.")
+@click.option("--log-to-file/--no-log-to-file", default=False, help="Store step logs in docs/logs/.")
+def run_full_pipeline_cmd(
+    queries,
+    db,
+    pmids,
+    paper_ids,
+    provider,
+    model_name,
+    limit,
+    run_identifier,
+    skip_visualization,
+    log_to_file,
+):
+    """Alternative simplified CLI that runs all steps end-to-end automatically."""
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+        force=True,
+    )
+    summary = run_full_pipeline(
+        queries=list(queries) or None,
+        db=db,
+        pmids=list(pmids) or None,
+        paper_ids=list(paper_ids) or None,
+        provider=provider,
+        model_name=model_name,
+        limit=limit,
+        run_identifier=run_identifier,
+        skip_visualization=skip_visualization,
+        log_to_file=log_to_file,
+    )
+    click.echo(summary)
 
 
 if __name__ == "__main__":
