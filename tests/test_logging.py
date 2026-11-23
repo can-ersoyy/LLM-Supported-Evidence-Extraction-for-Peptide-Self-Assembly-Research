@@ -247,3 +247,222 @@ relevance:
     assert log_file.exists()
     content = log_file.read_text(encoding="utf-8")
     assert "Running relevance screening..." in content
+
+
+def test_extraction_records_and_logs_failed_papers(memory_db, tmp_path, monkeypatch):
+    from peptide_extractor.db.peptide_entry import PeptideExtractionResult, PeptideLLMEntry
+
+    log_dir = tmp_path / "logs"
+    monkeypatch.setenv("PEPTIDE_EXTRACTOR_LOG_DIR", str(log_dir))
+
+    with Session(memory_db) as s:
+        s.add(
+            PaperMetadata(
+                id=1,
+                title="Fail Paper",
+                pmid="111",
+                is_open_access=True,
+                status=PaperStatus.USABLE,
+                dataset_subset=DatasetSubset.SCRAPED,
+            )
+        )
+        s.add(
+            PaperMetadata(
+                id=2,
+                title="Pass Paper",
+                pmid="222",
+                is_open_access=True,
+                status=PaperStatus.USABLE,
+                dataset_subset=DatasetSubset.SCRAPED,
+            )
+        )
+        s.add(PaperContent(paper_id=1, format="txt", raw_content="bad paper text"))
+        s.add(PaperContent(paper_id=2, format="txt", raw_content="good paper text"))
+        s.commit()
+
+    def mock_get_content(self):
+        return "bad paper text" if self.paper_id == 1 else "good paper text"
+
+    monkeypatch.setattr(PaperContent, "get_content", mock_get_content)
+
+    def mock_run_extraction(text, *args, **kwargs):
+        if "bad paper text" in text:
+            raise RuntimeError("LLM extraction error")
+        return PeptideExtractionResult(entries=[PeptideLLMEntry(sequence="KLVFF")])
+
+    monkeypatch.setattr(pipeline, "run_extraction", mock_run_extraction)
+    monkeypatch.setattr(pipeline, "to_extraction_ready_string", lambda x: x)
+
+    with Session(memory_db) as s:
+        failed_ids, run_id = pipeline.run_peptide_extraction(
+            session=s,
+            save=True,
+            delay_seconds=0,
+            run_identifier=101010,
+            log_to_file=True,
+        )
+
+    assert failed_ids == [1]
+    assert run_id == 101010
+
+    log_file = log_dir / "extraction" / "101010.log"
+    assert log_file.exists()
+    content = log_file.read_text(encoding="utf-8")
+    assert "Failed to extract peptides for paper 1: LLM extraction error" in content
+    assert "Extraction failed for 1 paper(s) with IDs: [1]" in content
+
+
+def test_evaluation_records_and_logs_failed_entries(memory_db, tmp_path, monkeypatch):
+    from peptide_extractor.db.peptide_entry import PeptideEntry
+    from peptide_extractor.db.extraction_evaluation import ExtractionEvaluation
+
+    log_dir = tmp_path / "logs"
+    monkeypatch.setenv("PEPTIDE_EXTRACTOR_LOG_DIR", str(log_dir))
+
+    with Session(memory_db) as s:
+        s.add(
+            PaperMetadata(
+                id=10,
+                title="Eval Paper",
+                pmid="333",
+                is_open_access=True,
+                status=PaperStatus.USABLE,
+                dataset_subset=DatasetSubset.SCRAPED,
+            )
+        )
+        s.add(PaperContent(paper_id=10, format="xml", raw_content="<article/>"))
+        s.add(PeptideEntry(id=100, paper_id=999, pmid="333", sequence="FF", length=2))  # missing PaperContent
+        s.add(PeptideEntry(id=101, paper_id=10, pmid="333", sequence="KLVFF", length=5))
+        s.commit()
+
+    def mock_evaluate(extraction, fulltext):
+        return ExtractionEvaluation(groundness_rate=1.0, completeness_rate=1.0)
+
+    monkeypatch.setattr(PaperContent, "get_content", lambda self: "<article/>")
+    monkeypatch.setattr(pipeline, "evaluate_extraction", mock_evaluate)
+    monkeypatch.setattr(pipeline.time, "sleep", lambda _: None)
+
+    with Session(memory_db) as s:
+        failed_ids, run_id = pipeline.run_evaluation(
+            session=s,
+            save=True,
+            run_identifier=202020,
+            log_to_file=True,
+        )
+
+    assert failed_ids == [100]
+    assert run_id == 202020
+
+    log_file = log_dir / "evaluation" / "202020.log"
+    assert log_file.exists()
+    content = log_file.read_text(encoding="utf-8")
+    assert "Failed to evaluate extraction for peptide 100" in content
+    assert "Evaluation failed for 1 peptide entry(ies) with IDs: [100]" in content
+
+
+def test_bulk_relevance_records_and_logs_failed_batches_and_omissions(
+    memory_db, tmp_path, monkeypatch
+):
+    from peptide_extractor.relevance import bulk_screen_papers
+    from peptide_extractor.schemas import PerPaperResult, BulkRelevanceResults, RelevanceResult
+
+    log_dir = tmp_path / "logs"
+    monkeypatch.setenv("PEPTIDE_EXTRACTOR_LOG_DIR", str(log_dir))
+
+    with Session(memory_db) as s:
+        for pid in (1, 2, 3, 4):
+            s.add(
+                PaperMetadata(
+                    id=pid,
+                    title=f"Paper {pid}",
+                    abstract=f"Abstract {pid}",
+                    is_open_access=True,
+                    status=PaperStatus.NOT_PROCESSED,
+                    dataset_subset=DatasetSubset.SCRAPED,
+                )
+            )
+        s.commit()
+
+    mock_classifier = MagicMock()
+    # Batch 1 ([1, 2]) raises; Batch 2 ([3, 4]) omits paper 4
+    mock_classifier.bulk_classify_paper.side_effect = [
+        RuntimeError("Batch API timeout"),
+        BulkRelevanceResults(
+            results=[
+                PerPaperResult(
+                    paper_id=3,
+                    relevance=RelevanceResult(
+                        detected_clues=["TEM"],
+                        explanation="Relevant",
+                        is_relevant=True,
+                        confidence=0.9,
+                    ),
+                )
+            ]
+        ),
+    ]
+
+    with Session(memory_db) as s:
+        with step_logger("relevance", 303030, enabled=True, log_dir=log_dir):
+            results, failed_ids = bulk_screen_papers(
+                batch_size=2,
+                classifier=mock_classifier,
+                session=s,
+                delay_seconds=0,
+                run_identifier=303030,
+            )
+
+    assert len(results) == 1
+    assert failed_ids == [1, 2, 4]
+
+    log_file = log_dir / "relevance" / "303030.log"
+    assert log_file.exists()
+    content = log_file.read_text(encoding="utf-8")
+    assert "Skipping papers [1, 2] due to error: Batch API timeout" in content
+    assert "Bulk relevance response omitted paper IDs [4]" in content
+    assert "Bulk relevance screening failed for 3 paper(s) with IDs: [1, 2, 4]" in content
+
+
+def test_fetch_fulltexts_records_and_logs_failed_papers(memory_db, tmp_path, monkeypatch):
+    log_dir = tmp_path / "logs"
+    monkeypatch.setenv("PEPTIDE_EXTRACTOR_LOG_DIR", str(log_dir))
+
+    with Session(memory_db) as s:
+        s.add(
+            PaperMetadata(
+                id=50,
+                title="Unfetchable Paper",
+                doi="10.1000/fail",
+                is_open_access=True,
+                status=PaperStatus.USABLE,
+                dataset_subset=DatasetSubset.SCRAPED,
+            )
+        )
+        s.commit()
+
+    mock_ncbi = MagicMock()
+    mock_ncbi.fetch.side_effect = RuntimeError("NCBI down")
+    mock_openalex = MagicMock()
+    mock_openalex.fetch.return_value = None
+    monkeypatch.setattr(pipeline.time, "sleep", lambda _: None)
+
+    with Session(memory_db) as s:
+        success, fail, run_id = pipeline.fetch_paper_fulltexts(
+            session=s,
+            ncbi_provider=mock_ncbi,
+            open_alex_provider=mock_openalex,
+            run_identifier=404040,
+            log_to_file=True,
+            id=50,
+        )
+
+    assert success == 0
+    assert fail == 1
+    assert run_id == 404040
+
+    log_file = log_dir / "fetch" / "404040.log"
+    assert log_file.exists()
+    content = log_file.read_text(encoding="utf-8")
+    assert "Failed to retrieve fulltext for paper 50 (10.1000/fail)" in content
+    assert "Fulltext fetch failed for 1 paper(s) with IDs: [50]" in content
+

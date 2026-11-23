@@ -107,11 +107,18 @@ def screen_papers(
                 session.rollback()
             failed_paper_ids.append(paper_id)
 
-            logger.info(f"Skipping paper ID {paper_id} due to error: {e}")
+            logger.error(f"Skipping paper ID {paper_id} due to error: {e}")
 
             continue
         finally:
             time.sleep(delay_seconds)
+
+    if failed_paper_ids:
+        logger.warning(
+            f"Relevance screening failed for {len(failed_paper_ids)} paper(s) with IDs: {failed_paper_ids}"
+        )
+    else:
+        logger.info("Relevance screening completed with 0 failed papers.")
 
     return results, failed_paper_ids
 
@@ -155,8 +162,10 @@ def bulk_screen_papers(
                 prepared_batch
             )
 
+            returned_ids = set()
             for result in relevance_results.results:
                 id = result.paper_id
+                returned_ids.add(id)
                 real_result = result.relevance
                 try:
                     import json
@@ -190,20 +199,33 @@ def bulk_screen_papers(
                     if session is not None:
                         session.rollback()
                     failed_paper_ids.append(id)
-                    logger.info(f"Skipping paper {id} due to error: {e}")
+                    logger.error(f"Skipping paper {id} due to error: {e}")
                     continue
+
+            missing_ids = [p.id for p in current_batch if p.id not in returned_ids]
+            if missing_ids:
+                failed_paper_ids.extend(missing_ids)
+                logger.warning(
+                    f"Bulk relevance response omitted paper IDs {missing_ids}; recorded as failed."
+                )
 
         except Exception as e:
             if session is not None:
                 session.rollback()
-                # failed_paper_ids.append(result.id)
-
-                logger.info(
-                    f"Skipping papers {current_batch[0].id} - {current_batch[-1].id} due to error: {e}"
-                )
-
-                continue
+            batch_ids = [paper.id for paper in current_batch]
+            failed_paper_ids.extend(batch_ids)
+            logger.error(
+                f"Skipping papers {batch_ids} due to error: {e}"
+            )
+            continue
         finally:
             time.sleep(delay_seconds)
+
+    if failed_paper_ids:
+        logger.warning(
+            f"Bulk relevance screening failed for {len(failed_paper_ids)} paper(s) with IDs: {failed_paper_ids}"
+        )
+    else:
+        logger.info("Bulk relevance screening completed with 0 failed papers.")
 
     return results, failed_paper_ids

@@ -363,10 +363,13 @@ def run_factored_extraction(
             },
             image_block,
         ]
-        # logger.info("Extracting table", table_prompt_blocks)
-        table_res: TableExtractionResult = table_controller.extract_peptides(
-            table_prompt_blocks, stream=True, filename=filename
-        )
+        try:
+            table_res: TableExtractionResult = table_controller.extract_peptides(
+                table_prompt_blocks, stream=True, filename=filename
+            )
+        except Exception as e:
+            logger.error(f"Failed to extract table [{table_id}] for {filename}: {e}")
+            raise
         all_entries.extend(merge_table_result_with_shared(table_res, shared, table_id))
 
     return PeptideExtractionResult(entries=all_entries)

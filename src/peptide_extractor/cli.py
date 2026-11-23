@@ -203,7 +203,7 @@ def run_pipeline(config, log_to_file):
             )
             end_time = time.time()
             logger.info(
-                f"Evaluation failed for papers with IDs: {fails}, Identifier: {identifier}, Time: {end_time - start_time}"
+                f"Evaluation failed for peptide entries with IDs: {fails}, Identifier: {identifier}, Time: {end_time - start_time}"
             )
 
     if "visualization" in steps:

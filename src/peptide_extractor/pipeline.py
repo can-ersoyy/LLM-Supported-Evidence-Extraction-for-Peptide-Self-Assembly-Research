@@ -200,6 +200,7 @@ def find_abstracts_by_doi(open_alex_api_key):
     init_db()
     non_abstract_metadas = get_paper_metadatas(abstract="")
     found_abstract_count = 0
+    failed_paper_ids = []
 
     semantic_scholar = SemanticScholarProvider()
     open_alex = OpenAlexProvider(api_key=open_alex_api_key)
@@ -228,12 +229,20 @@ def find_abstracts_by_doi(open_alex_api_key):
                             metadata.abstract = abstract
                             session.add(metadata)
                             session.commit()
+                        else:
+                            failed_paper_ids.append(metadata.id)
+                            logger.warning(
+                                f"No abstract found for paper {metadata.id} ({metadata.doi})"
+                            )
                     except Exception as e:
-                        logger.info(
-                            f"Failed to retrieve abstract for {metadata.doi}: {e}"
+                        session.rollback()
+                        failed_paper_ids.append(metadata.id)
+                        logger.error(
+                            f"Failed to retrieve abstract for paper {metadata.id} ({metadata.doi}): {e}"
                         )
                 logger.info(f"Retrieved abstract for {metadata.doi}: {abstract}")
             except Exception as e:
+                session.rollback()
                 if "429" in str(e):
                     try:
                         abstract = open_alex.get_abstract_by_doi(metadata.doi)
@@ -243,20 +252,32 @@ def find_abstracts_by_doi(open_alex_api_key):
                             metadata.abstract = abstract
                             session.add(metadata)
                             session.commit()
+                        else:
+                            failed_paper_ids.append(metadata.id)
                         logger.info(
                             f"Retrieved abstract for {metadata.doi}: {abstract}"
                         )
-                    except Exception as e:
-                        logger.info(
-                            f"Failed to retrieve abstract for {metadata.doi}: {e}"
+                    except Exception as inner_e:
+                        session.rollback()
+                        failed_paper_ids.append(metadata.id)
+                        logger.error(
+                            f"Failed to retrieve abstract for paper {metadata.id} ({metadata.doi}): {inner_e}"
                         )
-                logger.info(f"Failed to retrieve abstract for {metadata.doi}: {e}")
+                else:
+                    failed_paper_ids.append(metadata.id)
+                    logger.error(
+                        f"Failed to retrieve abstract for paper {metadata.id} ({metadata.doi}): {e}"
+                    )
 
             time.sleep(1)
 
         logger.info(
             f"Retrieved {found_abstract_count} abstracts out of {len(non_abstract_metadas)}"
         )
+        if failed_paper_ids:
+            logger.warning(
+                f"Abstract retrieval failed for {len(failed_paper_ids)} paper(s) with IDs: {failed_paper_ids}"
+            )
 
 
 def remove_empty_abstract_title_papers(session: Optional[Session] = None) -> int:
@@ -390,6 +411,7 @@ def fetch_paper_fulltexts(
 
         success_count = 0
         fail_count = 0
+        failed_paper_ids = []
 
         for paper in papers_to_retrieve:
             paper_content: Optional[PaperContent] = get_paper_content_by_paper_id(
@@ -405,25 +427,41 @@ def fetch_paper_fulltexts(
                 paper_contents, _, _ = ncbi_provider.fetch([paper])
                 paper_content = paper_contents[0]
             except Exception as e:
-                logger.info(f"Failed to retrieve fulltext for {paper.doi}: {e}")
+                logger.info(f"Failed to retrieve fulltext for paper {paper.id} ({paper.doi}): {e}")
                 logger.info("Trying pdf retrieval")
                 try:
                     paper_content = open_alex_provider.fetch(paper)
 
                 except Exception as e:
-                    logger.info(f"Failed to retrieve fulltext for {paper.doi}: {e}")
+                    logger.error(f"Failed to retrieve fulltext for paper {paper.id} ({paper.doi}): {e}")
 
             if paper_content is not None:
-                paper_content.run_identifier = run_identifier
-                session.add(paper_content)
-                session.commit()
-                success_count += 1
+                try:
+                    paper_content.run_identifier = run_identifier
+                    session.add(paper_content)
+                    session.commit()
+                    success_count += 1
+                except Exception as e:
+                    session.rollback()
+                    fail_count += 1
+                    failed_paper_ids.append(paper.id)
+                    logger.error(
+                        f"Failed to save fulltext for paper {paper.id} ({paper.doi}): {e}"
+                    )
             else:
                 fail_count += 1
+                failed_paper_ids.append(paper.id)
+                logger.error(
+                    f"Failed to retrieve fulltext for paper {paper.id} ({paper.doi}): no content returned"
+                )
 
             time.sleep(1)
 
         logger.info(f"Success: {success_count}, Fail: {fail_count}")
+        if failed_paper_ids:
+            logger.warning(
+                f"Fulltext fetch failed for {len(failed_paper_ids)} paper(s) with IDs: {failed_paper_ids}"
+            )
         return success_count, fail_count, run_identifier
 
     with step_logger(
@@ -537,6 +575,14 @@ def ingest_manual_pdfs(
                     f"Failed to ingest '{pdf_path.name}' for paper {paper.id}: {e}"
                 )
                 failed.append(pdf_path.name)
+
+        logger.info(
+            f"Manual PDF ingestion completed - uploaded: {len(uploaded)}, skipped: {len(skipped)}, unmatched: {len(unmatched)}, failed: {len(failed)}"
+        )
+        if unmatched:
+            logger.warning(f"Manual PDF ingestion unmatched files: {unmatched}")
+        if failed:
+            logger.warning(f"Manual PDF ingestion failed files: {failed}")
 
         return {
             "uploaded": uploaded,
@@ -670,8 +716,16 @@ def run_peptide_extraction(
                     session.commit()
                 time.sleep(delay_seconds)
             except Exception as e:
+                session.rollback()
                 failed_paper_ids.append(paper.id)
-                logger.info(f"Failed to extract peptides for paper {paper.id}: {e}")
+                logger.error(f"Failed to extract peptides for paper {paper.id}: {e}")
+
+        if failed_paper_ids:
+            logger.warning(
+                f"Extraction failed for {len(failed_paper_ids)} paper(s) with IDs: {failed_paper_ids}"
+            )
+        else:
+            logger.info("Extraction completed with 0 failed papers.")
 
         return failed_paper_ids, run_identifier
 
@@ -723,11 +777,19 @@ def run_evaluation(
                     session.add(evaluation)
                     session.commit()
             except Exception as e:
-                logger.info(
+                session.rollback()
+                logger.error(
                     f"Failed to evaluate extraction for peptide {extraction.id}: {e}"
                 )
                 failed_entries.append(extraction.id)
             time.sleep(1)
+
+        if failed_entries:
+            logger.warning(
+                f"Evaluation failed for {len(failed_entries)} peptide entry(ies) with IDs: {failed_entries}"
+            )
+        else:
+            logger.info("Evaluation completed with 0 failed entries.")
 
         return failed_entries, run_identifier
 
