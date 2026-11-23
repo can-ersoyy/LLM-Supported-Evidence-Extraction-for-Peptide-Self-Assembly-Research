@@ -187,8 +187,10 @@ def visualization_catalog() -> Dict[str, Any]:
 
 
 @app.get("/visualizations", dependencies=[Depends(_verify_api_key)])
-def list_visualizations() -> Dict[str, List[Dict[str, Any]]]:
-    return {"items": backend.list_visualizations()}
+def list_visualizations(
+    session_id: Optional[str] = Query(default=None),
+) -> Dict[str, List[Dict[str, Any]]]:
+    return {"items": backend.list_visualizations(session_id=session_id)}
 
 
 @app.get("/visualizations/image", dependencies=[Depends(_verify_api_key)])

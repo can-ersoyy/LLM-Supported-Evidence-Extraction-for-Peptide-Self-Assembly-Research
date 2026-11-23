@@ -272,3 +272,35 @@ def test_session_isolated_db_query(tmp_path: Path, temp_db):
     session_stats = local_client.get_db_stats(db_path=str(other_db))
     assert session_stats["tables"]["paper_metadata"]["by_status"]["discard"] == 1
 
+
+def test_session_isolated_visualizations(tmp_path: Path, monkeypatch, temp_db):
+    from ui import backend
+
+    monkeypatch.setattr("ui.backend.get_project_root", lambda: tmp_path)
+    local_client = PipelineClient(mode="local")
+
+    job_a = local_client.run_step(
+        "visualization",
+        {
+            "model": "paper_metadata",
+            "operations": ["paper_status_counts"],
+            "session_id": "sessA",
+            "log_to_file": False,
+        },
+    )
+    for _ in range(30):
+        j = local_client.get_job(job_a["id"])
+        if j["status"] in {"completed", "failed"}:
+            break
+        time.sleep(0.1)
+
+    assert j["status"] == "completed"
+    items_a = local_client.list_visualizations(session_id="sessA")
+    items_b = local_client.list_visualizations(session_id="sessB")
+    assert len(items_a) == 1
+    assert len(items_b) == 0
+    assert backend.read_visualization_image(items_a[0]["relative_path"]).startswith(
+        b"\x89PNG"
+    )
+
+

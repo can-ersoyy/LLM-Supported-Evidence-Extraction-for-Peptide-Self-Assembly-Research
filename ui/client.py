@@ -221,10 +221,15 @@ class PipelineClient:
             return backend.get_visualization_catalog()
         return self._request("GET", "/visualizations/catalog").json()
 
-    def list_visualizations(self) -> List[Dict[str, Any]]:
+    def list_visualizations(
+        self, session_id: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
         if self.mode == "local":
-            return backend.list_visualizations()
-        return self._request("GET", "/visualizations").json().get("items", [])
+            return backend.list_visualizations(session_id=session_id)
+        params = {"session_id": session_id} if session_id else {}
+        return self._request("GET", "/visualizations", params=params).json().get(
+            "items", []
+        )
 
     def get_visualization_image(self, rel_path: str) -> bytes:
         if self.mode == "local":

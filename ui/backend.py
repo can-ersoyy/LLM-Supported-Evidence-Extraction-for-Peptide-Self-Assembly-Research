@@ -39,6 +39,10 @@ from peptide_extractor.db import (
 from peptide_extractor.db.database import DEFAULT_DB_PATH, _resolve_model
 from peptide_extractor.env import load_env
 from peptide_extractor.logging_utils import get_default_log_dir, get_project_root
+import matplotlib
+
+matplotlib.use("Agg")
+
 from peptide_extractor.visualization import (
     VISUALIZATION_REGISTRY,
     VisualizationOperation,
@@ -549,11 +553,21 @@ def _execute_step(step_name: str, params: Dict[str, Any]) -> Dict[str, Any]:
         ops = params.get("operations") or []
         db_path = params.get("db_path")
         target_engine = _get_target_engine(db_path)
-        output_dir = (
-            Path(params["output_dir"])
-            if params.get("output_dir")
-            else get_project_root() / "data" / "diagrams" / str(run_identifier)
-        )
+        session_id = params.get("session_id")
+        if params.get("output_dir"):
+            output_dir = Path(params["output_dir"])
+        elif session_id:
+            safe_sid = "".join(c for c in str(session_id) if c.isalnum() or c in "-_")
+            output_dir = (
+                get_project_root()
+                / "data"
+                / "diagrams"
+                / "sessions"
+                / safe_sid
+                / str(run_identifier)
+            )
+        else:
+            output_dir = get_project_root() / "data" / "diagrams" / str(run_identifier)
         limit = filter_kwargs.pop("limit", None)
         offset = filter_kwargs.pop("offset", 0)
 
@@ -958,13 +972,18 @@ def get_visualization_catalog() -> Dict[str, Any]:
     return {"operations": catalog}
 
 
-def list_visualizations() -> List[Dict[str, Any]]:
+def list_visualizations(session_id: Optional[str] = None) -> List[Dict[str, Any]]:
     diagrams_dir = get_project_root() / "data" / "diagrams"
-    if not diagrams_dir.exists():
+    if session_id:
+        safe_sid = "".join(c for c in str(session_id) if c.isalnum() or c in "-_")
+        search_root = diagrams_dir / "sessions" / safe_sid
+    else:
+        search_root = diagrams_dir
+    if not search_root.exists():
         return []
     items: List[Dict[str, Any]] = []
     for path in sorted(
-        diagrams_dir.rglob("*"), key=lambda p: p.stat().st_mtime, reverse=True
+        search_root.rglob("*"), key=lambda p: p.stat().st_mtime, reverse=True
     ):
         if path.is_file() and path.suffix.lower() in {".png", ".jpg", ".jpeg", ".svg"}:
             rel = path.relative_to(diagrams_dir)

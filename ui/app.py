@@ -8,6 +8,7 @@ import shlex
 import sys
 import tempfile
 import time
+import uuid
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -798,6 +799,7 @@ def page_results(client: PipelineClient) -> None:
                             "run_identifier": viz_run_filter or None,
                             "limit": viz_limit or None,
                             "db_path": st.session_state.get("session_db_path"),
+                            "session_id": st.session_state.get("session_id"),
                         },
                     )
                     _submit_and_track(job)
@@ -815,7 +817,9 @@ def page_results(client: PipelineClient) -> None:
         if st.button("Refresh Diagrams"):
             st.rerun()
         try:
-            items = client.list_visualizations()
+            items = client.list_visualizations(
+                session_id=st.session_state.get("session_id")
+            )
             if not items:
                 st.info("No diagrams found in `data/diagrams/`.")
             else:
@@ -877,6 +881,7 @@ def page_logs_and_jobs(client: PipelineClient) -> None:
 
 
 def main() -> None:
+    st.session_state.setdefault("session_id", uuid.uuid4().hex[:12])
     _load_streamlit_secrets()
     client = _get_client()
     _ensure_azure_db_synced(client)
