@@ -349,6 +349,10 @@ def sync_db_from_azure(force: bool = False) -> Dict[str, Any]:
     tmp_path.write_bytes(db_bytes)
     os.replace(tmp_path, db_path)
 
+    from peptide_extractor.db import database as db_mod
+
+    db_mod.engine.dispose()
+
     return {
         "status": "downloaded",
         "source": source_desc,
@@ -875,6 +879,10 @@ def replace_db_file(raw_bytes: bytes) -> Dict[str, Any]:
     tmp_path = db_path.with_suffix(".db.tmp")
     tmp_path.write_bytes(raw_bytes)
     os.replace(tmp_path, db_path)
+
+    from peptide_extractor.db import database as db_mod
+
+    db_mod.engine.dispose()
 
     return {
         "status": "replaced",

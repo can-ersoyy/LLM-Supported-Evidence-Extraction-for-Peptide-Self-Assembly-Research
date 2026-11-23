@@ -163,8 +163,9 @@ def _render_sidebar(client: PipelineClient) -> str:
 
     if st.session_state["conn_mode"] == "Local (In-Process)":
         with st.sidebar.expander("Database Source (Session)", expanded=False):
-            if st.button("Refresh DB from Azure"):
+            if st.button("Refresh DB from Azure", key="sidebar_refresh_azure"):
                 _ensure_azure_db_synced(client, force=True)
+                st.rerun()
             az_status = st.session_state.get("_azure_sync_status")
             if az_status and az_status.get("status") != "skipped":
                 st.caption(f"Azure sync: `{az_status.get('status')}`")
@@ -226,7 +227,11 @@ def _render_sidebar(client: PipelineClient) -> str:
 
 def page_overview(client: PipelineClient) -> None:
     st.header("Database Overview")
-    if st.button("Refresh Stats"):
+    b1, b2 = st.columns([1, 2])
+    if b1.button("Refresh Stats"):
+        st.rerun()
+    if client.mode == "local" and b2.button("Refresh DB from Azure", key="ov_refresh_azure"):
+        _ensure_azure_db_synced(client, force=True)
         st.rerun()
 
     session_db = st.session_state.get("session_db_path")
