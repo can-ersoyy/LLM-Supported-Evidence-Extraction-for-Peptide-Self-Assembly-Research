@@ -447,7 +447,9 @@ def fetch_paper_fulltexts(
                 )
                 paper_content = paper_contents[0]
             except Exception as e:
-                logger.info(f"Failed to retrieve fulltext for paper {paper.id} ({paper.doi}): {e}")
+                logger.info(
+                    f"Failed to retrieve fulltext for paper {paper.id} ({paper.doi}): {e}"
+                )
                 logger.info("Trying pdf retrieval")
                 try:
                     paper_content = retry_on_external_error(
@@ -459,7 +461,9 @@ def fetch_paper_fulltexts(
                     )
 
                 except Exception as e:
-                    logger.error(f"Failed to retrieve fulltext for paper {paper.id} ({paper.doi}): {e}")
+                    logger.error(
+                        f"Failed to retrieve fulltext for paper {paper.id} ({paper.doi}): {e}"
+                    )
 
             if paper_content is not None:
                 try:
@@ -977,13 +981,20 @@ if __name__ == "__main__":
 
     # 5. Run relevance screening
 
-    # start_time = time.time()
+    start_time = time.time()
 
     #
 
     ## doing relevance in batches
+    from peptide_extractor.scratchpad import papers_to_relevance_check
 
-    # success, fails, identifier = run_bulk_relevance_screening("gemma4:26b", "ollama", delay_seconds=1, batch_size=3, id=papers_to_relevance_check)
+    success, fails, identifier = run_bulk_relevance_screening(
+        "llama3.2:3b",
+        "ollama",
+        delay_seconds=1,
+        batch_size=1,
+        id=papers_to_relevance_check,
+    )
 
     #
 
@@ -996,10 +1007,12 @@ if __name__ == "__main__":
     #
     # success, fails, identifier = run_bulk_relevance_screening("gemini-3.1-flash-lite", "google", delay_seconds=4, batch_size=10, search_query=papers_with_relevance_conflict, limit=400, offset=0)
 
-    # end_time = time.time()
+    end_time = time.time()
 
-    # print(f"Relevance Success: {success}, Fails: {fails}, Identifier: {identifier}, Time: {end_time - start_time}")
-
+    print(
+        f"Relevance Success: {success}, Fails: {fails}, Identifier: {identifier}, Time: {end_time - start_time}"
+    )
+    exit(0)
     # 6. Fetch fulltexts
 
     # fetch_paper_fulltexts(
