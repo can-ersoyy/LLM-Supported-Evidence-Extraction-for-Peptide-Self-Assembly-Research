@@ -39,28 +39,6 @@ from peptide_extractor.db import (
 from peptide_extractor.db.database import DEFAULT_DB_PATH, _resolve_model
 from peptide_extractor.env import load_env
 from peptide_extractor.logging_utils import get_default_log_dir, get_project_root
-from peptide_extractor.pipeline import (
-    NCBI_SEARCH_QUERIES_V3,
-    NCBI_SEARCH_QUERY_V1,
-    NCBI_SEARCH_QUERY_V2,
-    SCOPUS_SEARCH_QUERY_V1,
-    deduplicate_by_doi,
-    fetch_paper_fulltexts,
-    find_abstracts_by_doi,
-    ingest_manual_pdfs,
-    remove_empty_abstract_title_papers,
-    retrieve_scopus_by_query,
-    retrive_ncbi_by_query,
-    run_bulk_relevance_screening,
-    run_evaluation,
-    run_peptide_extraction,
-    run_visualization,
-)
-from peptide_extractor.providers import (
-    NCBIProvider,
-    OpenAlexProvider,
-    ScopusProvider,
-)
 from peptide_extractor.visualization import (
     VISUALIZATION_REGISTRY,
     VisualizationOperation,
@@ -554,6 +532,28 @@ def _build_filter_kwargs(params: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _execute_step(step_name: str, params: Dict[str, Any]) -> Dict[str, Any]:
+    from peptide_extractor.pipeline import (
+        NCBI_SEARCH_QUERIES_V3,
+        NCBI_SEARCH_QUERY_V1,
+        NCBI_SEARCH_QUERY_V2,
+        SCOPUS_SEARCH_QUERY_V1,
+        deduplicate_by_doi,
+        fetch_paper_fulltexts,
+        find_abstracts_by_doi,
+        remove_empty_abstract_title_papers,
+        retrieve_scopus_by_query,
+        retrive_ncbi_by_query,
+        run_bulk_relevance_screening,
+        run_evaluation,
+        run_peptide_extraction,
+        run_visualization,
+    )
+    from peptide_extractor.providers import (
+        NCBIProvider,
+        OpenAlexProvider,
+        ScopusProvider,
+    )
+
     step = step_name.strip().lower()
     ncbi_api_key = os.getenv("NCBI_API_KEY")
     open_alex_api_key = os.getenv("OPEN_ALEX_API_KEY")
@@ -786,6 +786,8 @@ def ingest_uploaded_pdfs_job(
         raise ValueError("No PDF files provided.")
 
     def _run_ingest() -> Dict[str, Any]:
+        from peptide_extractor.pipeline import ingest_manual_pdfs
+
         with tempfile.TemporaryDirectory(prefix="peptide_pdfs_") as tmpdir:
             tmp_path = Path(tmpdir)
             for filename, content in files:

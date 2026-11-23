@@ -102,7 +102,7 @@ def test_job_runner_captures_logs(temp_db):
 def test_pdf_ingestion_endpoint(temp_db):
     client = TestClient(api.app)
     with patch(
-        "ui.backend.ingest_manual_pdfs",
+        "peptide_extractor.pipeline.ingest_manual_pdfs",
         return_value={
             "uploaded": [1],
             "skipped": [],
