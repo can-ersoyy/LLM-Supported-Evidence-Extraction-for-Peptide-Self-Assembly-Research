@@ -442,6 +442,43 @@ def test_run_comparison_and_benchmark(temp_db):
     assert bm["sequence_f1"] == 1.0
 
 
+def test_overview_charts_data(temp_db):
+    from peptide_extractor.db import ExtractionMode, PaperRelevance, PeptideEntry
+
+    _, test_engine = temp_db
+    with get_session_context(db_engine=test_engine) as s:
+        s.add(
+            PeptideEntry(
+                paper_id=1,
+                sequence="FF",
+                length=2,
+                type="hydrogel",
+                pmid="123456",
+                extraction_mode=ExtractionMode.LLM,
+                run_identifier=42,
+            )
+        )
+        s.add(
+            PaperRelevance(
+                paper_id=1,
+                is_relevant=True,
+                confidence=0.92,
+                provider="google",
+                model_name="gemini-3.5-flash-lite",
+                run_identifier=10,
+            )
+        )
+        s.commit()
+
+    client = TestClient(api.app)
+    resp = client.get("/db/charts")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["morphology_counts"][0]["morphology"] == "hydrogel"
+    assert data["length_counts"][0]["length"] == 2
+    assert data["relevance_confidence"][0]["outcome"] == "relevant"
+
+
 
 
 

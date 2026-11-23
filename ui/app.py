@@ -280,6 +280,65 @@ def page_overview(client: PipelineClient) -> None:
         st.subheader("Peptide Entries by Mode")
         st.json(pe.get("by_extraction_mode", {}))
 
+    try:
+        import altair as alt
+
+        chart_data = client.get_overview_charts_data(db_path=session_db)
+        st.divider()
+        st.subheader("Interactive Distributions")
+        ch1, ch2, ch3 = st.columns(3)
+
+        morph_rows = chart_data.get("morphology_counts", [])
+        if morph_rows:
+            with ch1:
+                st.caption("Morphology Distribution")
+                c_morph = (
+                    alt.Chart(pd.DataFrame(morph_rows))
+                    .mark_bar()
+                    .encode(
+                        x=alt.X("morphology:N", sort="-y", title="Morphology"),
+                        y=alt.Y("count:Q", title="Entries"),
+                        tooltip=["morphology:N", "count:Q"],
+                    )
+                    .properties(height=260)
+                )
+                st.altair_chart(c_morph, use_container_width=True)
+
+        len_rows = chart_data.get("length_counts", [])
+        if len_rows:
+            with ch2:
+                st.caption("Peptide Length Distribution")
+                c_len = (
+                    alt.Chart(pd.DataFrame(len_rows))
+                    .mark_bar()
+                    .encode(
+                        x=alt.X("length:O", title="Length (aa)"),
+                        y=alt.Y("count:Q", title="Entries"),
+                        tooltip=["length:O", "count:Q"],
+                    )
+                    .properties(height=260)
+                )
+                st.altair_chart(c_len, use_container_width=True)
+
+        conf_rows = chart_data.get("relevance_confidence", [])
+        if conf_rows:
+            with ch3:
+                st.caption("Relevance Confidence")
+                c_conf = (
+                    alt.Chart(pd.DataFrame(conf_rows))
+                    .mark_bar()
+                    .encode(
+                        x=alt.X("confidence_bin:O", title="Confidence Bin"),
+                        y=alt.Y("count:Q", title="Papers"),
+                        color="outcome:N",
+                        tooltip=["confidence_bin:O", "outcome:N", "count:Q"],
+                    )
+                    .properties(height=260)
+                )
+                st.altair_chart(c_conf, use_container_width=True)
+    except Exception:
+        pass
+
 
 def page_run_pipeline(client: PipelineClient) -> None:
     st.header("Run Pipeline Steps")

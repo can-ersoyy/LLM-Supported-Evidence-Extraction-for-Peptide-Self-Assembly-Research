@@ -865,6 +865,57 @@ def run_golden_benchmark(
     }
 
 
+def get_overview_charts_data(db_path: Optional[str] = None) -> Dict[str, Any]:
+    """Return aggregated distributions for interactive overview charts."""
+    from collections import Counter
+
+    target_engine = _get_target_engine(db_path)
+    init_db(target_engine)
+
+    with get_session_context(db_engine=target_engine) as session:
+        peptides = session.exec(
+            select(PeptideEntry.type, PeptideEntry.length)
+        ).all()
+        relevances = session.exec(
+            select(PaperRelevance.confidence, PaperRelevance.is_relevant)
+        ).all()
+
+    morph_counter: Counter[str] = Counter()
+    len_counter: Counter[int] = Counter()
+    for p_type, p_len in peptides:
+        morph_counter[(p_type or "unspecified").strip().lower()] += 1
+        if p_len is not None:
+            len_counter[int(p_len)] += 1
+
+    morphology_counts = [
+        {"morphology": k, "count": v}
+        for k, v in morph_counter.most_common()
+    ]
+    length_counts = [
+        {"length": k, "count": v}
+        for k, v in sorted(len_counter.items())
+    ]
+
+    conf_bins: Counter[tuple[float, str]] = Counter()
+    for conf, is_rel in relevances:
+        if conf is None:
+            continue
+        bucket = round(int(conf * 10) / 10.0, 1)
+        label = "relevant" if is_rel else ("not_relevant" if is_rel is False else "unknown")
+        conf_bins[(bucket, label)] += 1
+
+    relevance_confidence = [
+        {"confidence_bin": k[0], "outcome": k[1], "count": v}
+        for k, v in sorted(conf_bins.items())
+    ]
+
+    return {
+        "morphology_counts": morphology_counts,
+        "length_counts": length_counts,
+        "relevance_confidence": relevance_confidence,
+    }
+
+
 def _parse_id_list(val: Any) -> Any:
     if val is None or val == "":
         return None

@@ -172,6 +172,13 @@ class PipelineClient:
             },
         ).json()
 
+    def get_overview_charts_data(
+        self, db_path: Optional[str] = None
+    ) -> Dict[str, Any]:
+        if self.mode == "local":
+            return backend.get_overview_charts_data(db_path=db_path)
+        return self._request("GET", "/db/charts").json()
+
     def download_db(self) -> bytes:
         if self.mode == "local":
             db_path = backend.get_db_file_path()

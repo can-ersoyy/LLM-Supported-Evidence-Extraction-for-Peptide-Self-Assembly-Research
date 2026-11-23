@@ -104,6 +104,11 @@ def db_runs_benchmark(
     )
 
 
+@app.get("/db/charts", dependencies=[Depends(_verify_api_key)])
+def db_charts() -> Dict[str, Any]:
+    return backend.get_overview_charts_data()
+
+
 @app.get("/db/download", dependencies=[Depends(_verify_api_key)])
 def db_download() -> FileResponse:
     db_path = backend.get_db_file_path()
