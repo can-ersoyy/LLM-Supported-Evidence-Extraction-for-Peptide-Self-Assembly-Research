@@ -211,7 +211,9 @@ def _render_sidebar(client: PipelineClient) -> str:
             "Results & Plots",
             "Logs & Jobs",
         ]
-    page = st.sidebar.radio("Navigation", nav_options)
+    if st.session_state.get("nav_page") not in nav_options:
+        st.session_state["nav_page"] = nav_options[0]
+    page = st.sidebar.radio("Navigation", nav_options, key="nav_page")
 
     st.sidebar.divider()
     active_job_id = st.session_state.get("active_job_id")
@@ -1252,12 +1254,55 @@ def page_paper_inspector(client: PipelineClient) -> None:
         st.info("No peptide entries recorded for this paper.")
 
 
+def _apply_query_params() -> None:
+    """Initialize navigation and search prefills from URL query parameters once."""
+    if st.session_state.get("_qp_applied"):
+        return
+    st.session_state["_qp_applied"] = True
+    try:
+        qp = st.query_params
+    except Exception:
+        return
+
+    page_param = qp.get("page")
+    seq_param = qp.get("sequence")
+    pmid_param = qp.get("pmid")
+    doi_param = qp.get("doi")
+    pid_param = qp.get("paper_id")
+
+    if seq_param:
+        st.session_state["search_seq_prefill"] = str(seq_param)
+        if not page_param:
+            page_param = "Peptide Search"
+
+    if pmid_param or doi_param or pid_param:
+        if pmid_param:
+            st.session_state["inspector_query_prefill"] = str(pmid_param)
+        elif doi_param:
+            st.session_state["inspector_query_prefill"] = str(doi_param)
+        if pid_param:
+            try:
+                st.session_state["inspector_paper_id_prefill"] = int(pid_param)
+            except ValueError:
+                pass
+        if not page_param:
+            page_param = "Paper Inspector"
+
+    if page_param:
+        st.session_state["nav_page"] = str(page_param)
+
+
 def main() -> None:
     st.session_state.setdefault("session_id", uuid.uuid4().hex[:12])
     _load_streamlit_secrets()
+    _apply_query_params()
     client = _get_client()
     _ensure_azure_db_synced(client)
     page = _render_sidebar(client)
+    try:
+        st.query_params["page"] = page
+    except Exception:
+        pass
 
     if page == "Overview & DB":
         page_overview(client)
