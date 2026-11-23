@@ -976,6 +976,104 @@ def get_condition_phase_data(
     return {"count": len(rows), "rows": rows}
 
 
+def get_golden_disagreements(
+    llm_run_identifier: int,
+    manual_run_identifier: int = 0,
+    db_path: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Compare manual vs LLM entries on covered PMIDs and surface mismatches."""
+    from collections import defaultdict
+    from peptide_extractor.golden_benchmark import (
+        normalize_c_terminal,
+        normalize_n_terminal,
+    )
+
+    target_engine = _get_target_engine(db_path)
+    init_db(target_engine)
+
+    with get_session_context(db_engine=target_engine) as session:
+        manual_rows = list(
+            session.exec(
+                select(PeptideEntry).where(
+                    PeptideEntry.run_identifier == int(manual_run_identifier),
+                    PeptideEntry.extraction_mode == ExtractionMode.MANUAL,
+                )
+            ).all()
+        )
+        llm_rows = list(
+            session.exec(
+                select(PeptideEntry).where(
+                    PeptideEntry.run_identifier == int(llm_run_identifier),
+                    PeptideEntry.extraction_mode == ExtractionMode.LLM,
+                )
+            ).all()
+        )
+
+    man_by_pmid: Dict[str, List[PeptideEntry]] = defaultdict(list)
+    llm_by_pmid: Dict[str, List[PeptideEntry]] = defaultdict(list)
+    for r in manual_rows:
+        if r.pmid:
+            man_by_pmid[r.pmid].append(r)
+    for r in llm_rows:
+        if r.pmid:
+            llm_by_pmid[r.pmid].append(r)
+
+    covered_pmids = sorted(set(man_by_pmid.keys()) & set(llm_by_pmid.keys()))
+    sequence_gaps: List[Dict[str, Any]] = []
+    morphology_mismatches: List[Dict[str, Any]] = []
+    terminal_mismatches: List[Dict[str, Any]] = []
+
+    for pmid in covered_pmids:
+        m_entries = man_by_pmid[pmid]
+        l_entries = llm_by_pmid[pmid]
+        m_seqs = {e.sequence.strip().upper() for e in m_entries if e.sequence}
+        l_seqs = {e.sequence.strip().upper() for e in l_entries if e.sequence}
+
+        for seq in sorted(m_seqs - l_seqs):
+            sequence_gaps.append({"pmid": pmid, "kind": "missed_by_llm", "sequence": seq})
+        for seq in sorted(l_seqs - m_seqs):
+            sequence_gaps.append({"pmid": pmid, "kind": "extra_in_llm", "sequence": seq})
+
+        for seq in sorted(m_seqs & l_seqs):
+            m_sub = [e for e in m_entries if e.sequence.strip().upper() == seq]
+            l_sub = [e for e in l_entries if e.sequence.strip().upper() == seq]
+
+            m_types = sorted({(e.type or "").strip().lower() for e in m_sub if e.type})
+            l_types = sorted({(e.type or "").strip().lower() for e in l_sub if e.type})
+            if m_types and l_types and not (set(m_types) & set(l_types)):
+                morphology_mismatches.append(
+                    {
+                        "pmid": pmid,
+                        "sequence": seq,
+                        "manual_type": ", ".join(m_types),
+                        "llm_type": ", ".join(l_types),
+                    }
+                )
+
+            m_nterm = sorted({normalize_n_terminal(e.n_terminal) or "free" for e in m_sub})
+            l_nterm = sorted({normalize_n_terminal(e.n_terminal) or "free" for e in l_sub})
+            m_cterm = sorted({normalize_c_terminal(e.c_terminal) or "free" for e in m_sub})
+            l_cterm = sorted({normalize_c_terminal(e.c_terminal) or "free" for e in l_sub})
+            if not (set(m_nterm) & set(l_nterm)) or not (set(m_cterm) & set(l_cterm)):
+                terminal_mismatches.append(
+                    {
+                        "pmid": pmid,
+                        "sequence": seq,
+                        "manual_n": ", ".join(m_nterm),
+                        "llm_n": ", ".join(l_nterm),
+                        "manual_c": ", ".join(m_cterm),
+                        "llm_c": ", ".join(l_cterm),
+                    }
+                )
+
+    return {
+        "covered_pmids": len(covered_pmids),
+        "sequence_gaps": sequence_gaps,
+        "morphology_mismatches": morphology_mismatches,
+        "terminal_mismatches": terminal_mismatches,
+    }
+
+
 def _parse_id_list(val: Any) -> Any:
     if val is None or val == "":
         return None

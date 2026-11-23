@@ -539,6 +539,73 @@ def test_condition_phase_data(temp_db):
     assert data["rows"][0]["temperature"] == 25.0
 
 
+def test_golden_disagreements(temp_db):
+    from peptide_extractor.db import ExtractionMode, PeptideEntry
+
+    _, test_engine = temp_db
+    with get_session_context(db_engine=test_engine) as s:
+        # Manual has FF (hydrogel, Fmoc) and KLVFF (missed by LLM)
+        s.add(
+            PeptideEntry(
+                paper_id=1,
+                sequence="FF",
+                length=2,
+                type="hydrogel",
+                n_terminal="Fmoc",
+                pmid="123456",
+                extraction_mode=ExtractionMode.MANUAL,
+                run_identifier=0,
+            )
+        )
+        s.add(
+            PeptideEntry(
+                paper_id=1,
+                sequence="KLVFF",
+                length=5,
+                type="fiber",
+                pmid="123456",
+                extraction_mode=ExtractionMode.MANUAL,
+                run_identifier=0,
+            )
+        )
+        # LLM has FF (fiber, Free -> morphology & terminal mismatch)
+        s.add(
+            PeptideEntry(
+                paper_id=1,
+                sequence="FF",
+                length=2,
+                type="fiber",
+                n_terminal="Free",
+                pmid="123456",
+                extraction_mode=ExtractionMode.LLM,
+                run_identifier=42,
+            )
+        )
+        s.commit()
+
+    client = TestClient(api.app)
+    resp = client.get(
+        "/db/runs/disagreements",
+        params={"llm_run_identifier": 42, "manual_run_identifier": 0},
+    )
+    assert resp.status_code == 200
+    dis = resp.json()
+    assert dis["covered_pmids"] == 1
+    assert dis["sequence_gaps"] == [
+        {"pmid": "123456", "kind": "missed_by_llm", "sequence": "KLVFF"}
+    ]
+    assert dis["morphology_mismatches"] == [
+        {
+            "pmid": "123456",
+            "sequence": "FF",
+            "manual_type": "hydrogel",
+            "llm_type": "fiber",
+        }
+    ]
+    assert len(dis["terminal_mismatches"]) == 1
+
+
+
 
 
 

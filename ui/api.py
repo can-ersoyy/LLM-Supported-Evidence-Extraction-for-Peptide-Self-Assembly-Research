@@ -114,6 +114,17 @@ def db_peptides_phase(req: Dict[str, Any]) -> Dict[str, Any]:
     return backend.get_condition_phase_data(**req)
 
 
+@app.get("/db/runs/disagreements", dependencies=[Depends(_verify_api_key)])
+def db_runs_disagreements(
+    llm_run_identifier: int = Query(...),
+    manual_run_identifier: int = Query(0),
+) -> Dict[str, Any]:
+    return backend.get_golden_disagreements(
+        llm_run_identifier=llm_run_identifier,
+        manual_run_identifier=manual_run_identifier,
+    )
+
+
 @app.get("/db/download", dependencies=[Depends(_verify_api_key)])
 def db_download() -> FileResponse:
     db_path = backend.get_db_file_path()

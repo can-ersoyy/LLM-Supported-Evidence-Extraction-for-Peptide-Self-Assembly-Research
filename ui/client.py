@@ -186,6 +186,27 @@ class PipelineClient:
             return backend.get_condition_phase_data(db_path=db_path, **criteria)
         return self._request("POST", "/db/peptides/phase", json=criteria).json()
 
+    def get_golden_disagreements(
+        self,
+        llm_run_identifier: int,
+        manual_run_identifier: int = 0,
+        db_path: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        if self.mode == "local":
+            return backend.get_golden_disagreements(
+                llm_run_identifier=llm_run_identifier,
+                manual_run_identifier=manual_run_identifier,
+                db_path=db_path,
+            )
+        return self._request(
+            "GET",
+            "/db/runs/disagreements",
+            params={
+                "llm_run_identifier": llm_run_identifier,
+                "manual_run_identifier": manual_run_identifier,
+            },
+        ).json()
+
     def download_db(self) -> bytes:
         if self.mode == "local":
             db_path = backend.get_db_file_path()

@@ -959,6 +959,71 @@ def page_results(client: PipelineClient) -> None:
                     except Exception as exc:
                         st.error(f"Benchmark failed: {exc}")
 
+                with st.expander("Error & Disagreement Explorer (Golden vs. LLM)"):
+                    if st.button("Analyze Disagreements", key="btn_disagree"):
+                        st.session_state["_show_disagreements"] = (
+                            int(sel_llm),
+                            int(sel_manual),
+                        )
+                    dis_pair = st.session_state.get("_show_disagreements")
+                    if dis_pair:
+                        try:
+                            dis = client.get_golden_disagreements(
+                                llm_run_identifier=dis_pair[0],
+                                manual_run_identifier=dis_pair[1],
+                                db_path=session_db,
+                            )
+                            gaps = dis.get("sequence_gaps", [])
+                            morph_mm = dis.get("morphology_mismatches", [])
+                            term_mm = dis.get("terminal_mismatches", [])
+                            missed_n = sum(
+                                1 for g in gaps if g["kind"] == "missed_by_llm"
+                            )
+                            extra_n = sum(
+                                1 for g in gaps if g["kind"] == "extra_in_llm"
+                            )
+                            d1, d2, d3, d4 = st.columns(4)
+                            d1.metric("Missed Sequences", missed_n)
+                            d2.metric("Extra Sequences", extra_n)
+                            d3.metric("Morphology Mismatches", len(morph_mm))
+                            d4.metric("Terminal Mismatches", len(term_mm))
+
+                            if gaps:
+                                st.markdown("**Sequence Gaps**")
+                                st.dataframe(pd.DataFrame(gaps), use_container_width=True)
+                            if morph_mm:
+                                st.markdown("**Morphology Mismatches**")
+                                st.dataframe(
+                                    pd.DataFrame(morph_mm), use_container_width=True
+                                )
+                            if term_mm:
+                                st.markdown("**Terminal Cap Mismatches**")
+                                st.dataframe(
+                                    pd.DataFrame(term_mm), use_container_width=True
+                                )
+
+                            bad_pmids = sorted(
+                                {
+                                    r["pmid"]
+                                    for r in (gaps + morph_mm + term_mm)
+                                    if r.get("pmid")
+                                }
+                            )
+                            if bad_pmids:
+                                jump_pmid = st.selectbox(
+                                    "Inspect Mismatched Paper", bad_pmids
+                                )
+                                if st.button("Open in Paper Inspector"):
+                                    st.session_state["inspector_query_prefill"] = (
+                                        jump_pmid
+                                    )
+                                    st.session_state["nav_page"] = "Paper Inspector"
+                                    st.rerun()
+                            elif not (gaps or morph_mm or term_mm):
+                                st.success("No disagreements found on covered PMIDs.")
+                        except Exception as exc:
+                            st.error(f"Disagreement analysis failed: {exc}")
+
     with tab_phase:
         st.subheader("Condition Phase Explorer (pH × Temperature × Concentration)")
         session_db = st.session_state.get("session_db_path")
