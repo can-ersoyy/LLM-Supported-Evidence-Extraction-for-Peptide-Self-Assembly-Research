@@ -740,6 +740,131 @@ def get_paper_detail(
     }
 
 
+def get_run_comparison(db_path: Optional[str] = None) -> Dict[str, Any]:
+    """Summarize PeptideEntry runs: counts, column completion %, and evaluation averages."""
+    target_engine = _get_target_engine(db_path)
+    init_db(target_engine)
+    completion_cols = (
+        "type",
+        "n_terminal",
+        "c_terminal",
+        "temperature",
+        "ph",
+        "peptide_concentration",
+        "solution",
+        "solvent",
+        "detection_method",
+        "preparation_protocol",
+        "evidence_span",
+    )
+
+    with get_session_context(db_engine=target_engine) as session:
+        entries = list(session.exec(select(PeptideEntry)).all())
+        evals = list(session.exec(select(ExtractionEvaluation)).all())
+
+    eval_by_entry: Dict[int, List[ExtractionEvaluation]] = {}
+    for ev in evals:
+        if ev.peptide_entry_id is not None:
+            eval_by_entry.setdefault(ev.peptide_entry_id, []).append(ev)
+
+    groups: Dict[Tuple[Any, str, Optional[str]], List[PeptideEntry]] = {}
+    for e in entries:
+        mode_val = (
+            e.extraction_mode.value
+            if isinstance(e.extraction_mode, Enum)
+            else str(e.extraction_mode)
+        )
+        key = (e.run_identifier, mode_val, e.model)
+        groups.setdefault(key, []).append(e)
+
+    rows: List[Dict[str, Any]] = []
+    for (run_id, mode_val, model_name), group in sorted(
+        groups.items(),
+        key=lambda kv: (kv[0][0] is None, kv[0][0] or 0, kv[0][1]),
+        reverse=True,
+    ):
+        total = len(group)
+        papers = {e.paper_id for e in group if e.paper_id is not None}
+        filled = 0
+        for e in group:
+            for col in completion_cols:
+                val = getattr(e, col, None)
+                if val is not None and str(val).strip() != "":
+                    filled += 1
+        completion_pct = round(
+            (filled / (total * len(completion_cols))) * 100, 1
+        ) if total else 0.0
+
+        g_rates: List[float] = []
+        f_rates: List[float] = []
+        c_rates: List[float] = []
+        for e in group:
+            if e.id is None:
+                continue
+            for ev in eval_by_entry.get(e.id, []):
+                if ev.groundness_rate is not None:
+                    g_rates.append(ev.groundness_rate)
+                if ev.faithfulness_rate is not None:
+                    f_rates.append(ev.faithfulness_rate)
+                if ev.completeness_rate is not None:
+                    c_rates.append(ev.completeness_rate)
+
+        rows.append(
+            {
+                "run_identifier": run_id,
+                "extraction_mode": mode_val,
+                "model": model_name,
+                "entries": total,
+                "papers": len(papers),
+                "avg_completion_pct": completion_pct,
+                "evaluated_entries": len(g_rates),
+                "avg_groundness": round(sum(g_rates) / len(g_rates), 3)
+                if g_rates
+                else None,
+                "avg_faithfulness": round(sum(f_rates) / len(f_rates), 3)
+                if f_rates
+                else None,
+                "avg_completeness": round(sum(c_rates) / len(c_rates), 3)
+                if c_rates
+                else None,
+            }
+        )
+
+    return {"count": len(rows), "rows": rows}
+
+
+def run_golden_benchmark(
+    llm_run_identifier: int,
+    manual_run_identifier: int = 0,
+    db_path: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Run read-only golden dataset comparison for a given LLM run_identifier."""
+    from peptide_extractor.golden_benchmark import benchmark_run_against_golden
+
+    target_engine = _get_target_engine(db_path)
+    init_db(target_engine)
+    with get_session_context(db_engine=target_engine) as session:
+        report = benchmark_run_against_golden(
+            llm_run_identifier=int(llm_run_identifier),
+            manual_run_identifier=int(manual_run_identifier),
+            session=session,
+        )
+
+    return {
+        "llm_run_identifier": int(llm_run_identifier),
+        "manual_run_identifier": int(manual_run_identifier),
+        "manual_pmids": report.manual_pmids,
+        "llm_pmids": report.llm_pmids,
+        "covered_pmids": report.covered_pmids,
+        "sequence_recall": round(report.sequence_recall, 4),
+        "sequence_precision": round(report.sequence_precision, 4),
+        "sequence_f1": round(report.sequence_f1, 4),
+        "assembling_condition_recall": round(report.assembling_condition_recall, 4),
+        "condition_precision": round(report.condition_precision, 4),
+        "formatted_report": report.format_report(),
+    }
+
+
 def _parse_id_list(val: Any) -> Any:
     if val is None or val == "":
         return None

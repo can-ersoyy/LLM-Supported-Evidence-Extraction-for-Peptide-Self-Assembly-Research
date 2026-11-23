@@ -146,6 +146,32 @@ class PipelineClient:
             params["doi"] = doi
         return self._request("GET", "/db/papers/detail", params=params).json()
 
+    def get_run_comparison(self, db_path: Optional[str] = None) -> Dict[str, Any]:
+        if self.mode == "local":
+            return backend.get_run_comparison(db_path=db_path)
+        return self._request("GET", "/db/runs/summary").json()
+
+    def run_golden_benchmark(
+        self,
+        llm_run_identifier: int,
+        manual_run_identifier: int = 0,
+        db_path: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        if self.mode == "local":
+            return backend.run_golden_benchmark(
+                llm_run_identifier=llm_run_identifier,
+                manual_run_identifier=manual_run_identifier,
+                db_path=db_path,
+            )
+        return self._request(
+            "GET",
+            "/db/runs/benchmark",
+            params={
+                "llm_run_identifier": llm_run_identifier,
+                "manual_run_identifier": manual_run_identifier,
+            },
+        ).json()
+
     def download_db(self) -> bytes:
         if self.mode == "local":
             db_path = backend.get_db_file_path()

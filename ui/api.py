@@ -88,6 +88,22 @@ def db_papers_detail(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
+@app.get("/db/runs/summary", dependencies=[Depends(_verify_api_key)])
+def db_runs_summary() -> Dict[str, Any]:
+    return backend.get_run_comparison()
+
+
+@app.get("/db/runs/benchmark", dependencies=[Depends(_verify_api_key)])
+def db_runs_benchmark(
+    llm_run_identifier: int = Query(...),
+    manual_run_identifier: int = Query(0),
+) -> Dict[str, Any]:
+    return backend.run_golden_benchmark(
+        llm_run_identifier=llm_run_identifier,
+        manual_run_identifier=manual_run_identifier,
+    )
+
+
 @app.get("/db/download", dependencies=[Depends(_verify_api_key)])
 def db_download() -> FileResponse:
     db_path = backend.get_db_file_path()

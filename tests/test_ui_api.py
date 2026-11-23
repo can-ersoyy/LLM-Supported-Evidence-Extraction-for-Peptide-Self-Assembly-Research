@@ -398,5 +398,50 @@ def test_paper_search_and_detail(temp_db):
     assert len(detail["evaluations"]) == 1
 
 
+def test_run_comparison_and_benchmark(temp_db):
+    from peptide_extractor.db import ExtractionMode, PeptideEntry
+
+    _, test_engine = temp_db
+    with get_session_context(db_engine=test_engine) as s:
+        s.add(
+            PeptideEntry(
+                paper_id=1,
+                sequence="FF",
+                length=2,
+                type="hydrogel",
+                pmid="123456",
+                extraction_mode=ExtractionMode.MANUAL,
+                run_identifier=0,
+            )
+        )
+        s.add(
+            PeptideEntry(
+                paper_id=1,
+                sequence="FF",
+                length=2,
+                type="hydrogel",
+                pmid="123456",
+                extraction_mode=ExtractionMode.LLM,
+                model="gemini-3.5-flash-lite",
+                run_identifier=42,
+            )
+        )
+        s.commit()
+
+    client = TestClient(api.app)
+    s_resp = client.get("/db/runs/summary")
+    assert s_resp.status_code == 200
+    assert s_resp.json()["count"] == 2
+
+    b_resp = client.get(
+        "/db/runs/benchmark",
+        params={"llm_run_identifier": 42, "manual_run_identifier": 0},
+    )
+    assert b_resp.status_code == 200
+    bm = b_resp.json()
+    assert bm["sequence_f1"] == 1.0
+
+
+
 
 

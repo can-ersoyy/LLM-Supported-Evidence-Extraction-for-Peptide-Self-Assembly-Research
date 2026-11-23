@@ -681,7 +681,9 @@ def page_db_sync(client: PipelineClient) -> None:
 
 def page_results(client: PipelineClient) -> None:
     st.header("Results & Visualizations")
-    tab_data, tab_viz = st.tabs(["Data Explorer", "Visualizations"])
+    tab_data, tab_viz, tab_cmp = st.tabs(
+        ["Data Explorer", "Visualizations", "Run Comparison"]
+    )
 
     with tab_data:
         c1, c2, c3, c4 = st.columns(4)
@@ -832,6 +834,62 @@ def page_results(client: PipelineClient) -> None:
                     st.image(img_bytes, caption=selected)
         except Exception as exc:
             st.error(f"Could not load diagrams: {exc}")
+
+    with tab_cmp:
+        st.subheader("Extraction Runs & Evaluation Summary")
+        session_db = st.session_state.get("session_db_path")
+        try:
+            cmp_data = client.get_run_comparison(db_path=session_db)
+            cmp_rows = cmp_data.get("rows", [])
+        except Exception as exc:
+            st.error(f"Failed to load run summary: {exc}")
+            cmp_rows = []
+
+        if not cmp_rows:
+            st.info("No PeptideEntry runs found in the database.")
+        else:
+            st.dataframe(pd.DataFrame(cmp_rows), use_container_width=True)
+
+            llm_run_ids = sorted(
+                {
+                    int(r["run_identifier"])
+                    for r in cmp_rows
+                    if r.get("extraction_mode") == "llm"
+                    and r.get("run_identifier") is not None
+                },
+                reverse=True,
+            )
+            manual_run_ids = sorted(
+                {
+                    int(r["run_identifier"])
+                    for r in cmp_rows
+                    if r.get("extraction_mode") == "manual"
+                    and r.get("run_identifier") is not None
+                }
+            )
+            if llm_run_ids and manual_run_ids:
+                st.divider()
+                st.subheader("Golden Dataset Benchmark")
+                b1, b2 = st.columns(2)
+                sel_llm = b1.selectbox("LLM run_identifier", llm_run_ids)
+                sel_manual = b2.selectbox("Manual run_identifier", manual_run_ids)
+                if st.button("Compute Golden Benchmark", type="primary"):
+                    try:
+                        bm = client.run_golden_benchmark(
+                            llm_run_identifier=int(sel_llm),
+                            manual_run_identifier=int(sel_manual),
+                            db_path=session_db,
+                        )
+                        m1, m2, m3, m4 = st.columns(4)
+                        m1.metric("Seq Recall", f"{bm['sequence_recall']:.1%}")
+                        m2.metric("Seq Precision", f"{bm['sequence_precision']:.1%}")
+                        m3.metric("Seq F1", f"{bm['sequence_f1']:.1%}")
+                        m4.metric(
+                            "Condition Prec", f"{bm['condition_precision']:.1%}"
+                        )
+                        st.code(bm["formatted_report"], language="text")
+                    except Exception as exc:
+                        st.error(f"Benchmark failed: {exc}")
 
 
 def page_logs_and_jobs(client: PipelineClient) -> None:
