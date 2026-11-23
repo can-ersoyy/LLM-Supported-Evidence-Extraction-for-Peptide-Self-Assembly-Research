@@ -286,10 +286,14 @@ def is_azure_db_configured() -> bool:
 def sync_db_from_azure(force: bool = False) -> Dict[str, Any]:
     """Download the SQLite database snapshot from Azure Blob Storage if needed.
 
-    Supports either:
-    - AZURE_DB_SAS_URL: direct HTTPS read-only SAS URL to the .db blob.
-    - AZURE_STORAGE_CONNECTION_STRING (+ AZURE_STORAGE_CONTAINER / AZURE_DB_BLOB_NAME).
+    Matches data/sync_db.py conventions:
+    - Container: AZURE_CONTAINER_NAME (or AZURE_STORAGE_CONTAINER, default 'db-backups')
+    - Blob: AZURE_BLOB_NAME (or AZURE_DB_BLOB_NAME, default 'peptide-extractor.db.tar.gz')
+    - Or direct HTTPS read-only SAS URL via AZURE_DB_SAS_URL.
+    Automatically extracts .tar.gz archives or writes raw SQLite .db files.
     """
+    import tarfile
+
     sas_url = os.getenv("AZURE_DB_SAS_URL")
     conn_str = os.getenv("AZURE_STORAGE_CONNECTION_STRING")
     if not sas_url and not conn_str:
@@ -314,11 +318,20 @@ def sync_db_from_azure(force: bool = False) -> Dict[str, Any]:
         resp.raise_for_status()
         raw_bytes = resp.content
         source_desc = "AZURE_DB_SAS_URL"
+        blob_name = sas_url.split("?", 1)[0].rsplit("/", 1)[-1]
     else:
         from peptide_extractor.azure_storage import get_blob_service_client
 
-        container = os.getenv("AZURE_STORAGE_CONTAINER", "papers")
-        blob_name = os.getenv("AZURE_DB_BLOB_NAME", "peptide-extractor.db")
+        container = (
+            os.getenv("AZURE_CONTAINER_NAME")
+            or os.getenv("AZURE_STORAGE_CONTAINER")
+            or "db-backups"
+        )
+        blob_name = (
+            os.getenv("AZURE_BLOB_NAME")
+            or os.getenv("AZURE_DB_BLOB_NAME")
+            or f"{db_path.name}.tar.gz"
+        )
         service = get_blob_service_client(conn_str)
         blob_client = service.get_container_client(container).get_blob_client(
             blob_name
@@ -326,14 +339,36 @@ def sync_db_from_azure(force: bool = False) -> Dict[str, Any]:
         raw_bytes = blob_client.download_blob().readall()
         source_desc = f"{container}/{blob_name}"
 
-    if not raw_bytes.startswith(b"SQLite format 3\x00"):
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = db_path.with_suffix(".db.azure_tmp")
+
+    # Handle .tar.gz archives (sync_db.py format) or raw SQLite .db bytes
+    is_gzip = raw_bytes[:2] == b"\x1f\x8b" or blob_name.endswith(".tar.gz")
+    if is_gzip:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            archive_path = Path(tmpdir) / "db.tar.gz"
+            archive_path.write_bytes(raw_bytes)
+            extract_dir = Path(tmpdir) / "extracted"
+            extract_dir.mkdir(parents=True, exist_ok=True)
+            with tarfile.open(archive_path, "r:gz") as tar:
+                tar.extractall(path=extract_dir)
+            extracted = [p for p in extract_dir.rglob("*") if p.is_file()]
+            if not extracted:
+                raise ValueError(f"Archive from {source_desc} contains no files.")
+            target_file = next(
+                (p for p in extracted if p.name == db_path.name),
+                extracted[0],
+            )
+            db_bytes = target_file.read_bytes()
+    else:
+        db_bytes = raw_bytes
+
+    if not db_bytes.startswith(b"SQLite format 3\x00"):
         raise ValueError(
             f"Downloaded file from {source_desc} is not a valid SQLite 3 database."
         )
 
-    db_path.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = db_path.with_suffix(".db.azure_tmp")
-    tmp_path.write_bytes(raw_bytes)
+    tmp_path.write_bytes(db_bytes)
     os.replace(tmp_path, db_path)
 
     return {

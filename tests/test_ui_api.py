@@ -212,6 +212,34 @@ def test_azure_db_snapshot_sync(tmp_path: Path, monkeypatch, temp_db):
         assert mock_get.call_count == 2
 
 
+def test_azure_db_snapshot_sync_tar_gz(tmp_path: Path, monkeypatch, temp_db):
+    import io
+    import tarfile
+    from types import SimpleNamespace
+    from ui import backend
+
+    src_db_file, _ = temp_db
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+        tar.add(src_db_file, arcname="peptide-extractor.db")
+    tar_gz_bytes = buf.getvalue()
+
+    target_db = tmp_path / "peptide-extractor.db"
+    monkeypatch.setenv("DATABASE_URL", f"sqlite:///{target_db}")
+    monkeypatch.setattr("ui.backend.DATABASE_URL", f"sqlite:///{target_db}")
+    monkeypatch.setenv(
+        "AZURE_DB_SAS_URL",
+        "https://example.blob.core.windows.net/db-backups/peptide-extractor.db.tar.gz?sig=abc",
+    )
+
+    fake_resp = SimpleNamespace(content=tar_gz_bytes, raise_for_status=lambda: None)
+    with patch("ui.backend.requests.get", return_value=fake_resp):
+        res = backend.sync_db_from_azure(force=True)
+        assert res["status"] == "downloaded"
+        assert target_db.exists()
+        assert target_db.read_bytes().startswith(b"SQLite format 3\x00")
+
+
 def test_session_isolated_db_query(tmp_path: Path, temp_db):
     other_db = tmp_path / "session_other.db"
     other_engine = create_engine(

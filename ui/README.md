@@ -57,12 +57,12 @@ In the sidebar, select `Remote API Server`, enter the server URL (and API key if
 
 ```toml
 PEPTIDE_READ_ONLY = "true"
-AZURE_DB_SAS_URL = "https://<account>.blob.core.windows.net/<container>/peptide-extractor.db?<sas_token>"
+AZURE_DB_SAS_URL = "https://<account>.blob.core.windows.net/db-backups/peptide-extractor.db.tar.gz?<sas_token>"
 # Optional: refresh interval in seconds (default: 3600)
 AZURE_DB_REFRESH_TTL_SECONDS = "3600"
 ```
 
-*(Alternatively, instead of `AZURE_DB_SAS_URL`, you can set `AZURE_STORAGE_CONNECTION_STRING`, `AZURE_STORAGE_CONTAINER`, and `AZURE_DB_BLOB_NAME`.)*
+*(Alternatively, instead of `AZURE_DB_SAS_URL`, you can set `AZURE_STORAGE_CONNECTION_STRING`, `AZURE_CONTAINER_NAME` [default: `db-backups`], and `AZURE_BLOB_NAME` [default: `peptide-extractor.db.tar.gz`]. Both `.tar.gz` archives and raw `.db` files are supported.)*
 
 On startup, the app downloads the latest SQLite snapshot from Azure. Visitors can also upload their own `.db` file in the sidebar's **Database Source (Session)** expander to inspect it in isolation without affecting other users.
 
