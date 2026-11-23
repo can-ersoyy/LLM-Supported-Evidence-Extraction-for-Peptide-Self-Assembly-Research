@@ -217,13 +217,14 @@ def find_abstracts_by_doi(open_alex_api_key):
             try:
                 abstract = semantic_scholar.get_abstract_by_doi(metadata.doi)
 
-                logger.info(abstract)
-
                 if abstract is not None:
                     found_abstract_count += 1
                     metadata.abstract = abstract
                     session.add(metadata)
                     session.commit()
+                    logger.info(
+                        f"Retrieved abstract for paper {metadata.id} ({metadata.doi}) via Semantic Scholar"
+                    )
                 else:
                     try:
                         abstract = open_alex.get_abstract_by_doi(metadata.doi)
@@ -233,6 +234,9 @@ def find_abstracts_by_doi(open_alex_api_key):
                             metadata.abstract = abstract
                             session.add(metadata)
                             session.commit()
+                            logger.info(
+                                f"Retrieved abstract for paper {metadata.id} ({metadata.doi}) via OpenAlex"
+                            )
                         else:
                             failed_paper_ids.append(metadata.id)
                             logger.warning(
@@ -244,7 +248,6 @@ def find_abstracts_by_doi(open_alex_api_key):
                         logger.error(
                             f"Failed to retrieve abstract for paper {metadata.id} ({metadata.doi}): {e}"
                         )
-                logger.info(f"Retrieved abstract for {metadata.doi}: {abstract}")
             except Exception as e:
                 session.rollback()
                 if "429" in str(e):
@@ -256,11 +259,11 @@ def find_abstracts_by_doi(open_alex_api_key):
                             metadata.abstract = abstract
                             session.add(metadata)
                             session.commit()
+                            logger.info(
+                                f"Retrieved abstract for paper {metadata.id} ({metadata.doi}) via OpenAlex"
+                            )
                         else:
                             failed_paper_ids.append(metadata.id)
-                        logger.info(
-                            f"Retrieved abstract for {metadata.doi}: {abstract}"
-                        )
                     except Exception as inner_e:
                         session.rollback()
                         failed_paper_ids.append(metadata.id)
@@ -421,7 +424,7 @@ def fetch_paper_fulltexts(
 
     def _fetch(session: Session):
         papers_to_retrieve = get_paper_metadatas(**kwargs, session=session)
-        logger.info(papers_to_retrieve)
+        logger.info(f"Fetching fulltexts for {len(papers_to_retrieve)} paper(s)")
 
         success_count = 0
         fail_count = 0
@@ -447,8 +450,9 @@ def fetch_paper_fulltexts(
                 )
                 paper_content = paper_contents[0]
             except Exception as e:
-                logger.info(f"Failed to retrieve fulltext for paper {paper.id} ({paper.doi}): {e}")
-                logger.info("Trying pdf retrieval")
+                logger.debug(
+                    f"NCBI fulltext fetch failed for paper {paper.id} ({paper.doi}): {e}; trying PDF retrieval"
+                )
                 try:
                     paper_content = retry_on_external_error(
                         open_alex_provider.fetch,
@@ -467,6 +471,9 @@ def fetch_paper_fulltexts(
                     session.add(paper_content)
                     session.commit()
                     success_count += 1
+                    logger.info(
+                        f"Fetched fulltext for paper {paper.id} (format={paper_content.format}, source={paper_content.source})"
+                    )
                 except Exception as e:
                     session.rollback()
                     fail_count += 1
@@ -669,7 +676,7 @@ def run_peptide_extraction(
                 paper_fulltext = paper_content.get_content()
 
                 if paper_content.format == "pdf" and pass_pdf_directly:
-                    logger.info(
+                    logger.debug(
                         f"Passing raw PDF ({len(paper_fulltext)} bytes) directly to LLM for paper {paper.id}"
                     )
                     entries = run_extraction(
@@ -702,7 +709,7 @@ def run_peptide_extraction(
                             tables_as_images=tables_as_images,
                             images_as_images=images_as_images,
                         )
-                    logger.info(
+                    logger.debug(
                         f"Extraction Ready Blocks ({len(extraction_payload)} blocks, layout={table_image_layout})"
                     )
                     entries = run_extraction(
@@ -728,7 +735,9 @@ def run_peptide_extraction(
                         extraction_ready_string = to_extraction_ready_string(
                             paper_fulltext
                         )
-                    logger.info(f"Extraction Ready String: {extraction_ready_string}")
+                    logger.debug(
+                        f"Extraction Ready String ({len(extraction_ready_string)} chars)"
+                    )
                     entries = run_extraction(
                         extraction_ready_string,
                         provider,
@@ -750,6 +759,9 @@ def run_peptide_extraction(
                 if save:
                     session.add_all(db_entries)
                     session.commit()
+                logger.info(
+                    f"Paper {paper.id}: extracted {len(db_entries)} entries"
+                )
                 time.sleep(delay_seconds)
             except Exception as e:
                 session.rollback()
@@ -821,6 +833,10 @@ def run_evaluation(
                 if save:
                     session.add(evaluation)
                     session.commit()
+                logger.info(
+                    f"Entry {extraction.id} (paper {extraction.paper_id}): "
+                    f"groundness={evaluation.groundness_rate:.2f}, completeness={evaluation.completeness_rate:.2f}"
+                )
             except Exception as e:
                 session.rollback()
                 logger.error(

@@ -596,3 +596,23 @@ def test_run_evaluation_retries_external_errors_only(memory_db, tmp_path, monkey
     assert "Evaluation failed for 1 peptide entry(ies) with IDs: [202]" in content
 
 
+def test_step_logger_silences_library_noise_and_logs_concise_outcomes(tmp_path):
+    log_dir = tmp_path / "logs"
+    httpx_logger = logging.getLogger("httpx")
+    google_logger = logging.getLogger("google_genai")
+    app_logger = logging.getLogger("peptide_extractor.pipeline")
+
+    with step_logger("extraction", 606060, enabled=True, log_dir=log_dir):
+        httpx_logger.info("HTTP Request: POST https://api.example.com HTTP/1.1 200 OK")
+        google_logger.warning("Library warning that should be suppressed")
+        httpx_logger.error("Critical transport failure")
+        app_logger.info("Paper 42: extracted 3 entries")
+
+    content = (log_dir / "extraction" / "606060.log").read_text(encoding="utf-8")
+    assert "HTTP Request:" not in content
+    assert "Library warning that should be suppressed" not in content
+    assert "Critical transport failure" in content
+    assert "Paper 42: extracted 3 entries" in content
+
+
+

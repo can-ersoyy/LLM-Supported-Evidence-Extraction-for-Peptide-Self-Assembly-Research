@@ -16,7 +16,7 @@ from peptide_extractor.pipeline import (
     run_visualization,
 )
 from peptide_extractor.providers import NCBIProvider, OpenAlexProvider
-from peptide_extractor.logging_utils import step_logger
+from peptide_extractor.logging_utils import silence_library_loggers, step_logger
 from peptide_extractor.visualization import VisualizationOperation
 
 logger = logging.getLogger(__name__)
@@ -59,6 +59,7 @@ def run_pipeline(config, log_to_file):
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
         force=True,
     )
+    silence_library_loggers()
 
     # Determine whether file logging is enabled globally
     if log_to_file is None:

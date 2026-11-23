@@ -51,9 +51,9 @@ def check_values_in_fulltext(evidence: str, fulltext: str):
     found_in_text = evidence in fulltext
 
     if found_in_text:
-        logger.info(f"Found {evidence} in fulltext")
+        logger.debug(f"Found {evidence} in fulltext")
     else:
-        logger.info(f"Did not find {evidence} in fulltext")
+        logger.debug(f"Did not find {evidence} in fulltext")
 
     return found_in_text
 
@@ -64,9 +64,9 @@ def search_fuzzy(evidence: str, fulltext: str, threshold: float = 90.0) -> bool:
     found = score >= threshold
 
     if found:
-        logger.info(f"[Method 3: Fuzzy] FOUND (Match score: {score:.1f}%)")
+        logger.debug(f"[Method 3: Fuzzy] FOUND (Match score: {score:.1f}%)")
     else:
-        logger.info(f"[Method 3: Fuzzy] NOT FOUND (Match score: {score:.1f}%)")
+        logger.debug(f"[Method 3: Fuzzy] NOT FOUND (Match score: {score:.1f}%)")
 
     return found
 
@@ -229,7 +229,7 @@ def evaluate_extraction(
 
     if field_value_quote_list:
         grounded_dict = groundness_check_llm(field_value_quote_list, model)
-        logger.info(f"Grounded: {grounded_dict}")
+        logger.debug(f"Grounded: {grounded_dict}")
 
         queried_span_fields = {field for field, _, _ in field_value_quote_list}
         field_lookup = {f.lower(): f for f in queried_span_fields}
