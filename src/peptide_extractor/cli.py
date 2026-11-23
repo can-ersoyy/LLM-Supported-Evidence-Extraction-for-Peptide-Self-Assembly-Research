@@ -4,14 +4,11 @@ import logging
 import os
 import time
 
-from pathlib import Path
 from peptide_extractor.pipeline import (
-    ALL_PIPELINE_STEPS,
     retrive_ncbi_by_query,
     deduplicate_by_doi,
     find_abstracts_by_doi,
     remove_empty_abstract_title_papers,
-    run_relevance_screening,
     run_bulk_relevance_screening,
     fetch_paper_fulltexts,
     run_peptide_extraction,
@@ -19,6 +16,7 @@ from peptide_extractor.pipeline import (
     run_visualization,
     run_full_pipeline,
 )
+from peptide_extractor.providers import NCBIProvider, OpenAlexProvider
 from peptide_extractor.logging_utils import step_logger
 from peptide_extractor.visualization import VisualizationOperation
 
@@ -27,7 +25,7 @@ logger = logging.getLogger(__name__)
 
 def load_config(config_path):
     with open(config_path, "r") as f:
-        return yaml.safe_load(f) or {}
+        return yaml.safe_load(f)
 
 
 @click.group()
@@ -41,115 +39,17 @@ def cli():
     "-c",
     "--config",
     type=click.Path(exists=True),
-    required=False,
-    default=None,
-    help="Path to the configuration YAML file. Optional when passing CLI flags directly.",
-)
-@click.option(
-    "-q",
-    "--query",
-    "queries",
-    multiple=True,
-    help="PubMed/PMC search query (can be specified multiple times).",
-)
-@click.option(
-    "--db",
-    default=None,
-    help="NCBI database for search (e.g. 'pmc' or 'pubmed').",
-)
-@click.option(
-    "--pmid",
-    "pmids",
-    multiple=True,
-    help="Target PMID(s) to process through the pipeline.",
-)
-@click.option(
-    "--paper-id",
-    "paper_ids",
-    multiple=True,
-    type=int,
-    help="Target PaperMetadata ID(s) to process through the pipeline.",
-)
-@click.option(
-    "--step",
-    "steps",
-    multiple=True,
-    help=f"Step(s) to run (default: all). Choices: {', '.join(ALL_PIPELINE_STEPS)}, all.",
-)
-@click.option(
-    "--provider",
-    default=None,
-    help="Default LLM provider for relevance and extraction (e.g. 'google', 'ollama').",
-)
-@click.option(
-    "--model",
-    "model_name",
-    default=None,
-    help="Default LLM model name for relevance and extraction.",
-)
-@click.option(
-    "--limit",
-    type=int,
-    default=None,
-    help="Maximum number of papers to process when no explicit IDs are given.",
-)
-@click.option(
-    "--run-id",
-    "run_identifier",
-    type=int,
-    default=None,
-    help="Shared run_identifier for the pipeline execution.",
+    required=True,
+    help="Path to the configuration YAML file.",
 )
 @click.option(
     "--log-to-file/--no-log-to-file",
     default=None,
     help="Store logs for each step in docs/logs/[step]/{run_identifier}.log",
 )
-def run_pipeline(
-    config,
-    queries,
-    db,
-    pmids,
-    paper_ids,
-    steps,
-    provider,
-    model_name,
-    limit,
-    run_identifier,
-    log_to_file,
-):
-    """Run the end-to-end peptide extraction pipeline.
-
-    Steps automatically pass their outputs (discovered/usable paper IDs and
-    run_identifier) to downstream steps, so you do not need to supply inputs
-    separately for each step.
-    """
-    if config is not None:
-        cfg = load_config(config)
-    elif not any([queries, pmids, paper_ids, steps, provider, model_name, limit, run_identifier]):
-        default_cfg = Path("default_config.yaml")
-        cfg = load_config(default_cfg) if default_cfg.exists() else {}
-    else:
-        cfg = {}
-
-    if queries:
-        cfg["queries"] = list(queries)
-    if db is not None:
-        cfg["db"] = db
-    if pmids:
-        cfg["pmids"] = list(pmids)
-    if paper_ids:
-        cfg["paper_ids"] = list(paper_ids)
-    if steps:
-        cfg["steps"] = list(steps)
-    if provider is not None:
-        cfg["provider"] = provider
-    if model_name is not None:
-        cfg["model_name"] = model_name
-    if limit is not None:
-        cfg["limit"] = limit
-    if run_identifier is not None:
-        cfg["run_identifier"] = run_identifier
+def run_pipeline(config, log_to_file):
+    """Run the peptide extraction pipeline based on a config file."""
+    cfg = load_config(config)
 
     # Set up basic logging
     log_level = getattr(
@@ -161,27 +61,178 @@ def run_pipeline(
         force=True,
     )
 
-    logger.info(
-        f"Loaded config from '{config or 'CLI/defaults'}'. Steps to execute: {cfg.get('steps', 'all')}"
-    )
+    # Determine whether file logging is enabled globally
+    if log_to_file is None:
+        global_log_to_file = bool(
+            cfg.get("log_to_file", cfg.get("save_logs", cfg.get("file_logging", False)))
+        )
+    else:
+        global_log_to_file = bool(log_to_file)
 
-    result = run_full_pipeline(
-        config=cfg,
-        log_to_file=log_to_file,
-        _step_fns={
-            "search": retrive_ncbi_by_query,
-            "deduplicate": deduplicate_by_doi,
-            "find_abstracts": find_abstracts_by_doi,
-            "clean_empty": remove_empty_abstract_title_papers,
-            "relevance_bulk": run_bulk_relevance_screening,
-            "relevance_single": run_relevance_screening,
-            "fetch_fulltext": fetch_paper_fulltexts,
-            "extraction": run_peptide_extraction,
-            "evaluation": run_evaluation,
-            "visualization": run_visualization,
-        },
+    def is_step_log_enabled(step_name: str) -> bool:
+        step_cfg = cfg.get(step_name, {})
+        if isinstance(step_cfg, dict):
+            for k in ("log_to_file", "save_logs", "file_logging"):
+                if k in step_cfg:
+                    return bool(step_cfg[k])
+        return global_log_to_file
+
+    ncbi_api_key = os.getenv("NCBI_API_KEY")
+    open_alex_api_key = os.getenv("OPEN_ALEX_API_KEY")
+
+    ncbi_provider = NCBIProvider(
+        api_key=ncbi_api_key, batch_size=cfg.get("ncbi_batch_size", 100)
     )
-    click.echo(result.summary())
+    open_alex_provider = OpenAlexProvider(api_key=open_alex_api_key)
+
+    steps = cfg.get("steps", [])
+    logger.info(f"Loaded config from '{config}'. Steps to execute: {steps}")
+
+    if "search" in steps:
+        search_cfg = cfg.get("search", {})
+        run_identifier = search_cfg.get("run_identifier") or int(time.time())
+        step_enabled = is_step_log_enabled("search")
+        with step_logger("search", run_identifier, enabled=step_enabled):
+            logger.info("Running query search...")
+            queries = search_cfg.get("queries", [])
+            db = search_cfg.get("db", "pmc")
+            retrive_ncbi_by_query(
+                ncbi_provider,
+                db=db,
+                query_list=queries,
+                run_identifier=run_identifier,
+                log_to_file=step_enabled,
+            )
+
+    if "deduplicate" in steps:
+        dd_cfg = cfg.get("deduplicate", {})
+        run_identifier = dd_cfg.get("run_identifier") or int(time.time())
+        step_enabled = is_step_log_enabled("deduplicate")
+        with step_logger("deduplicate", run_identifier, enabled=step_enabled):
+            logger.info("Deduplicating by DOI...")
+            normalize = dd_cfg.get("normalize", True)
+            remove_empty = dd_cfg.get("remove_empty", True)
+            removed = deduplicate_by_doi(normalize=normalize, remove_empty=remove_empty)
+            logger.info(f"Removed {removed} papers with duplicate doi")
+
+    if "find_abstracts" in steps:
+        fa_cfg = cfg.get("find_abstracts", {})
+        run_identifier = fa_cfg.get("run_identifier") or int(time.time())
+        step_enabled = is_step_log_enabled("find_abstracts")
+        with step_logger("find_abstracts", run_identifier, enabled=step_enabled):
+            logger.info("Finding missing abstracts...")
+            find_abstracts_by_doi(open_alex_api_key)
+
+    if "clean_empty" in steps:
+        ce_cfg = cfg.get("clean_empty", {})
+        run_identifier = ce_cfg.get("run_identifier") or int(time.time())
+        step_enabled = is_step_log_enabled("clean_empty")
+        with step_logger("clean_empty", run_identifier, enabled=step_enabled):
+            logger.info("Removing papers with empty abstract or title...")
+            removed = remove_empty_abstract_title_papers()
+            logger.info(f"Removed {removed} papers with empty abstract or title")
+
+    if "relevance" in steps:
+        rel_cfg = cfg.get("relevance", {})
+        run_identifier = rel_cfg.get("run_identifier") or int(time.time())
+        step_enabled = is_step_log_enabled("relevance")
+        with step_logger("relevance", run_identifier, enabled=step_enabled):
+            logger.info("Running relevance screening...")
+            start_time = time.time()
+            success, fails, identifier = run_bulk_relevance_screening(
+                model_name=rel_cfg.get("model_name", "gemini-3.5-flash-lite"),
+                provider=rel_cfg.get("provider", "google"),
+                delay_seconds=rel_cfg.get("delay_seconds", 3),
+                batch_size=rel_cfg.get("batch_size", 50),
+                run_identifier=run_identifier,
+                log_to_file=step_enabled,
+                **rel_cfg.get("kwargs", {}),
+            )
+            end_time = time.time()
+            logger.info(
+                f"Relevance Success: {success}, Fails: {fails}, Identifier: {identifier}, Time: {end_time - start_time}"
+            )
+
+    if "fetch_fulltext" in steps or "fetch" in steps:
+        ft_cfg = cfg.get("fetch") or cfg.get("fetch_fulltext", {})
+        run_identifier = ft_cfg.get("run_identifier") or int(time.time())
+        step_enabled = is_step_log_enabled("fetch") or is_step_log_enabled("fetch_fulltext")
+        with step_logger("fetch", run_identifier, enabled=step_enabled):
+            logger.info("Fetching fulltexts...")
+            success, fails, identifier = fetch_paper_fulltexts(
+                ncbi_provider=ncbi_provider,
+                open_alex_provider=open_alex_provider,
+                run_identifier=run_identifier,
+                log_to_file=step_enabled,
+                **ft_cfg.get("kwargs", {}),
+            )
+            logger.info(
+                f"Fetch Fulltext Success: {success}, Fails: {fails}, Identifier: {identifier}"
+            )
+
+    if "extraction" in steps:
+        ext_cfg = cfg.get("extraction", {})
+        run_identifier = ext_cfg.get("run_identifier") or int(time.time())
+        step_enabled = is_step_log_enabled("extraction")
+        with step_logger("extraction", run_identifier, enabled=step_enabled):
+            logger.info("Running extraction...")
+            start_time = time.time()
+            fails, identifier = run_peptide_extraction(
+                provider=ext_cfg.get("provider", "google"),
+                model_name=ext_cfg.get("model_name", "gemini-3.5-flash-lite"),
+                delay_seconds=ext_cfg.get("delay_seconds", 4),
+                run_identifier=run_identifier,
+                log_to_file=step_enabled,
+                **ext_cfg.get("kwargs", {}),
+            )
+            end_time = time.time()
+            logger.info(
+                f"Extraction failed for papers with IDs: {fails}, Identifier: {identifier}, Time: {end_time - start_time}"
+            )
+
+    if "evaluation" in steps:
+        eval_cfg = cfg.get("evaluation", {})
+        run_identifier = eval_cfg.get("run_identifier") or int(time.time())
+        step_enabled = is_step_log_enabled("evaluation")
+        with step_logger("evaluation", run_identifier, enabled=step_enabled):
+            logger.info("Running evaluation...")
+            start_time = time.time()
+            fails, identifier = run_evaluation(
+                run_identifier=run_identifier,
+                log_to_file=step_enabled,
+                **eval_cfg.get("kwargs", {}),
+            )
+            end_time = time.time()
+            logger.info(
+                f"Evaluation failed for papers with IDs: {fails}, Identifier: {identifier}, Time: {end_time - start_time}"
+            )
+
+    if "visualization" in steps:
+        viz_cfg = cfg.get("visualization", {})
+        viz_run_id = viz_cfg.get("run_identifier") or int(time.time())
+        step_enabled = is_step_log_enabled("visualization")
+        with step_logger("visualization", viz_run_id, enabled=step_enabled):
+            logger.info("Running visualization...")
+            start_time = time.time()
+            results, identifier = run_visualization(
+                operations=viz_cfg.get("operations", []),
+                model=viz_cfg.get("model") or viz_cfg.get("data_type"),
+                output_dir=viz_cfg.get("output_dir"),
+                save=viz_cfg.get("save", True),
+                show=viz_cfg.get("show", False),
+                file_format=viz_cfg.get("file_format", "png"),
+                dpi=viz_cfg.get("dpi", 150),
+                limit=viz_cfg.get("limit"),
+                offset=viz_cfg.get("offset", 0),
+                plot_kwargs=viz_cfg.get("plot_kwargs"),
+                viz_run_identifier=viz_run_id,
+                log_to_file=step_enabled,
+                **viz_cfg.get("kwargs", {}),
+            )
+            end_time = time.time()
+            logger.info(
+                f"Visualization generated {len(results)} diagrams, Identifier: {identifier}, Time: {end_time - start_time}"
+            )
 
 
 @cli.command(name="visualize")
@@ -243,6 +294,56 @@ def visualize_cmd(model, operations, run_ids, output_dir, file_format, show):
     )
     for op, res in results.items():
         click.echo(f"[{op.value}] records={res.record_count} -> {res.output_path}")
+
+
+@cli.command(name="run_full_pipeline")
+@click.option(
+    "-q",
+    "--query",
+    "queries",
+    multiple=True,
+    help="PubMed/PMC search query (optional; if omitted, processes pending DB papers).",
+)
+@click.option("--db", default="pmc", show_default=True, help="NCBI database for search.")
+@click.option("--pmid", "pmids", multiple=True, help="Target PMID(s) to process.")
+@click.option("--paper-id", "paper_ids", multiple=True, type=int, help="Target PaperMetadata ID(s).")
+@click.option("--provider", default="google", show_default=True, help="LLM provider.")
+@click.option("--model", "model_name", default="gemini-3.5-flash-lite", show_default=True, help="LLM model name.")
+@click.option("--limit", type=int, default=None, help="Max papers when no IDs are given.")
+@click.option("--run-id", "run_identifier", type=int, default=None, help="Shared run_identifier.")
+@click.option("--skip-visualization", is_flag=True, default=False, help="Skip diagram generation.")
+@click.option("--log-to-file/--no-log-to-file", default=False, help="Store step logs in docs/logs/.")
+def run_full_pipeline_cmd(
+    queries,
+    db,
+    pmids,
+    paper_ids,
+    provider,
+    model_name,
+    limit,
+    run_identifier,
+    skip_visualization,
+    log_to_file,
+):
+    """Alternative simplified CLI that runs all steps end-to-end automatically."""
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+        force=True,
+    )
+    summary = run_full_pipeline(
+        queries=list(queries) or None,
+        db=db,
+        pmids=list(pmids) or None,
+        paper_ids=list(paper_ids) or None,
+        provider=provider,
+        model_name=model_name,
+        limit=limit,
+        run_identifier=run_identifier,
+        skip_visualization=skip_visualization,
+        log_to_file=log_to_file,
+    )
+    click.echo(summary)
 
 
 if __name__ == "__main__":
