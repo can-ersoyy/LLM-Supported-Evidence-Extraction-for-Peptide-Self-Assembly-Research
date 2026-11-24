@@ -555,3 +555,177 @@ def benchmark_run_against_golden(
         return _run(session)
     with get_session_context() as s:
         return _run(s)
+
+
+@dataclass
+class PmidDiagnostic:
+    """Per-PMID breakdown of sequence, assembling/none row recall, precision, and solution accuracy."""
+
+    pmid: str
+    manual_seqs: int
+    llm_seqs: int
+    seq_overlap: int
+    missing_seqs: list[str]
+    extra_seqs: list[str]
+    manual_assembling: int
+    llm_assembling: int
+    matched_assembling: int
+    assembling_recall: float
+    manual_none: int
+    llm_none: int
+    matched_none: int
+    none_recall: float
+    condition_precision: float
+    solution_both_nonnull: int
+    solution_norm_match: int
+
+    @property
+    def missed_assembling(self) -> int:
+        return self.manual_assembling - self.matched_assembling
+
+
+def compare_runs_per_pmid(
+    manual_entries: Sequence[PeptideEntry],
+    llm_entries: Sequence[PeptideEntry],
+) -> list[PmidDiagnostic]:
+    """Compute per-PMID diagnostic metrics sorted by missed assembling rows (descending)."""
+    m_by_pmid: dict[str, list[PeptideEntry]] = defaultdict(list)
+    for e in manual_entries:
+        m_by_pmid[e.pmid].append(e)
+
+    l_by_pmid: dict[str, list[PeptideEntry]] = defaultdict(list)
+    for e in llm_entries:
+        l_by_pmid[e.pmid].append(e)
+
+    all_pmids = sorted(set(m_by_pmid.keys()) | set(l_by_pmid.keys()))
+    diagnostics: list[PmidDiagnostic] = []
+
+    for pmid in all_pmids:
+        m_list = m_by_pmid.get(pmid, [])
+        l_list = l_by_pmid.get(pmid, [])
+
+        m_seq_set = {e.sequence.upper() for e in m_list}
+        l_seq_set = {e.sequence.upper() for e in l_list}
+        missing = sorted(m_seq_set - l_seq_set)
+        extra = sorted(l_seq_set - m_seq_set)
+
+        m_none = sum(1 for e in m_list if (e.type or "").strip().lower() == "none")
+        m_asm = len(m_list) - m_none
+        l_none = sum(1 for e in l_list if (e.type or "").strip().lower() == "none")
+        l_asm = len(l_list) - l_none
+
+        if m_list and l_list:
+            rep = compare_runs(m_list, l_list)
+            matched_asm = rep.matched_assembling_pairs
+            matched_none = rep.matched_none_pairs
+            asm_rec = rep.assembling_condition_recall
+            none_rec = rep.none_condition_recall
+            cond_prec = rep.condition_precision
+            sol_stats = rep.field_stats.get("solution", FieldMatchStats())
+            sol_both = sol_stats.both_nonnull
+            sol_norm = sol_stats.normalized_match
+        else:
+            matched_asm = 0
+            matched_none = 0
+            asm_rec = 0.0
+            none_rec = 0.0
+            cond_prec = 0.0
+            sol_both = 0
+            sol_norm = 0
+
+        diagnostics.append(
+            PmidDiagnostic(
+                pmid=pmid,
+                manual_seqs=len(m_seq_set),
+                llm_seqs=len(l_seq_set),
+                seq_overlap=len(m_seq_set & l_seq_set),
+                missing_seqs=missing,
+                extra_seqs=extra,
+                manual_assembling=m_asm,
+                llm_assembling=l_asm,
+                matched_assembling=matched_asm,
+                assembling_recall=asm_rec,
+                manual_none=m_none,
+                llm_none=l_none,
+                matched_none=matched_none,
+                none_recall=none_rec,
+                condition_precision=cond_prec,
+                solution_both_nonnull=sol_both,
+                solution_norm_match=sol_norm,
+            )
+        )
+
+    diagnostics.sort(key=lambda d: (d.missed_assembling, d.manual_assembling), reverse=True)
+    return diagnostics
+
+
+def format_per_pmid_diagnostics(diagnostics: Sequence[PmidDiagnostic]) -> str:
+    """Format per-PMID diagnostics as an aligned summary table plus missing/extra sequence details."""
+    header = (
+        f"{'PMID':<10} {'Seq(M/L/O)':>11} {'Asm(M/L/Hit)':>13} {'AsmR':>6} "
+        f"{'None(M/L/Hit)':>14} {'NoneR':>6} {'CondP':>6} {'SolNorm':>10}"
+    )
+    lines = [header, "-" * len(header)]
+    for d in diagnostics:
+        seq_col = f"{d.manual_seqs}/{d.llm_seqs}/{d.seq_overlap}"
+        asm_col = f"{d.manual_assembling}/{d.llm_assembling}/{d.matched_assembling}"
+        none_col = f"{d.manual_none}/{d.llm_none}/{d.matched_none}"
+        sol_col = (
+            f"{d.solution_norm_match}/{d.solution_both_nonnull}"
+            if d.solution_both_nonnull
+            else "-"
+        )
+        lines.append(
+            f"{d.pmid:<10} {seq_col:>11} {asm_col:>13} {d.assembling_recall:>5.1%} "
+            f"{none_col:>14} {d.none_recall:>5.1%} {d.condition_precision:>5.1%} {sol_col:>10}"
+        )
+
+    detail_lines = []
+    for d in diagnostics:
+        if d.missing_seqs or d.extra_seqs:
+            parts = [f"PMID {d.pmid}:"]
+            if d.missing_seqs:
+                parts.append(f"missing_seqs={d.missing_seqs}")
+            if d.extra_seqs:
+                parts.append(f"extra_seqs={d.extra_seqs}")
+            detail_lines.append("  " + " | ".join(parts))
+
+    if detail_lines:
+        lines.append("")
+        lines.append("Sequence Mismatches:")
+        lines.extend(detail_lines)
+
+    return "\n".join(lines)
+
+
+def diagnose_run_per_pmid(
+    llm_run_identifier: int,
+    manual_run_identifier: int = 0,
+    pmids: Optional[Sequence[str]] = None,
+    session: Optional[Session] = None,
+) -> tuple[list[PmidDiagnostic], str]:
+    """Load manual and LLM rows from DB and return (per-PMID diagnostics, formatted table)."""
+
+    def _run(s: Session) -> tuple[list[PmidDiagnostic], str]:
+        m_stmt = select(PeptideEntry).where(
+            PeptideEntry.run_identifier == manual_run_identifier,
+            PeptideEntry.extraction_mode == ExtractionMode.MANUAL,
+        )
+        l_stmt = select(PeptideEntry).where(
+            PeptideEntry.run_identifier == llm_run_identifier,
+            PeptideEntry.extraction_mode == ExtractionMode.LLM,
+        )
+        if pmids is not None:
+            pmid_list = list(pmids)
+            m_stmt = m_stmt.where(PeptideEntry.pmid.in_(pmid_list))  # type: ignore[union-attr]
+            l_stmt = l_stmt.where(PeptideEntry.pmid.in_(pmid_list))  # type: ignore[union-attr]
+        manual = s.exec(m_stmt).all()
+        llm = s.exec(l_stmt).all()
+        diags = compare_runs_per_pmid(manual, llm)
+        return diags, format_per_pmid_diagnostics(diags)
+
+    if session is not None:
+        return _run(session)
+    with get_session_context() as s:
+        return _run(s)
+
