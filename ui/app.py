@@ -56,7 +56,8 @@ def _ensure_azure_db_synced(client: PipelineClient, force: bool = False) -> None
         return
     st.session_state["_azure_sync_attempted"] = True
     try:
-        res = client.sync_db_from_azure(force=force)
+        with st.spinner("Syncing database from Azure..."):
+            res = client.sync_db_from_azure(force=force)
         st.session_state["_azure_sync_status"] = res
     except Exception as exc:
         st.session_state["_azure_sync_status"] = {"status": "error", "error": str(exc)}
@@ -108,6 +109,8 @@ def _render_job_log_window(
         key=f"{key_prefix}_auto_{job_id}",
     )
 
+    spinner_slot = st.empty()
+
     if job.get("error"):
         st.error(job["error"])
     elif status == "completed" and job.get("result") is not None:
@@ -122,7 +125,8 @@ def _render_job_log_window(
         st.rerun()
 
     if auto_refresh and status in {"pending", "running"}:
-        time.sleep(1.5)
+        with spinner_slot, st.spinner(f"Running `{job['name']}` ({status})..."):
+            time.sleep(1.5)
         st.rerun()
 
 
@@ -218,6 +222,9 @@ def _render_sidebar(client: PipelineClient) -> str:
             "Results & Plots",
             "Logs & Jobs",
         ]
+    pending_nav = st.session_state.pop("_pending_nav_page", None)
+    if pending_nav in nav_options:
+        st.session_state["nav_page"] = pending_nav
     if st.session_state.get("nav_page") not in nav_options:
         st.session_state["nav_page"] = nav_options[0]
     page = st.sidebar.radio("Navigation", nav_options, key="nav_page")
@@ -943,11 +950,12 @@ def page_results(client: PipelineClient) -> None:
                 sel_manual = b2.selectbox("Manual run_identifier", manual_run_ids)
                 if st.button("Compute Golden Benchmark", type="primary"):
                     try:
-                        bm = client.run_golden_benchmark(
-                            llm_run_identifier=int(sel_llm),
-                            manual_run_identifier=int(sel_manual),
-                            db_path=session_db,
-                        )
+                        with st.spinner("Computing golden dataset benchmark..."):
+                            bm = client.run_golden_benchmark(
+                                llm_run_identifier=int(sel_llm),
+                                manual_run_identifier=int(sel_manual),
+                                db_path=session_db,
+                            )
                         m1, m2, m3, m4 = st.columns(4)
                         m1.metric("Seq Recall", f"{bm['sequence_recall']:.1%}")
                         m2.metric("Seq Precision", f"{bm['sequence_precision']:.1%}")
@@ -968,11 +976,12 @@ def page_results(client: PipelineClient) -> None:
                     dis_pair = st.session_state.get("_show_disagreements")
                     if dis_pair:
                         try:
-                            dis = client.get_golden_disagreements(
-                                llm_run_identifier=dis_pair[0],
-                                manual_run_identifier=dis_pair[1],
-                                db_path=session_db,
-                            )
+                            with st.spinner("Analyzing disagreements..."):
+                                dis = client.get_golden_disagreements(
+                                    llm_run_identifier=dis_pair[0],
+                                    manual_run_identifier=dis_pair[1],
+                                    db_path=session_db,
+                                )
                             gaps = dis.get("sequence_gaps", [])
                             morph_mm = dis.get("morphology_mismatches", [])
                             term_mm = dis.get("terminal_mismatches", [])
@@ -1017,7 +1026,9 @@ def page_results(client: PipelineClient) -> None:
                                     st.session_state["inspector_query_prefill"] = (
                                         jump_pmid
                                     )
-                                    st.session_state["nav_page"] = "Paper Inspector"
+                                    st.session_state["_pending_nav_page"] = (
+                                        "Paper Inspector"
+                                    )
                                     st.rerun()
                             elif not (gaps or morph_mm or term_mm):
                                 st.success("No disagreements found on covered PMIDs.")
