@@ -43,15 +43,17 @@ Results are saved to `paper_relevance` with `provider`, `model_name`, and `run_i
 
 ---
 
-## 3. Stage 2: Peptide Extraction (`extraction.py` & `pipeline.py`)
+## 3. Stage 2: Peptide Extraction (`extraction.py`, `agentic/` & `pipeline.py`)
 
-`run_peptide_extraction()` in `src/peptide_extractor/pipeline.py` selects one of **four distinct extraction pathways** depending on the paper's `PaperContent.format` (`"pdf"` or `"xml"`) and the pipeline flags.
+`run_peptide_extraction()` in `src/peptide_extractor/pipeline.py` prepares the input payload (raw PDF, multimodal blocks, or citation-tagged text) and routes to `run_extraction()`, which selects either the **Multi-Agent Orchestrator (`agentic=True`)** or one of **four non-agentic extraction pathways**.
 
 ### 3.1 Input Routing Decision Tree
 
 ```mermaid
 flowchart TD
-    START["run_peptide_extraction(paper)"] --> CHK1{"format == 'pdf' AND\npass_pdf_directly == True?"}
+    START["run_peptide_extraction(paper)"] --> CHK0{"agentic == True?"}
+    CHK0 -->|"Yes"| MODE_D["Mode D: Multi-Agent Orchestrator\n(agentic/orchestrator.py:\nScout -> Prose/Table -> Sandbox -> Review/Refine)"]
+    CHK0 -->|"No"| CHK1{"format == 'pdf' AND\npass_pdf_directly == True?"}
     CHK1 -->|"Yes"| MODE_A["Mode A: Direct Raw PDF\n(PDF_EXTRACTION_SYSTEM_PROMPT)"]
     CHK1 -->|"No"| CHK2{"tables_as_images == True OR\nimages_as_images == True?"}
 
@@ -127,6 +129,11 @@ Designed to prevent LLMs from truncating or dropping rows in large screening tab
 - **System Prompt**: `EXTRACTION_SYSTEM_PROMPT_V6` (exhaustive rules + `LOCATION_GROUNDING_RULES`).
 - **User Message**: `HumanMessage(content=f"Fulltext:\n\n{extraction_ready_string}")` produced by `to_extraction_ready_string()` (either from JATS XML or GROBID TEI XML).
 - **Output Schema**: `PeptideExtractionResult`.
+
+#### Mode D: Multi-Agent Orchestrated Extraction (`agentic=True`)
+- **Entrypoint**: `run_agentic_extraction()` / `ExtractionOrchestrator` in `src/peptide_extractor/agentic/`.
+- **Workflow**: `EntityScoutAgent` (alias registry + shared defaults) → `ProseExtractorAgent` & per-table `TableExtractorAgent` → deterministic `chemistry_sandbox.py` (alias resolution, cap/cyclic splitting, `solvent → solution`, neat `volume_ratio=[1]`, structural defaults, `detection_method` scan, deduplication) → bounded `ReviewerAgent` ↔ patch-based `RefinerAgent` loop.
+- **Full Documentation**: See [agentic_extraction.md](agentic_extraction.md) for detailed agent roles, schemas, sandbox rules, and heterogeneous model configuration.
 
 ### 3.3 `PeptideLLMEntry` & `EvidenceSpan` Schema (`db/peptide_entry.py`)
 

@@ -33,7 +33,7 @@ flowchart TD
 
     subgraph S4["4. Parsing & Extraction"]
         PC -->|"parse_document"| TREE["Unified Node Tree\n(sec / p / s / table / fig)"]
-        PC -->|"pass_pdf_directly=True"| LLM_EXT["LLM Extraction\n(extraction.py)"]
+        PC -->|"pass_pdf_directly=True"| LLM_EXT["LLM / Agentic Extraction\n(extraction.py & agentic/)"]
         TREE -->|"to_llm_string / to_llm_blocks"| LLM_EXT
         LLM_EXT --> PE[("PeptideEntry\n(extraction_mode: llm)")]
     end
@@ -105,7 +105,7 @@ Supported `steps` values (executed in the order checked by `cli.py`):
 | `clean_empty` | `remove_empty_abstract_title_papers` | — |
 | `relevance` | `run_bulk_relevance_screening` | `provider`, `model_name`, `batch_size`, `delay_seconds`, `kwargs` |
 | `fetch_fulltext` / `fetch` | `fetch_paper_fulltexts` | `kwargs` (e.g., `id`, `limit`, `status`) |
-| `extraction` | `run_peptide_extraction` | `provider`, `model_name`, `delay_seconds`, `kwargs` |
+| `extraction` | `run_peptide_extraction` | `provider`, `model_name`, `tables_as_images`, `factored_extraction`, `agentic`, `reviewer_provider`, `reviewer_model_name`, `max_refinement_rounds`, `delay_seconds`, `kwargs` |
 | `evaluation` | `run_evaluation` | `kwargs` (e.g., `run_identifier`, `limit`) |
 | `visualization` | `run_visualization` | `model`, `operations`, `output_dir`, `file_format`, `dpi`, `limit`, `offset`, `plot_kwargs` |
 
@@ -136,7 +136,8 @@ uv run src/peptide_extractor/cli.py visualize \
 | `table_renderer.py` | PyMuPDF (`fitz`) bounding-box cropping of PDF tables and figures using GROBID `coords`. |
 | `llm.py` | `LLMController` & `get_chat_model` for Google GenAI, Ollama, and OpenRouter with structured outputs. |
 | `relevance.py` | Single and bulk abstract relevance screening (`screen_papers`, `bulk_screen_papers`). |
-| `extraction.py` | Single-pass, raw-PDF, and two-pass factored extraction (`run_extraction`, `run_factored_extraction`). |
+| `extraction.py` | Single-pass, raw-PDF, two-pass factored, and agentic-routed extraction (`run_extraction`, `run_factored_extraction`). |
+| `agentic/` | Multi-agent extraction orchestrator (`ExtractionOrchestrator`, `EntityScoutAgent`, `ProseExtractorAgent`, `TableExtractorAgent`, `ReviewerAgent`, `RefinerAgent`, and `chemistry_sandbox.py`). See [agentic_extraction.md](agentic_extraction.md). |
 | `evaluation.py` | Reference-free completeness and grounding verification (`evaluate_extraction`). |
 | `golden_benchmark.py` | Normalized precision/recall/F1 comparison against golden dataset entries (`benchmark_run_against_golden`). |
 | `visualization.py` | Matplotlib/Seaborn plotting suite (`visualize`) across all pipeline tables. |
