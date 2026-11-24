@@ -1004,8 +1004,6 @@ if __name__ == "__main__":
 
     open_alex_provider = OpenAlexProvider(api_key=open_alex_api_key)
 
-    # print(benchmark_run_against_golden(llm_run_identifier=1795446961).format_report())
-
     # upload sapdb/peptideminer manually downloded pdfs to azure
     # result = ingest_manual_pdfs(
     #    pdf_dir="manual_pdfs",
@@ -1117,6 +1115,21 @@ if __name__ == "__main__":
     # fails, identifier = run_evaluation(run_identifier=123)
 
     # end_time = time.time()
+
+    # print(f"Evaluation failed for papers with IDs: {fails}, Identifier: {identifier}, Time: {end_time - start_time}")
+
+    # fails, identifier = run_peptide_extraction(
+    #    save=True,
+    #    provider="google_genai",
+    #    model_name="gemini-3.5-flash-lite",
+    #    pass_pdf_directly=True,
+    #    id=9,
+    # )
+    # print(
+    #    f"Extraction failed for papers with IDs: {fails}, Run identifier: {identifier}"
+    # )
+
+    # golden_papers_ids = [r.paper_id for r in get_records(PeptideEntry, run_identifier=0)]
 
     # print(f"Evaluation failed for papers with IDs: {fails}, Identifier: {identifier}, Time: {end_time - start_time}")
 
