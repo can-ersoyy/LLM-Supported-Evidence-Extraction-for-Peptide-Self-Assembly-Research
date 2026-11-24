@@ -457,4 +457,95 @@ def test_factored_extraction_uses_separate_table_provider_and_model(monkeypatch)
     ]
 
 
+def test_get_chat_model_ollama_defaults_and_overrides():
+    default_ollama = get_chat_model(provider="ollama", model_name="qwen3:8b")
+    assert getattr(default_ollama, "num_ctx", None) == 32000
+    assert getattr(default_ollama, "num_predict", None) == 16384
+    assert getattr(default_ollama, "repeat_penalty", None) == 1.05
+
+    custom_ollama = get_chat_model(
+        provider="ollama",
+        model_name="qwen3:8b",
+        num_ctx=16384,
+        num_predict=8192,
+        repeat_penalty=1.1,
+    )
+    assert getattr(custom_ollama, "num_ctx", None) == 16384
+    assert getattr(custom_ollama, "num_predict", None) == 8192
+    assert getattr(custom_ollama, "repeat_penalty", None) == 1.1
+
+
+def test_ollama_uses_json_mode_and_injects_schema_in_system_prompt(mock_chat_model):
+    from langchain_core.messages import SystemMessage
+
+    llm, structured = mock_chat_model
+    structured.invoke.return_value = {"entries": []}
+
+    controller = LLMController(
+        llm=llm,
+        provider="ollama",
+        model_name="qwen3:8b",
+        structured_output=PeptideExtractionResult,
+        system_prompt="Extract all peptide entries.",
+    )
+
+    llm.with_structured_output.assert_called_once_with(
+        PeptideExtractionResult, method="json_mode"
+    )
+    # Original attribute stays unchanged
+    assert controller.system_prompt == "Extract all peptide entries."
+
+    controller.extract_peptides("Fmoc-FF formed a hydrogel at 25 C.")
+    called_messages = structured.invoke.call_args[0][0]
+    sys_msgs = [m for m in called_messages if isinstance(m, SystemMessage)]
+    assert len(sys_msgs) == 1
+    assert "Extract all peptide entries." in sys_msgs[0].content
+    assert "OUTPUT FORMAT INSTRUCTIONS (STRICT JSON)" in sys_msgs[0].content
+    assert "entries" in sys_msgs[0].content
+    assert "sequence" in sys_msgs[0].content
+    assert "evidence_span" in sys_msgs[0].content
+
+
+def test_ollama_injects_schema_even_without_system_prompt(mock_chat_model):
+    from langchain_core.messages import SystemMessage
+
+    llm, structured = mock_chat_model
+    structured.invoke.return_value = RelevanceResult(
+        detected_clues=[],
+        explanation="Relevant",
+        is_relevant=True,
+        confidence=0.9,
+    )
+
+    controller = LLMController(
+        llm=llm,
+        provider="langchain_ollama",
+        model_name="llama3.2:3b",
+        structured_output=RelevanceResult,
+        system_prompt=None,
+    )
+
+    controller.classify_paper(title="FF hydrogel", abstract="Self-assembles in water.")
+    called_messages = structured.invoke.call_args[0][0]
+    sys_msgs = [m for m in called_messages if isinstance(m, SystemMessage)]
+    assert len(sys_msgs) == 1
+    assert "OUTPUT FORMAT INSTRUCTIONS (STRICT JSON)" in sys_msgs[0].content
+    assert "is_relevant" in sys_msgs[0].content
+
+
+def test_ollama_allows_explicit_structured_output_method_override(mock_chat_model):
+    llm, _ = mock_chat_model
+    LLMController(
+        llm=llm,
+        provider="ollama",
+        model_name="qwen3:8b",
+        structured_output=RelevanceResult,
+        structured_output_method="json_schema",
+    )
+    llm.with_structured_output.assert_called_once_with(
+        RelevanceResult, method="json_schema"
+    )
+
+
+
 

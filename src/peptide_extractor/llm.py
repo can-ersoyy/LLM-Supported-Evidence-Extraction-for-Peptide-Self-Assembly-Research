@@ -71,13 +71,15 @@ def get_chat_model(
             from langchain_community.chat_models import ChatOllama
 
         target_model = model_name
+        ollama_kwargs = dict(kwargs)
+        ollama_kwargs.setdefault("num_ctx", 32000)
+        ollama_kwargs.setdefault("num_predict", 16384)
+        ollama_kwargs.setdefault("repeat_penalty", 1.05)
         return ChatOllama(
             base_url=base_url,
             model=target_model,
             temperature=temperature,
-            num_ctx=32000,
-            num_predict=5000,
-            **kwargs,
+            **ollama_kwargs,
         )
 
     elif provider_clean in ("open_router", "openrouter", "open-router"):
@@ -105,6 +107,24 @@ def get_chat_model(
     raise ValueError(f"Unsupported LLM provider '{provider}'.")
 
 
+def _build_ollama_schema_instructions(schema: Type[BaseModel]) -> str:
+    """Build explicit JSON schema format instructions for Ollama system prompts.
+
+    langchain_ollama's ``with_structured_output(..., method="json_mode" | "json_schema")``
+    does not inject the Pydantic schema or Field descriptions into the prompt. Without
+    explicit instructions, Ollama models cannot see field names, enums, or units.
+    """
+    from langchain_core.output_parsers import PydanticOutputParser
+
+    parser = PydanticOutputParser(pydantic_object=schema)
+    return (
+        "OUTPUT FORMAT INSTRUCTIONS (STRICT JSON):\n"
+        "Return ONLY a single valid JSON object matching the schema below. "
+        "Do not wrap the JSON in markdown fences or add commentary.\n\n"
+        f"{parser.get_format_instructions()}"
+    )
+
+
 class LLMController:
     """Simple controller managing LangChain models and task methods."""
 
@@ -119,6 +139,7 @@ class LLMController:
         api_key: Optional[str] = None,
         base_url: Optional[str] = None,  # used for remote llm connection via ollama
         stream: bool = False,
+        structured_output_method: Optional[str] = None,
         **kwargs: Any,
     ):
         self.provider = provider
@@ -138,19 +159,19 @@ class LLMController:
         )
         self.stream = stream
 
-        if self.structured_output and provider != "ollama":
+        provider_clean = (provider or "").lower().strip()
+        self._is_ollama = provider_clean in ("ollama", "langchain_ollama")
+
+        # For Ollama, default to json_mode (format="json") + prompt-injected schema
+        # instead of method="json_schema", which compiles large nested Pydantic v2
+        # anyOf schemas into llama.cpp GBNF grammars that cause infinite loops and
+        # hide field descriptions from the model.
+        resolved_method = structured_output_method or "json_mode"
+
+        if self.structured_output:
             try:
                 self.structured_llm = self.llm.with_structured_output(
-                    self.structured_output, method="json_mode"
-                )
-            except Exception:
-                self.structured_llm = self.llm.with_structured_output(
-                    self.structured_output
-                )
-        elif self.structured_output and provider == "ollama":
-            try:
-                self.structured_llm = self.llm.with_structured_output(
-                    self.structured_output, method="json_schema"
+                    self.structured_output, method=resolved_method
                 )
             except Exception:
                 self.structured_llm = self.llm.with_structured_output(
@@ -158,6 +179,18 @@ class LLMController:
                 )
         else:
             self.structured_llm = self.llm
+
+    def _get_effective_system_prompt(self) -> Optional[str]:
+        """Return system prompt, appending JSON schema instructions for Ollama structured outputs."""
+        base = self.system_prompt
+        if self._is_ollama and self.structured_output is not None:
+            schema_instructions = _build_ollama_schema_instructions(
+                self.structured_output
+            )
+            if base:
+                return f"{base}\n\n{schema_instructions}"
+            return schema_instructions
+        return base
 
     def classify_paper(
         self,
@@ -181,8 +214,9 @@ class LLMController:
         )
 
         messages: List[BaseMessage] = []
-        if self.system_prompt:
-            messages.append(SystemMessage(content=self.system_prompt))
+        effective_system_prompt = self._get_effective_system_prompt()
+        if effective_system_prompt:
+            messages.append(SystemMessage(content=effective_system_prompt))
         messages.append(HumanMessage(content=user_content))
 
         res = self.structured_llm.invoke(messages)
@@ -208,8 +242,9 @@ class LLMController:
         )
 
         messages: List[BaseMessage] = []
-        if self.system_prompt:
-            messages.append(SystemMessage(content=self.system_prompt))
+        effective_system_prompt = self._get_effective_system_prompt()
+        if effective_system_prompt:
+            messages.append(SystemMessage(content=effective_system_prompt))
         messages.append(HumanMessage(content=user_content))
 
         should_stream = self.stream if stream is None else stream
@@ -238,8 +273,9 @@ class LLMController:
             paper_content = paper_content.read_bytes()
 
         messages: List[BaseMessage] = []
-        if self.system_prompt:
-            messages.append(SystemMessage(content=self.system_prompt))
+        effective_system_prompt = self._get_effective_system_prompt()
+        if effective_system_prompt:
+            messages.append(SystemMessage(content=effective_system_prompt))
 
         if isinstance(paper_content, bytes):
             provider_clean = (self.provider or "").lower().strip()
@@ -288,8 +324,9 @@ class LLMController:
     def evaluate_faithfullness(self, field_value: str, evidence: str) -> bool:
         """Evaluate if the field value is faithful to the evidence."""
         messages: List[BaseMessage] = []
-        if self.system_prompt:
-            messages.append(SystemMessage(content=self.system_prompt))
+        effective_system_prompt = self._get_effective_system_prompt()
+        if effective_system_prompt:
+            messages.append(SystemMessage(content=effective_system_prompt))
         messages.append(
             HumanMessage(content=f"Field value: {field_value}\n\nEvidence: {evidence}")
         )
@@ -302,8 +339,9 @@ class LLMController:
     def evaluate_groundness(self, field_value_quote_list: list) -> bool:
         """Evaluate if the field value is grounded in the original text."""
         messages: List[BaseMessage] = []
-        if self.system_prompt:
-            messages.append(SystemMessage(content=self.system_prompt))
+        effective_system_prompt = self._get_effective_system_prompt()
+        if effective_system_prompt:
+            messages.append(SystemMessage(content=effective_system_prompt))
         messages.append(
             HumanMessage(
                 content=f"""Following is a list of three item tuples (field, value, quote). Check if the value for each tuple is grounded in the corresponding quote. Return a list of booleans indicating whether each value is grounded.
