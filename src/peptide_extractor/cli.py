@@ -201,6 +201,10 @@ def run_pipeline(config, log_to_file):
             "factored_extraction",
             "table_provider",
             "table_model_name",
+            "agentic",
+            "reviewer_provider",
+            "reviewer_model_name",
+            "max_refinement_rounds",
         ):
             if opt in ext_cfg:
                 ext_kwargs.setdefault(opt, ext_cfg[opt])

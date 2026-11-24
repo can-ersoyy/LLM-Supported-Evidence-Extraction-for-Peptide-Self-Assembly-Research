@@ -664,6 +664,11 @@ def run_peptide_extraction(
     factored_extraction: bool = True,
     table_provider: Optional[str] = None,
     table_model_name: Optional[str] = None,
+    agentic: bool = False,
+    reviewer_provider: Optional[str] = None,
+    reviewer_model_name: Optional[str] = None,
+    max_refinement_rounds: int = 1,
+    agentic_config: Optional[Any] = None,
     max_retries: int = 0,
     retry_delay: float = 2.0,
     **kwargs,
@@ -685,6 +690,16 @@ def run_peptide_extraction(
                 f"pass_pdf_directly=True requires content_format='pdf' (got '{content_format}')."
             )
         resolved_format = "pdf"
+
+    agentic_kwargs: Dict[str, Any] = {}
+    if agentic:
+        agentic_kwargs = {
+            "agentic": True,
+            "reviewer_provider": reviewer_provider,
+            "reviewer_model_name": reviewer_model_name,
+            "max_refinement_rounds": max_refinement_rounds,
+            "agentic_config": agentic_config,
+        }
 
     def _run(session: Session):
 
@@ -719,6 +734,7 @@ def run_peptide_extraction(
                         filename=f"paper_{paper.id}.pdf",
                         max_retries=max_retries,
                         retry_delay=retry_delay,
+                        **agentic_kwargs,
                     ).entries
                 elif tables_as_images or images_as_images:
                     extraction_method = (
@@ -759,6 +775,7 @@ def run_peptide_extraction(
                         table_model_name=table_model_name,
                         max_retries=max_retries,
                         retry_delay=retry_delay,
+                        **agentic_kwargs,
                     ).entries
                 else:
                     extraction_method = ExtractionMethod.TEXT
@@ -781,6 +798,7 @@ def run_peptide_extraction(
                         model_name,
                         max_retries=max_retries,
                         retry_delay=retry_delay,
+                        **agentic_kwargs,
                     ).entries
 
                 db_entries = [
