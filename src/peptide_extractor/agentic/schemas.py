@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -10,6 +10,7 @@ from peptide_extractor.db.peptide_entry import (
     PeptideConjugateMixture,
     PeptideExtractionResult,
     PeptideLinearity,
+    PeptideLLMEntry,
 )
 from peptide_extractor.extraction import SharedExperimentalConditions
 
@@ -147,6 +148,31 @@ class ReviewerFeedback(BaseModel):
     revision_instructions: str | None = Field(
         default=None,
         description="Concise, actionable patch instructions for the Refiner agent if approved is False.",
+    )
+
+
+class FieldUpdate(BaseModel):
+    """A targeted single-field update to an existing candidate entry by 0-based index."""
+
+    entry_index: int = Field(description="0-based index of the entry to update.")
+    field: str = Field(description="PeptideLLMEntry field name to update.")
+    value: Any = Field(description="Corrected value for that field.")
+
+
+class RefinerPatchResult(BaseModel):
+    """Patch-based output from RefinerAgent so untouched rows are never dropped."""
+
+    update_fields: list[FieldUpdate] = Field(
+        default_factory=list,
+        description="Targeted field corrections to apply to existing entries by index.",
+    )
+    add_entries: list[PeptideLLMEntry] = Field(
+        default_factory=list,
+        description="New entries to append for previously missed peptides or conditions.",
+    )
+    delete_indices: list[int] = Field(
+        default_factory=list,
+        description="0-based indices of hallucinated or out-of-scope entries to remove.",
     )
 
 
