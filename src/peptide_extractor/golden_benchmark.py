@@ -307,17 +307,33 @@ class GoldenBenchmarkReport:
         return "\n".join(lines)
 
 
+def _is_none_type(entry: PeptideEntry) -> bool:
+    """Return True if an entry represents a non-assembling ('none') condition."""
+    return (entry.type or "").strip().lower() == "none"
+
+
 def _match_entries_for_sequence(
     manual_list: Sequence[PeptideEntry],
     llm_list: Sequence[PeptideEntry],
+    min_similarity: float = 0.1,
 ) -> tuple[
     list[tuple[PeptideEntry, PeptideEntry]], list[PeptideEntry], list[PeptideEntry]
 ]:
-    """Greedily pair manual and LLM entries for the same (pmid, sequence) by condition similarity."""
+    """Greedily pair manual and LLM entries for the same (pmid, sequence) by condition similarity.
+
+    Entries with ``type == 'none'`` (non-assembling) are never paired with assembling entries,
+    and candidate pairs with similarity below ``min_similarity`` are not matched.
+    """
     candidates: list[tuple[float, int, int]] = []
     for mi, m in enumerate(manual_list):
+        m_none = _is_none_type(m)
         for li, l in enumerate(llm_list):
-            candidates.append((condition_similarity(m, l), mi, li))
+            if m_none != _is_none_type(l):
+                continue
+            sim = condition_similarity(m, l)
+            if sim < min_similarity:
+                continue
+            candidates.append((sim, mi, li))
     candidates.sort(key=lambda x: x[0], reverse=True)
 
     used_m: set[int] = set()
@@ -384,6 +400,7 @@ def _values_match_normalized(
 def compare_runs(
     manual_entries: Sequence[PeptideEntry],
     llm_entries: Sequence[PeptideEntry],
+    min_similarity: float = 0.1,
 ) -> GoldenBenchmarkReport:
     """Compare LLM-extracted entries against golden-dataset manual entries."""
     manual_pmids = {e.pmid for e in manual_entries}
@@ -418,7 +435,9 @@ def compare_runs(
 
     for key in set(m_by_ps.keys()) | set(l_by_ps.keys()):
         pairs, um, ul = _match_entries_for_sequence(
-            m_by_ps.get(key, []), l_by_ps.get(key, [])
+            m_by_ps.get(key, []),
+            l_by_ps.get(key, []),
+            min_similarity=min_similarity,
         )
         matched_pairs.extend(pairs)
         unmatched_m_count += len(um)
@@ -511,6 +530,7 @@ def benchmark_run_against_golden(
     manual_run_identifier: int = 0,
     pmids: Optional[Sequence[str]] = None,
     session: Optional[Session] = None,
+    min_similarity: float = 0.1,
 ) -> GoldenBenchmarkReport:
     """Load manual and LLM PeptideEntry rows from the DB and compute GoldenBenchmarkReport."""
 
@@ -529,7 +549,7 @@ def benchmark_run_against_golden(
             l_stmt = l_stmt.where(PeptideEntry.pmid.in_(pmid_list))  # type: ignore[union-attr]
         manual = s.exec(m_stmt).all()
         llm = s.exec(l_stmt).all()
-        return compare_runs(manual, llm)
+        return compare_runs(manual, llm, min_similarity=min_similarity)
 
     if session is not None:
         return _run(session)

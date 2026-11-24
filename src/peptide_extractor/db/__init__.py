@@ -25,6 +25,7 @@ from peptide_extractor.db.paper_metadata import (
     update_paper_status,
 )
 from peptide_extractor.db.peptide_entry import (
+    ExtractionMethod,
     ExtractionMode,
     PeptideEntry,
     peptide_llm_entry_to_peptide_entry,
@@ -45,6 +46,7 @@ __all__ = [
     "DatasetSubset",
     "PaperStatus",
     "ExtractionMode",
+    "ExtractionMethod",
     "DATABASE_URL",
     "engine",
     "get_engine",

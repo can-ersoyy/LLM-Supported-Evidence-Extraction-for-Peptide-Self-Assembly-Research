@@ -99,3 +99,58 @@ def test_compare_runs_condition_alignment():
     assert report.field_stats["detection_method"].normalized_match == 1
     assert "PMIDs covered: 1/1" in report.format_report()
 
+
+def test_none_and_assembling_entries_cannot_match():
+    manual = [
+        _entry(
+            type="none",
+            solution="H2O",
+            ph=7.0,
+            temperature=25.0,
+        ),
+    ]
+    llm = [
+        _entry(
+            extraction_mode=ExtractionMode.LLM,
+            type="fiber",
+            solution="H2O",
+            ph=7.0,
+            temperature=25.0,
+        ),
+    ]
+
+    report = compare_runs(manual, llm)
+    assert report.matched_condition_pairs == 0
+    assert report.matched_none_pairs == 0
+    assert report.matched_assembling_pairs == 0
+    assert report.none_condition_recall == 0.0
+    assert report.condition_precision == 0.0
+    assert report.unmatched_manual_rows == 1
+    assert report.unmatched_llm_rows == 1
+
+
+def test_similarity_threshold_blocks_unrelated_entries():
+    manual = [
+        _entry(
+            type="hydrogel",
+            solution="H2O",
+            ph=7.0,
+        ),
+    ]
+    llm = [
+        _entry(
+            extraction_mode=ExtractionMode.LLM,
+            type="fiber",
+            solution="DMSO",
+            ph=3.0,
+        ),
+    ]
+
+    report = compare_runs(manual, llm)
+    assert report.matched_condition_pairs == 0
+    assert report.unmatched_manual_rows == 1
+    assert report.unmatched_llm_rows == 1
+
+    report_no_threshold = compare_runs(manual, llm, min_similarity=0.0)
+    assert report_no_threshold.matched_condition_pairs == 1
+

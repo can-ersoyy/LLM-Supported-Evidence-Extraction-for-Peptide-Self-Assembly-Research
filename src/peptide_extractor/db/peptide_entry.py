@@ -16,6 +16,13 @@ class ExtractionMode(str, Enum):
     LLM = "llm"
 
 
+class ExtractionMethod(str, Enum):
+    DIRECT_PDF = "direct_pdf"
+    FACTORED = "factored"
+    MULTIMODAL_BLOCKS = "multimodal_blocks"
+    TEXT = "text"
+
+
 class PeptideAssemblyType(str, Enum):
     NONE = "none"
     RIBBON = "ribbon"
@@ -84,6 +91,10 @@ class PeptideEntry(SQLModel, table=True):
         default=ExtractionMode.MANUAL,
         sa_column_kwargs={"server_default": ExtractionMode.MANUAL.value},
         description="Extraction mode: 'manual' (golden dataset) or 'llm'",
+    )
+    extraction_method: Optional[ExtractionMethod] = Field(
+        default=None,
+        description="Extraction method used for LLM extraction ('direct_pdf', 'factored', 'multimodal_blocks', or 'text')",
     )
     model: Optional[str] = Field(
         default=None,
@@ -402,6 +413,7 @@ def peptide_llm_entry_to_peptide_entry(
     database: Optional[str] = None,
     model: Optional[str] = None,
     run_identifier: Optional[int] = None,
+    extraction_method: Optional[ExtractionMethod] = None,
 ) -> PeptideEntry:
     return PeptideEntry(
         paper_id=paper_id,
@@ -430,6 +442,7 @@ def peptide_llm_entry_to_peptide_entry(
         if peptide_llm_entry.evidence_span is not None
         else None,
         extraction_mode=ExtractionMode.LLM,
+        extraction_method=extraction_method,
         run_identifier=run_identifier,
         model=model,
         database=database,

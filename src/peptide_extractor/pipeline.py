@@ -1,3 +1,4 @@
+from peptide_extractor.golden_benchmark import benchmark_run_against_golden
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Type, Union
 from sqlmodel import SQLModel
@@ -21,7 +22,7 @@ from peptide_extractor.db import PaperStatus
 from peptide_extractor.db import DatasetSubset
 from peptide_extractor.schemas import RelevanceResult
 from peptide_extractor.evaluation import evaluate_extraction
-from peptide_extractor.db.peptide_entry import PeptideEntry
+from peptide_extractor.db.peptide_entry import ExtractionMethod, PeptideEntry
 from peptide_extractor.db import peptide_llm_entry_to_peptide_entry
 from peptide_extractor.extraction import run_extraction
 from peptide_extractor.parsers import (
@@ -707,6 +708,7 @@ def run_peptide_extraction(
                 paper_fulltext = paper_content.get_content()
 
                 if paper_content.format == "pdf" and pass_pdf_directly:
+                    extraction_method = ExtractionMethod.DIRECT_PDF
                     logger.info(
                         f"Passing raw PDF ({len(paper_fulltext)} bytes) directly to LLM for paper {paper.id}"
                     )
@@ -719,6 +721,11 @@ def run_peptide_extraction(
                         retry_delay=retry_delay,
                     ).entries
                 elif tables_as_images or images_as_images:
+                    extraction_method = (
+                        ExtractionMethod.FACTORED
+                        if factored_extraction
+                        else ExtractionMethod.MULTIMODAL_BLOCKS
+                    )
                     if paper_content.format == "pdf":
                         extraction_payload = extraction_ready_blocks_from_pdf(
                             paper_fulltext,
@@ -754,6 +761,7 @@ def run_peptide_extraction(
                         retry_delay=retry_delay,
                     ).entries
                 else:
+                    extraction_method = ExtractionMethod.TEXT
                     if paper_content.format == "pdf":
                         extraction_ready_string = extraction_ready_string_from_pdf(
                             paper_fulltext
@@ -782,6 +790,7 @@ def run_peptide_extraction(
                         paper.pmid,
                         model=model_name,
                         run_identifier=run_identifier,
+                        extraction_method=extraction_method,
                     )
                     for entry in entries
                 ]
@@ -977,6 +986,8 @@ if __name__ == "__main__":
 
     open_alex_provider = OpenAlexProvider(api_key=open_alex_api_key)
 
+    print(benchmark_run_against_golden(llm_run_identifier=1795446961).format_report())
+
     # upload sapdb/peptideminer manually downloded pdfs to azure
     # result = ingest_manual_pdfs(
     #    pdf_dir="manual_pdfs",
@@ -1016,12 +1027,12 @@ if __name__ == "__main__":
     # 5. Run relevance screening
 
     # start_time = time.time()
-    #
     ##
-    #
-    ### doing relevance in batches
+    ###
+    ##
+    #### doing relevance in batches
     # from peptide_extractor.scratchpad import papers_to_relevance_check
-    #
+    ##
     # success, fails, identifier = run_bulk_relevance_screening(
     #    "llama3.2:3b",
     #    "ollama",
@@ -1029,121 +1040,121 @@ if __name__ == "__main__":
     #    batch_size=1,
     #    id=papers_to_relevance_check,
     # )
-    #
-    ##
-    #
-    ###success, fails, identifier = run_bulk_relevance_screening("llama4:16x17b", "ollama", delay_seconds=1, batch_size=10, id=9533, limit=5000, offset=0)
-    #
-    #
+#
+##
+#
+###success, fails, identifier = run_bulk_relevance_screening("llama4:16x17b", "ollama", delay_seconds=1, batch_size=10, id=9533, limit=5000, offset=0)
+##
+##
+#
+## success, fails, identifier = run_bulk_relevance_screening("gemini-3.5-flash-lite", "google", delay_seconds=4, batch_size=10, search_query=NCBI_SEARCH_QUERIES_V3, limit=5000, offset=5000)
+#
+##
+## success, fails, identifier = run_bulk_relevance_screening("gemini-3.1-flash-lite", "google", delay_seconds=4, batch_size=10, search_query=papers_with_relevance_conflict, limit=400, offset=0)
+#
+# end_time = time.time()
+##
+# print(
+#   f"Relevance Success: {success}, Fails: {fails}, Identifier: {identifier}, Time: {end_time - start_time}"
+# )
+# exit(0)
+# 6. Fetch fulltexts
 
-    # success, fails, identifier = run_bulk_relevance_screening("gemini-3.5-flash-lite", "google", delay_seconds=4, batch_size=10, search_query=NCBI_SEARCH_QUERIES_V3, limit=5000, offset=5000)
+# from peptide_extractor.scratchpad import papers_to_extract_2
 
-    #
-    # success, fails, identifier = run_bulk_relevance_screening("gemini-3.1-flash-lite", "google", delay_seconds=4, batch_size=10, search_query=papers_with_relevance_conflict, limit=400, offset=0)
+# 7. Run extraction
 
-    # end_time = time.time()
-    #
-    # print(
-    #    f"Relevance Success: {success}, Fails: {fails}, Identifier: {identifier}, Time: {end_time - start_time}"
-    # )
-    # exit(0)
-    # 6. Fetch fulltexts
+# papers_with_content = [p.paper_id for p in get_records(PaperContent)]
+# papers_with_extraction = [p.paper_id for p in get_records(PeptideEntry)]
+# relevant_papers_without_extraction = [
+#    p.id
+#    for p in get_paper_metadatas(dataset_subset=DatasetSubset.SCRAPED)
+#    if p.id not in papers_with_extraction
+#    and p.id in papers_with_content
+#    and p.status == PaperStatus.USABLE
+# ]
+#
 
-    # from peptide_extractor.scratchpad import papers_to_extract_2
+## print(len(papers_with_extraction))
+# print(len(relevant_papers_without_extraction))
+#
+# start_time = time.time()
+#
+# fails, identifier = run_peptide_extraction(
+#    provider="google",
+#    model_name="gemini-3.5-flash-lite",
+#    delay_seconds=4,
+#    id=sap_db,
+# )
+#
+# end_time = time.time()
+# print(
+#    f"Extraction failed for papers with IDs: {fails}, Identifier: {identifier}, Time: {end_time - start_time}"
+# )
+#
+## 8. Run evaluation
+#
+# start_time = time.time()
 
-    # 7. Run extraction
+# fails, identifier = run_evaluation(run_identifier=123)
 
-    # papers_with_content = [p.paper_id for p in get_records(PaperContent)]
-    # papers_with_extraction = [p.paper_id for p in get_records(PeptideEntry)]
-    # relevant_papers_without_extraction = [
-    #    p.id
-    #    for p in get_paper_metadatas(dataset_subset=DatasetSubset.SCRAPED)
-    #    if p.id not in papers_with_extraction
-    #    and p.id in papers_with_content
-    #    and p.status == PaperStatus.USABLE
-    # ]
-    #
+# end_time = time.time()
 
-    ## print(len(papers_with_extraction))
-    # print(len(relevant_papers_without_extraction))
-    #
-    # start_time = time.time()
-    #
-    # fails, identifier = run_peptide_extraction(
-    #    provider="google",
-    #    model_name="gemini-3.5-flash-lite",
-    #    delay_seconds=4,
-    #    id=sap_db,
-    # )
-    #
-    # end_time = time.time()
-    # print(
-    #    f"Extraction failed for papers with IDs: {fails}, Identifier: {identifier}, Time: {end_time - start_time}"
-    # )
-    #
-    ## 8. Run evaluation
-    #
-    # start_time = time.time()
+# print(f"Evaluation failed for papers with IDs: {fails}, Identifier: {identifier}, Time: {end_time - start_time}")
 
-    # fails, identifier = run_evaluation(run_identifier=123)
+# fails, identifier = run_peptide_extraction(
+#    save=True,
+#    provider="google_genai",
+#    model_name="gemini-3.5-flash-lite",
+#    pass_pdf_directly=True,
+#    id=9,
+# )
+# print(
+#    f"Extraction failed for papers with IDs: {fails}, Run identifier: {identifier}"
+# )
 
-    # end_time = time.time()
+# golden_papers_ids = [r.paper_id for r in get_records(PeptideEntry, run_identifier=0)]
 
-    # print(f"Evaluation failed for papers with IDs: {fails}, Identifier: {identifier}, Time: {end_time - start_time}")
-
-    # fails, identifier = run_peptide_extraction(
-    #    save=True,
-    #    provider="google_genai",
-    #    model_name="gemini-3.5-flash-lite",
-    #    pass_pdf_directly=True,
-    #    id=9,
-    # )
-    # print(
-    #    f"Extraction failed for papers with IDs: {fails}, Run identifier: {identifier}"
-    # )
-
-    # golden_papers_ids = [r.paper_id for r in get_records(PeptideEntry, run_identifier=0)]
-
-    # Compare on 71/75 golden dataset papers
-    all_golden_papers = get_paper_metadatas(source_databases="SAPDB; PeptideMiner")
-    assert len(all_golden_papers) == 75
-    subset = [
-        p.id
-        for p in all_golden_papers
-        if get_paper_content_by_paper_id(p.id) is not None
-    ]
-    assert len(subset) == 71
-    print("works")
-    exit(0)
-    # method: direct pdf
-    fails, identifier = run_peptide_extraction(
-        provider="google",
-        model_name="gemini-3.5-flash-lite",
-        delay_seconds=4,
-        tables_as_images=True,
-        factored_extraction=True,
-        pass_pdf_directly=True,
-        # table_provider="ollama",
-        # table_model_name="gemma4:26b",
-        table_provider="google",
-        table_model_name="gemini-3.5-flash-lite",
-        content_format="pdf",
-        id=subset,
-    )
-    print(f"Fails: {fails}, Run identifier: {identifier}")
-
-    # method: 2-pass + table as image
-    fails, identifier = run_peptide_extraction(
-        provider="google",
-        model_name="gemini-3.5-flash-lite",
-        delay_seconds=4,
-        tables_as_images=True,
-        factored_extraction=True,
-        # table_provider="ollama",
-        # table_model_name="gemma4:26b",
-        table_provider="google",
-        table_model_name="gemini-3.5-flash-lite",
-        content_format="pdf",
-        id=subset,
-    )
-    print(f"Fails: {fails}, Run identifier: {identifier}")
+# Compare on 71/75 golden dataset papers
+# all_golden_papers = get_paper_metadatas(source_databases="SAPDB; PeptideMiner")
+# assert len(all_golden_papers) == 75
+# subset = [
+#    p.id
+#    for p in all_golden_papers
+#    if get_paper_content_by_paper_id(p.id) is not None
+# ]
+# assert len(subset) == 71
+# print("works")
+# exit(0)
+# method: direct pdf
+# fails, identifier = run_peptide_extraction(
+#    provider="google",
+#    model_name="gemini-3.5-flash-lite",
+#    delay_seconds=4,
+#    tables_as_images=True,
+#    factored_extraction=True,
+#    pass_pdf_directly=True,
+#    # table_provider="ollama",
+#    # table_model_name="gemma4:26b",
+#    table_provider="google",
+#    table_model_name="gemini-3.5-flash-lite",
+#    content_format="pdf",
+#    pmid=[12714741]
+# )
+# print(f"Fails: {fails}, Run identifier: {identifier}")
+#
+## method: 2-pass + table as image
+# fails, identifier = run_peptide_extraction(
+#    provider="google",
+#    model_name="gemini-3.5-flash-lite",
+#    delay_seconds=4,
+#    tables_as_images=True,
+#    factored_extraction=True,
+#    # table_provider="ollama",
+#    # table_model_name="gemma4:26b",
+#    table_provider="google",
+#    table_model_name="gemini-3.5-flash-lite",
+#    content_format="pdf",
+#    pmid=[12714741]
+# )
+# print(f"Fails: {fails}, Run identifier: {identifier}")
