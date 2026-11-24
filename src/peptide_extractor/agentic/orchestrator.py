@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
@@ -18,6 +19,7 @@ from peptide_extractor.agentic.schemas import (
     AgenticExtractionTrace,
     DeterministicValidationReport,
     EntityRegistryResult,
+    RefinerPatchResult,
 )
 from peptide_extractor.db.peptide_entry import PeptideExtractionResult, PeptideLLMEntry
 from peptide_extractor.extraction import (
@@ -28,6 +30,62 @@ from peptide_extractor.extraction import (
 from peptide_extractor.logging_utils import logger
 
 
+def _extract_table_context(
+    prose_text: str, table_id: str, caption_text: str, window_lines: int = 8
+) -> str:
+    """Grab surrounding lines (footnotes, legends, nearby prose) around a table anchor."""
+    if not prose_text:
+        return ""
+    lines = prose_text.splitlines()
+    hit_indices = [i for i, ln in enumerate(lines) if table_id in ln]
+    if not hit_indices:
+        return ""
+    idx = hit_indices[0]
+    start = max(0, idx - window_lines)
+    end = min(len(lines), idx + window_lines + 1)
+    snippet = "\n".join(
+        ln.strip()
+        for ln in lines[start:end]
+        if ln.strip() and ln.strip() not in caption_text
+    )
+    return snippet[:1500]
+
+
+def apply_refiner_patch(
+    entries: Sequence[PeptideLLMEntry], patch: RefinerPatchResult
+) -> list[PeptideLLMEntry]:
+    """Deterministically apply RefinerPatchResult without ever dropping untouched rows."""
+    updated = [e.model_copy(deep=True) for e in entries]
+    valid_fields = set(PeptideLLMEntry.model_fields.keys())
+
+    # 1. Apply targeted field updates
+    for upd in patch.update_fields:
+        if not (0 <= upd.entry_index < len(updated)):
+            logger.warning(f"[RefinerPatch] Skipping out-of-range index {upd.entry_index}")
+            continue
+        if upd.field not in valid_fields:
+            logger.warning(f"[RefinerPatch] Skipping unknown field '{upd.field}'")
+            continue
+        candidate_data = updated[upd.entry_index].model_dump()
+        candidate_data[upd.field] = upd.value
+        try:
+            updated[upd.entry_index] = PeptideLLMEntry(**candidate_data)
+        except (ValueError, TypeError) as e:
+            logger.warning(
+                f"[RefinerPatch] Failed to apply {upd.field}={upd.value!r} on entry {upd.entry_index}: {e}"
+            )
+
+    # 2. Remove explicitly flagged hallucinated indices
+    delete_set = {i for i in patch.delete_indices if 0 <= i < len(updated)}
+    result = [e for idx, e in enumerate(updated) if idx not in delete_set]
+
+    # 3. Append newly recovered entries
+    if patch.add_entries:
+        result.extend(patch.add_entries)
+
+    return result
+
+
 class ExtractionOrchestrator:
     """Deterministic state-graph orchestrator for multi-agent peptide extraction.
 
@@ -36,7 +94,7 @@ class ExtractionOrchestrator:
     2. Stage 1 — Entity & Alias Scout + Paper-Wide Shared Conditions
     3. Stage 2 — Scoped Extraction (Per-Table Image Workers + Prose Worker)
     4. Stage 3 — Deterministic Chemistry & Schema Sandbox (normalize, validate, dedup)
-    5. Stage 4 — Evidence-Independent Review -> Targeted Refine Loop (bounded rounds)
+    5. Stage 4 — Evidence-Independent Review -> Patch-Based Refine Loop (bounded rounds)
     """
 
     def __init__(self, config: AgenticExtractionConfig | None = None):
@@ -59,6 +117,7 @@ class ExtractionOrchestrator:
         trace = AgenticExtractionTrace()
         prose_or_raw, table_items = self._decompose_input(paper_content)
         is_binary_pdf = isinstance(prose_or_raw, (bytes, Path))
+        source_text = prose_or_raw if isinstance(prose_or_raw, str) else ""
 
         # ------------------------------------------------------------------
         # Stage 1: Entity & Alias Scout (+ paper-wide shared conditions)
@@ -99,11 +158,13 @@ class ExtractionOrchestrator:
         if table_items:
             table_agent = TableExtractorAgent(self.config)
             for table_id, caption_text, image_block in table_items:
+                table_ctx = _extract_table_context(source_text, table_id, caption_text)
                 table_res = table_agent.run(
                     table_id=table_id,
                     caption_text=caption_text,
                     image_block=image_block,
                     registry=registry,
+                    table_context=table_ctx,
                     filename=filename,
                 )
                 merged = merge_table_result_with_shared(table_res, shared_defaults, table_id)
@@ -116,7 +177,9 @@ class ExtractionOrchestrator:
         # ------------------------------------------------------------------
         aliases = registry.peptides if registry is not None else None
         if self.config.enable_chemistry_sandbox:
-            all_entries, val_report = sanitize_and_validate_entries(all_entries, aliases=aliases)
+            all_entries, val_report = sanitize_and_validate_entries(
+                all_entries, aliases=aliases, source_text=source_text
+            )
         else:
             val_report = DeterministicValidationReport(
                 total_before=len(all_entries), total_after=len(all_entries)
@@ -129,17 +192,15 @@ class ExtractionOrchestrator:
         )
 
         # ------------------------------------------------------------------
-        # Stage 4: Evidence-Independent Review -> Targeted Refine Loop
+        # Stage 4: Evidence-Independent Review -> Patch-Based Refine Loop
         # ------------------------------------------------------------------
-        # For raw binary PDFs without text, skip text-based reviewer/refiner
-        source_text_for_review = prose_or_raw if isinstance(prose_or_raw, str) else ""
-        if self.config.enable_reviewer and not is_binary_pdf and source_text_for_review.strip():
+        if self.config.enable_reviewer and not is_binary_pdf and source_text.strip():
             reviewer = ReviewerAgent(self.config)
             refiner: RefinerAgent | None = None
 
             for round_idx in range(self.config.max_refinement_rounds + 1):
                 feedback = reviewer.run(
-                    source_text=source_text_for_review,
+                    source_text=source_text,
                     entries=all_entries,
                     validation_report=val_report,
                     registry=registry,
@@ -169,10 +230,10 @@ class ExtractionOrchestrator:
                 if refiner is None:
                     refiner = RefinerAgent(self.config)
                 logger.info(
-                    f"[Orchestrator] Stage 4 Refine (round {round_idx + 1}) for {filename}"
+                    f"[Orchestrator] Stage 4 Refine Patch (round {round_idx + 1}) for {filename}"
                 )
-                refined_result = refiner.run(
-                    source_text=source_text_for_review,
+                patch_result = refiner.run(
+                    source_text=source_text,
                     entries=all_entries,
                     feedback=feedback,
                     validation_report=val_report,
@@ -180,11 +241,11 @@ class ExtractionOrchestrator:
                     filename=filename,
                 )
                 trace.refinement_rounds_executed += 1
-                all_entries = list(refined_result.entries)
+                all_entries = apply_refiner_patch(all_entries, patch_result)
 
                 if self.config.enable_chemistry_sandbox:
                     all_entries, val_report = sanitize_and_validate_entries(
-                        all_entries, aliases=aliases
+                        all_entries, aliases=aliases, source_text=source_text
                     )
                     trace.validation_reports.append(val_report)
 

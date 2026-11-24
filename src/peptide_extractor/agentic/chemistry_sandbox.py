@@ -278,9 +278,78 @@ def _dedup_key(entry: PeptideLLMEntry) -> tuple:
     )
 
 
+_DETECTION_SCAN_PATTERNS: list[tuple[re.Pattern[str], str]] = [
+    (re.compile(r"\bcryo[- ]?(?:em|electron\s+microscop)", re.IGNORECASE), "Cryo-EM"),
+    (
+        re.compile(r"\btransmission\s+electron\s+microscop|\btem\b|\bhr-?tem\b", re.IGNORECASE),
+        "TEM",
+    ),
+    (
+        re.compile(r"\bscanning\s+electron\s+microscop|\bfe-?sem\b|\bsem\b", re.IGNORECASE),
+        "SEM",
+    ),
+    (re.compile(r"\batomic\s+force\s+microscop|\bafm\b", re.IGNORECASE), "AFM"),
+    (re.compile(r"\bconfocal\b", re.IGNORECASE), "Confocal Microscopy"),
+    (
+        re.compile(
+            r"\boptical\s+microscop|\blight\s+microscop|\bpolariz(?:ed|ing)\s+(?:optical\s+)?microscop",
+            re.IGNORECASE,
+        ),
+        "Optical Microscopy",
+    ),
+    (re.compile(r"\bcircular\s+dichroism\b|\bcd\s+spectr", re.IGNORECASE), "CD"),
+    (
+        re.compile(r"\bfourier[- ]transform\s+infrared|\bft-?ir\b|\batr-?ir\b", re.IGNORECASE),
+        "FTIR",
+    ),
+    (re.compile(r"\bthioflavin|\btht\b", re.IGNORECASE), "ThT"),
+    (re.compile(r"\bnmr\b|\bnuclear\s+magnetic\s+resonance", re.IGNORECASE), "NMR"),
+    (
+        re.compile(r"\bx-?ray\s+diffraction|\bxrd\b|\bsaxs\b|\bwaxs\b|\bpxrd\b", re.IGNORECASE),
+        "XRD",
+    ),
+    (re.compile(r"\bdynamic\s+light\s+scattering|\bdls\b", re.IGNORECASE), "DLS"),
+    (re.compile(r"\buv[-/–]?vis\b", re.IGNORECASE), "UV-Vis"),
+    (re.compile(r"\bfluorescence\s+(?:microscop|spectr|assay|emission)", re.IGNORECASE), "Fluorescence"),
+    (re.compile(r"\brheolog(?:y|ical)|oscillatory\s+shear|storage\s+modulus", re.IGNORECASE), "Rheology"),
+    (re.compile(r"\bcongo\s+red\b", re.IGNORECASE), "Congo Red"),
+    (re.compile(r"\braman\s+spectr", re.IGNORECASE), "Raman"),
+    (re.compile(r"\bturbidit", re.IGNORECASE), "Turbidity"),
+    (
+        re.compile(
+            r"\bvial\s+inversion|\btube\s+inversion|\binverted\s+(?:vial|tube|test\s+tube)|\binversion\s+(?:test|method)",
+            re.IGNORECASE,
+        ),
+        "Vial Inversion",
+    ),
+]
+
+_MIXTURE_SEP_RE = re.compile(r"[/+;,:]|\band\b|\bwith\b|\bin\b", re.IGNORECASE)
+
+
+def extract_paper_detection_methods(source_text: str) -> list[str]:
+    """Deterministically scan paper text for canonical characterization techniques."""
+    if not source_text or not source_text.strip():
+        return []
+    found: list[str] = []
+    for pattern, canonical in _DETECTION_SCAN_PATTERNS:
+        if pattern.search(source_text):
+            found.append(canonical)
+    return found
+
+
+def _is_single_neat_solvent(solution: str) -> bool:
+    """Return True if solution appears to be a neat single-component solvent (ratio '1')."""
+    cleaned = solution.strip()
+    if not cleaned:
+        return False
+    return not bool(_MIXTURE_SEP_RE.search(cleaned))
+
+
 def sanitize_and_validate_entries(
     entries: Sequence[PeptideLLMEntry],
     aliases: Sequence[PeptideAlias] | None = None,
+    source_text: str | None = None,
 ) -> tuple[list[PeptideLLMEntry], DeterministicValidationReport]:
     """Run deterministic chemistry normalization, alias resolution, validation, and dedup."""
     alias_lookup: dict[str, PeptideAlias] = {}
@@ -288,6 +357,8 @@ def sanitize_and_validate_entries(
         for a in aliases:
             alias_lookup[a.label.strip().lower()] = a
             alias_lookup[a.sequence.strip().upper()] = a
+
+    paper_methods = extract_paper_detection_methods(source_text or "")
 
     issues: list[ValidationIssue] = []
     auto_fixes = 0
@@ -350,6 +421,45 @@ def sanitize_and_validate_entries(
                     auto_fixed=True,
                 )
             )
+
+        # 2b. Unify solvent -> solution when TableExtractor populated solvent but left solution null
+        sol_val = (data.get("solution") or "").strip()
+        solv_val = (data.get("solvent") or "").strip()
+        if not sol_val and solv_val:
+            data["solution"] = solv_val
+            sol_val = solv_val
+            auto_fixes += 1
+
+        # 2c. Default volume_ratio = [1] for neat single-component solvents
+        if sol_val and not data.get("volume_ratio") and _is_single_neat_solvent(sol_val):
+            data["volume_ratio"] = [1]
+            auto_fixes += 1
+
+        # 2d. Default structural fields when omitted on table rows
+        if data.get("linear_cyclic") is None:
+            data["linear_cyclic"] = PeptideLinearity.LINEAR
+            auto_fixes += 1
+        if data.get("peptide_conjugate_mixture") is None:
+            data["peptide_conjugate_mixture"] = (
+                PeptideConjugateMixture.CONJUGATE
+                if data.get("conjugate_partner")
+                else PeptideConjugateMixture.PEPTIDE
+            )
+            auto_fixes += 1
+
+        # 2e. Supplement detection_method with deterministically detected paper-wide techniques
+        if paper_methods:
+            existing_methods = list(data.get("detection_method") or [])
+            existing_lower = {m.strip().lower() for m in existing_methods if m and m.strip()}
+            added_any = False
+            for pm in paper_methods:
+                if pm.lower() not in existing_lower:
+                    existing_methods.append(pm)
+                    existing_lower.add(pm.lower())
+                    added_any = True
+            if added_any:
+                data["detection_method"] = existing_methods
+                auto_fixes += 1
 
         # 3. Validate IUPAC characters & length
         final_seq = data.get("sequence", "")

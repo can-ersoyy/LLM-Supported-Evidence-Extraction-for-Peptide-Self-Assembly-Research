@@ -10,11 +10,15 @@ from peptide_extractor.agentic import (
     AgenticExtractionConfig,
     EntityRegistryResult,
     ExtractionOrchestrator,
+    FieldUpdate,
     PeptideAlias,
+    RefinerPatchResult,
     ReviewerFeedback,
     ReviewIssue,
+    apply_refiner_patch,
     convert_concentration_to_mg_ml,
     estimate_peptide_mw,
+    extract_paper_detection_methods,
     sanitize_and_validate_entries,
     split_sequence_and_caps,
 )
@@ -276,25 +280,19 @@ def test_orchestrator_triggers_refiner_on_reviewer_rejection():
             )
         ]
     )
-    refined_res = PeptideExtractionResult(
-        entries=[
-            PeptideLLMEntry(
-                sequence="KLVFF",
-                n_terminal="Acetylation",
-                c_terminal="Amidation",
-                type=PeptideAssemblyType.FIBER,
-                temperature=37.0,
-                ph=7.4,
-            ),
+    refine_patch = RefinerPatchResult(
+        update_fields=[FieldUpdate(entry_index=0, field="solution", value="PBS")],
+        add_entries=[
             PeptideLLMEntry(
                 sequence="VQIVYK",
                 n_terminal="Acetylation",
                 c_terminal="Amidation",
                 type=PeptideAssemblyType.AMYLOID,
+                solution="PBS",
                 temperature=37.0,
                 ph=7.4,
-            ),
-        ]
+            )
+        ],
     )
     review_round_0 = ReviewerFeedback(
         approved=False,
@@ -308,7 +306,7 @@ def test_orchestrator_triggers_refiner_on_reviewer_rejection():
             )
         ],
         missing_sequences=["VQIVYK"],
-        revision_instructions="Add missing entry for VQIVYK.",
+        revision_instructions="Add missing entry for VQIVYK and set solution=PBS on entry 0.",
     )
     review_round_1 = ReviewerFeedback(
         approved=True,
@@ -320,7 +318,8 @@ def test_orchestrator_triggers_refiner_on_reviewer_rejection():
     factory, counts = _make_mock_controller_router(
         {
             EntityRegistryResult: [scout_res],
-            PeptideExtractionResult: [initial_prose_res, refined_res],
+            PeptideExtractionResult: [initial_prose_res],
+            RefinerPatchResult: [refine_patch],
             ReviewerFeedback: [review_round_0, review_round_1],
         }
     )
@@ -328,14 +327,68 @@ def test_orchestrator_triggers_refiner_on_reviewer_rejection():
     with patch("peptide_extractor.agentic.agents.LLMController", side_effect=factory):
         cfg = AgenticExtractionConfig(max_refinement_rounds=2, min_trust_score=0.8)
         trace = ExtractionOrchestrator(cfg).run_with_trace(
-            "[sec-1/p-0/s-0] P1 (Ac-KLVFF-NH2) forms fibers and P2 (Ac-VQIVYK-NH2) forms amyloid at 37 C, pH 7.4."
+            "[sec-1/p-0/s-0] P1 (Ac-KLVFF-NH2) forms fibers and P2 (Ac-VQIVYK-NH2) forms amyloid in PBS at 37 C, pH 7.4."
         )
 
     assert trace.refinement_rounds_executed == 1
     assert len(trace.review_history) == 2
     assert trace.final_entry_count == 2
     assert {e.sequence for e in trace.result.entries} == {"KLVFF", "VQIVYK"}
-    assert counts[PeptideExtractionResult] == 2
+    assert all(e.solution == "PBS" for e in trace.result.entries)
+    assert counts[PeptideExtractionResult] == 1
+    assert counts[RefinerPatchResult] == 1
+
+
+def test_patch_refiner_preserves_large_screening_tables_over_80_rows():
+    """Ensure patch-based refinement never drops untouched rows on 120+ row tables."""
+    entries = [
+        PeptideLLMEntry(
+            sequence="FF",
+            type=PeptideAssemblyType.ORGANOGEL,
+            solution=f"solvent_{i}",
+            temperature=25.0,
+        )
+        for i in range(120)
+    ]
+    patch_res = RefinerPatchResult(
+        update_fields=[FieldUpdate(entry_index=0, field="c_terminal", value="Amidation")],
+        add_entries=[
+            PeptideLLMEntry(
+                sequence="KLVFF",
+                type=PeptideAssemblyType.HYDROGEL,
+                solution="PBS",
+            )
+        ],
+        delete_indices=[119],
+    )
+    patched = apply_refiner_patch(entries, patch_res)
+    assert len(patched) == 120  # 120 - 1 deleted + 1 added
+    assert patched[0].c_terminal == "Amidation"
+    assert patched[-1].sequence == "KLVFF"
+
+
+def test_sandbox_unifies_solvent_sets_neat_ratio_defaults_structural_and_scans_methods():
+    raw = [
+        PeptideLLMEntry(
+            sequence="SVG",
+            type=PeptideAssemblyType.ORGANOGEL,
+            solvent="toluene",  # solution intentionally left None
+            detection_method=["TEM"],
+        )
+    ]
+    paper_text = (
+        "Gelation was assessed by the inverted vial test (vial inversion). "
+        "Morphology was characterized by TEM, FE-SEM, FT-IR spectroscopy, and rheology."
+    )
+    cleaned, _ = sanitize_and_validate_entries(raw, source_text=paper_text)
+    assert len(cleaned) == 1
+    e = cleaned[0]
+    assert e.solution == "toluene"
+    assert e.volume_ratio == [1]
+    assert e.linear_cyclic == PeptideLinearity.LINEAR
+    assert e.peptide_conjugate_mixture == PeptideConjugateMixture.PEPTIDE
+    assert set(e.detection_method or []) >= {"TEM", "SEM", "FTIR", "Rheology", "Vial Inversion"}
+    assert "Vial Inversion" in extract_paper_detection_methods(paper_text)
 
 
 def test_orchestrator_handles_multimodal_table_blocks():
