@@ -620,24 +620,43 @@ def search_papers(
     limit: int = 100,
     db_path: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Search PaperMetadata by PMID, DOI, or title substring."""
+    """Search PaperMetadata by DB ID (e.g. '42' or 'id:42'), PMID, DOI, or title."""
     target_engine = _get_target_engine(db_path)
     init_db(target_engine)
+    exact_id: Optional[int] = None
     with get_session_context(db_engine=target_engine) as session:
         stmt = select(PaperMetadata)
         if query and query.strip():
-            q = query.strip().lower()
-            stmt = stmt.where(
-                func.lower(func.coalesce(PaperMetadata.pmid, "")).contains(q)
-                | func.lower(func.coalesce(PaperMetadata.doi, "")).contains(q)
-                | func.lower(func.coalesce(PaperMetadata.title, "")).contains(q)
-            )
+            raw_q = query.strip()
+            q = raw_q.lower()
+            if q.startswith("id:") and q[3:].strip().isdigit():
+                exact_id = int(q[3:].strip())
+                stmt = stmt.where(PaperMetadata.id == exact_id)
+            elif q.startswith("#") and q[1:].strip().isdigit():
+                exact_id = int(q[1:].strip())
+                stmt = stmt.where(PaperMetadata.id == exact_id)
+            elif raw_q.isdigit():
+                exact_id = int(raw_q)
+                stmt = stmt.where(
+                    (PaperMetadata.id == exact_id)
+                    | func.lower(func.coalesce(PaperMetadata.pmid, "")).contains(q)
+                    | func.lower(func.coalesce(PaperMetadata.doi, "")).contains(q)
+                    | func.lower(func.coalesce(PaperMetadata.title, "")).contains(q)
+                )
+            else:
+                stmt = stmt.where(
+                    func.lower(func.coalesce(PaperMetadata.pmid, "")).contains(q)
+                    | func.lower(func.coalesce(PaperMetadata.doi, "")).contains(q)
+                    | func.lower(func.coalesce(PaperMetadata.title, "")).contains(q)
+                )
         if status and status.strip():
             stmt = stmt.where(PaperMetadata.status == status.strip())
         if dataset_subset and dataset_subset.strip():
             stmt = stmt.where(PaperMetadata.dataset_subset == dataset_subset.strip())
         stmt = stmt.limit(limit)
         papers = list(session.exec(stmt).all())
+        if exact_id is not None:
+            papers.sort(key=lambda p: 0 if p.id == exact_id else 1)
         rows = []
         for p in papers:
             d = _serialize_value(p.model_dump())

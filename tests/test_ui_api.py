@@ -386,6 +386,11 @@ def test_paper_search_and_detail(temp_db):
     assert s_resp.status_code == 200
     assert s_resp.json()["count"] == 1
 
+    id_resp = client.post("/db/papers/search", json={"query": "id:1"})
+    assert id_resp.status_code == 200
+    assert id_resp.json()["count"] == 1
+    assert id_resp.json()["rows"][0]["id"] == 1
+
     d_resp = client.get("/db/papers/detail", params={"pmid": "123456"})
     assert d_resp.status_code == 200
     detail = d_resp.json()

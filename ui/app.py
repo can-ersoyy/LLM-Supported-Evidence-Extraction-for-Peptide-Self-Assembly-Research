@@ -1306,9 +1306,9 @@ def page_paper_inspector(client: PipelineClient) -> None:
 
     c1, c2, c3 = st.columns([2, 1, 1])
     query = c1.text_input(
-        "Search by PMID, DOI, or Title",
+        "Search by DB ID, PMID, DOI, or Title",
         value=st.session_state.get("inspector_query_prefill", ""),
-        placeholder="e.g. 18052148, 10.1021/..., hydrogel",
+        placeholder="e.g. 42, id:42, 18052148, 10.1021/..., hydrogel",
     )
     status_f = c2.selectbox("Status", ["", "usable", "not_processed", "discard"], key="pi_status")
     subset_f = c3.selectbox("Subset", ["", "golden_benchmark", "scraped"], key="pi_subset")
