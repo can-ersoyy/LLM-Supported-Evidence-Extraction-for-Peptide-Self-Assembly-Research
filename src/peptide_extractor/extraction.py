@@ -403,10 +403,33 @@ def run_extraction(
     factored: bool = False,
     table_provider: Optional[str] = None,
     table_model_name: Optional[str] = None,
+    agentic: bool = False,
+    reviewer_provider: Optional[str] = None,
+    reviewer_model_name: Optional[str] = None,
+    max_refinement_rounds: int = 1,
+    agentic_config: Optional[Any] = None,
     max_retries: int = 0,
     retry_delay: float = 2.0,
 ) -> PeptideExtractionResult:
     """Run peptide extraction on parsed text, multimodal content blocks, or raw PDF bytes/Path."""
+    if agentic:
+        from peptide_extractor.agentic.orchestrator import run_agentic_extraction
+
+        return run_agentic_extraction(
+            paper_content,
+            provider=provider,
+            model_name=model_name,
+            filename=filename,
+            table_provider=table_provider,
+            table_model_name=table_model_name,
+            reviewer_provider=reviewer_provider,
+            reviewer_model_name=reviewer_model_name,
+            max_refinement_rounds=max_refinement_rounds,
+            config=agentic_config,
+            max_retries=max_retries,
+            retry_delay=retry_delay,
+        )
+
     if factored and isinstance(paper_content, list):
         return run_factored_extraction(
             paper_content,
