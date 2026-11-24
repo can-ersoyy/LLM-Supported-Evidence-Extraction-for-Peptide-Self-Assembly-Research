@@ -14,6 +14,7 @@ import base64
 import csv
 import json
 import logging
+import re
 import time
 from collections import Counter, defaultdict
 from collections.abc import Sequence
@@ -21,6 +22,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
+import requests
 from pydantic import BaseModel, Field
 from sqlmodel import Session, select
 
@@ -29,11 +31,12 @@ from peptide_extractor.db import (
     DisagreementVerdict,
     ExtractionMode,
     GoldenDisagreementAudit,
+    PaperMetadata,
     PeptideEntry,
     get_session_context,
     init_db,
 )
-from peptide_extractor.db.paper_content import get_paper_content_by_paper_id
+from peptide_extractor.db.paper_content import PaperContent, get_paper_contents
 from peptide_extractor.golden_benchmark import (
     _match_entries_for_sequence,
     _values_match_normalized,
@@ -41,6 +44,8 @@ from peptide_extractor.golden_benchmark import (
 from peptide_extractor.llm import LLMController
 from peptide_extractor.parsers import (
     Node,
+    ParagraphNode,
+    SectionNode,
     TableNode,
     get_node_by_id,
     parse_document,
@@ -134,16 +139,120 @@ class DisagreementCandidate:
     llm_value: str | None
 
 
+_BRACKET_TAG_RE = re.compile(r"\[([^\[\]]+)\]")
+_ROW_SUFFIX_RE = re.compile(r"^(.*)/row-(\d+)$")
+
+
 def _parse_evidence_span(raw_span: str | None) -> dict[str, str]:
     if not raw_span:
         return {}
     try:
         parsed = json.loads(raw_span)
         if isinstance(parsed, dict):
-            return {str(k): str(v) for k, v in parsed.items() if v}
+            return {str(k): str(v).strip() for k, v in parsed.items() if v and str(v).strip()}
     except (ValueError, TypeError):
         pass
     return {}
+
+
+def _extract_candidate_tags(raw_tag: str) -> list[str]:
+    """Extract normalized node IDs from a raw evidence_span value.
+
+    Handles single tags (`"[sec-1/p-2/s-3]"` or `"sec-1/p-2/s-3"`),
+    comma/semicolon-separated tag lists (`"[sec-1/p-2/s-3], [sec-1/p-2/s-4]"`),
+    and surrounding prose (`"Table 1 [sec-1/table-0]"`).
+    """
+    bracketed = [m.strip() for m in _BRACKET_TAG_RE.findall(raw_tag) if m.strip()]
+    if bracketed:
+        return bracketed
+    parts = [p.strip().lstrip("[").rstrip("]").strip() for p in re.split(r"[,;]", raw_tag)]
+    return [p for p in parts if p]
+
+
+def _render_node_evidence(
+    node: Node,
+    *,
+    highlight_row_idx: int | None = None,
+) -> tuple[str, bytes | None]:
+    """Render a resolved AST node into (text_quote, optional_image_bytes)."""
+    image_bytes = getattr(node, "image_bytes", None)
+    if isinstance(node, TableNode):
+        parts: list[str] = []
+        if node.caption:
+            parts.append(f"Caption: {node.caption}")
+        if node.columns:
+            parts.append("Columns: " + " | ".join(str(c) for c in node.columns))
+        if node.rows:
+            if highlight_row_idx is not None and 0 <= highlight_row_idx < len(node.rows):
+                start = max(0, highlight_row_idx - 2)
+                end = min(len(node.rows), highlight_row_idx + 3)
+                row_lines = []
+                for idx in range(start, end):
+                    marker = ">>> " if idx == highlight_row_idx else ""
+                    row_lines.append(
+                        f"{marker}[row-{idx}] " + " | ".join(str(c) for c in node.rows[idx])
+                    )
+                parts.append("\n".join(row_lines))
+            else:
+                row_preview = "\n".join(
+                    f"[row-{idx}] " + " | ".join(str(c) for c in r)
+                    for idx, r in enumerate(node.rows[:15])
+                )
+                parts.append(row_preview)
+        if node.footnotes:
+            fn_str = (
+                node.footnotes
+                if isinstance(node.footnotes, str)
+                else " ".join(str(f) for f in node.footnotes)
+            )
+            if fn_str.strip():
+                parts.append(f"Footnotes: {fn_str.strip()}")
+        return "\n".join(parts).strip(), image_bytes
+
+    quote_text = getattr(node, "content", None) or getattr(node, "caption", None) or ""
+    if not quote_text.strip() and isinstance(node, ParagraphNode) and node.children:
+        quote_text = " ".join(
+            str(c.content).strip() for c in node.children if getattr(c, "content", None)
+        )
+    return quote_text.strip(), image_bytes
+
+
+def _lookup_node_with_fallback(
+    paper_tree: Node,
+    raw_id: str,
+) -> tuple[Node | None, int | None]:
+    """Look up a node ID in ``paper_tree`` with `/row-N` and parent-path fallbacks."""
+    clean_id = raw_id.strip().lstrip("[").rstrip("]").strip()
+    if not clean_id:
+        return None, None
+
+    # 1. Handle TableNode row tags emitted by to_llm_string (`sec-X/table-Y/row-N`)
+    row_match = _ROW_SUFFIX_RE.match(clean_id)
+    if row_match:
+        table_id = row_match.group(1)
+        row_idx = int(row_match.group(2))
+        table_node = get_node_by_id(paper_tree, table_id)
+        if table_node is not None:
+            return table_node, row_idx
+
+    # 2. Exact match
+    node = get_node_by_id(paper_tree, clean_id)
+    if node is not None:
+        return node, None
+
+    # 3. Walk up parent path segments (e.g. `sec-1/p-2/s-9` -> `sec-1/p-2`)
+    segments = clean_id.split("/")
+    while len(segments) > 1:
+        segments.pop()
+        parent_id = "/".join(segments)
+        parent = get_node_by_id(paper_tree, parent_id)
+        if parent is not None:
+            # Avoid falling back to a bare SectionNode heading with no body text
+            if isinstance(parent, SectionNode):
+                break
+            return parent, None
+
+    return None, None
 
 
 def resolve_evidence_for_field(
@@ -153,30 +262,32 @@ def resolve_evidence_for_field(
 ) -> tuple[str | None, str, bytes | None]:
     """Resolve an entry's evidence_span tag to (tag, text_quote, optional_image_bytes)."""
     span_map = _parse_evidence_span(evidence_span_json)
-    tag = span_map.get(field_name) or span_map.get("sequence") or span_map.get("type")
-    if not tag or paper_tree is None:
-        return tag, "", None
+    ordered_raw_tags: list[str] = []
+    for key in (field_name, "sequence", "type"):
+        val = span_map.get(key)
+        if val and val not in ordered_raw_tags:
+            ordered_raw_tags.append(val)
+    for val in span_map.values():
+        if val and val not in ordered_raw_tags:
+            ordered_raw_tags.append(val)
 
-    node = get_node_by_id(paper_tree, tag)
-    if node is None:
-        return tag, "", None
+    primary_tag = ordered_raw_tags[0] if ordered_raw_tags else None
+    if not ordered_raw_tags or paper_tree is None:
+        return primary_tag, "", None
 
-    image_bytes = getattr(node, "image_bytes", None)
-    if isinstance(node, TableNode):
-        parts = []
-        if node.caption:
-            parts.append(f"Caption: {node.caption}")
-        if node.columns:
-            parts.append("Columns: " + " | ".join(node.columns))
-        if node.rows:
-            row_preview = "\n".join(" | ".join(r) for r in node.rows[:15])
-            parts.append(row_preview)
-        if node.footnotes:
-            parts.append("Footnotes: " + " ".join(node.footnotes))
-        return tag, "\n".join(parts).strip(), image_bytes
+    for raw_tag in ordered_raw_tags:
+        for candidate_id in _extract_candidate_tags(raw_tag):
+            node, row_idx = _lookup_node_with_fallback(paper_tree, candidate_id)
+            if node is None:
+                continue
+            quote_text, image_bytes = _render_node_evidence(
+                node, highlight_row_idx=row_idx
+            )
+            if quote_text or image_bytes:
+                resolved_tag = f"[{candidate_id}]"
+                return resolved_tag, quote_text, image_bytes
 
-    quote_text = getattr(node, "content", None) or getattr(node, "caption", None) or ""
-    return tag, quote_text.strip(), image_bytes
+    return primary_tag, "", None
 
 
 def collect_disagreements(
@@ -290,6 +401,7 @@ def adjudicate_candidate(
     image_bytes: bytes | None,
     field_adjudicator: LLMController,
     unmatched_adjudicator: LLMController,
+    resolution_note: str | None = None,
     max_retries: int = 0,
     retry_delay: float = 2.0,
 ) -> tuple[DisagreementVerdict, float | None, str]:
@@ -298,7 +410,8 @@ def adjudicate_candidate(
         return (
             DisagreementVerdict.AMBIGUOUS_NEEDS_HUMAN,
             0.0,
-            f"Could not resolve evidence tag '{evidence_tag}' in source document.",
+            resolution_note
+            or f"Could not resolve evidence tag '{evidence_tag}' in source document.",
         )
 
     if candidate.audit_type == AuditType.FIELD_MISMATCH:
@@ -448,11 +561,32 @@ def export_audit_csv(audits: Sequence[GoldenDisagreementAudit], output_path: str
     return target
 
 
+_PDF_PREFERRED_METHODS = {"direct_pdf", "factored", "multimodal_blocks", "agentic"}
+
+
+def _order_paper_contents(
+    contents: Sequence[PaperContent],
+    extraction_method: Any,
+) -> list[PaperContent]:
+    """Order available PaperContent rows by likely match for the run's extraction_method."""
+    method_val = (
+        extraction_method.value
+        if hasattr(extraction_method, "value")
+        else str(extraction_method or "").lower()
+    )
+    if method_val in _PDF_PREFERRED_METHODS:
+        return sorted(contents, key=lambda pc: 0 if (pc.format or "").lower() == "pdf" else 1)
+    return list(contents)
+
+
 def audit_run_against_golden(
     llm_run_identifier: int,
     *,
     manual_run_identifier: int = 0,
     pmids: Sequence[str] | None = None,
+    content_format: str | None = None,
+    grobid_url: str | None = None,
+    pdf_backend: str = "grobid",
     provider: str = "google_genai",
     model_name: str = "gemini-3.5-flash-lite",
     base_url: str | None = None,
@@ -474,8 +608,16 @@ def audit_run_against_golden(
     Resolves each entry's ``evidence_span`` tag via ``parsers.parse_document`` +
     ``get_node_by_id``, runs an independent Adjudicator LLM/VLM, optionally persists
     ``GoldenDisagreementAudit`` rows to the database, and optionally exports Markdown/CSV reports.
+
+    Args:
+        content_format: Optional ``"pdf"`` or ``"xml"`` to force a specific ``PaperContent`` format.
+            When ``None`` (default), automatically tries all available formats for each paper
+            (preferring ``"pdf"`` for multimodal/factored/agentic runs and falling back to ``"xml"``).
+        grobid_url: Optional GROBID server URL passed to ``parse_document`` when parsing PDFs.
+        pdf_backend: PDF parsing backend passed to ``parse_document`` (default ``"grobid"``).
     """
     resolved_audit_run_id = audit_run_identifier or int(time.time())
+    normalized_format = content_format.strip().lower() if content_format else None
 
     field_adjudicator = LLMController(
         provider=provider,
@@ -519,33 +661,110 @@ def audit_run_against_golden(
             min_similarity=min_similarity,
         )
 
-        # Parse each paper's document tree once (cached by paper_id)
-        paper_trees: dict[int, Node | None] = {}
+        # Caches to avoid redundant DB lookups, blob downloads, or GROBID calls
+        pmid_to_paper_id: dict[str, int | None] = {}
+        contents_by_paper: dict[int, list[PaperContent]] = {}
+        # Maps PaperContent.id (or object id fallback) -> (parsed_tree, error_msg)
+        parsed_cache: dict[int, tuple[Node | None, str | None]] = {}
         audits: list[GoldenDisagreementAudit] = []
+
+        def _get_or_parse_tree(pc: PaperContent) -> tuple[Node | None, str | None]:
+            cache_key = pc.id if pc.id is not None else id(pc)
+            if cache_key in parsed_cache:
+                return parsed_cache[cache_key]
+            try:
+                raw = pc.get_content()
+                fmt = (pc.format or "auto").lower()
+                tree = parse_document(
+                    raw,
+                    format=fmt,
+                    grobid_url=grobid_url,
+                    backend=pdf_backend,
+                    crop_pdf_tables=(fmt == "pdf"),
+                    crop_pdf_images=(fmt == "pdf"),
+                )
+                parsed_cache[cache_key] = (tree, None)
+            except (ValueError, RuntimeError, OSError, requests.RequestException) as e:
+                err_msg = f"{pc.format or 'unknown'}: {e}"
+                logger.warning(f"Could not parse PaperContent {pc.id} for paper {pc.paper_id}: {e}")
+                parsed_cache[cache_key] = (None, err_msg)
+            return parsed_cache[cache_key]
 
         for cand in candidates:
             pid = cand.paper_id
-            if pid is not None and pid not in paper_trees:
-                paper_content = get_paper_content_by_paper_id(pid, s)
-                if paper_content is None:
-                    paper_trees[pid] = None
-                else:
-                    try:
-                        raw = paper_content.get_content()
-                        paper_trees[pid] = parse_document(
-                            raw,
-                            format=paper_content.format or "auto",
-                            crop_pdf_tables=(paper_content.format == "pdf"),
-                            crop_pdf_images=(paper_content.format == "pdf"),
-                        )
-                    except (ValueError, RuntimeError, OSError) as e:
-                        logger.warning(f"Could not parse PaperContent for paper {pid}: {e}")
-                        paper_trees[pid] = None
+            if pid is None and cand.pmid:
+                if cand.pmid not in pmid_to_paper_id:
+                    pm = s.exec(
+                        select(PaperMetadata).where(PaperMetadata.pmid == cand.pmid)
+                    ).first()
+                    pmid_to_paper_id[cand.pmid] = pm.id if pm is not None else None
+                pid = pmid_to_paper_id[cand.pmid]
 
-            tree = paper_trees.get(pid) if pid is not None else None
-            tag, quote, img_bytes = resolve_evidence_for_field(
-                tree, cand.llm_entry.evidence_span, cand.field_name
-            )
+            tag: str | None = None
+            quote = ""
+            img_bytes: bytes | None = None
+            resolution_note: str | None = None
+
+            if pid is None:
+                tag, quote, img_bytes = resolve_evidence_for_field(
+                    None, cand.llm_entry.evidence_span, cand.field_name
+                )
+                resolution_note = f"No paper_id or PaperMetadata found for PMID {cand.pmid}."
+            else:
+                if pid not in contents_by_paper:
+                    filters: dict[str, Any] = {"paper_id": pid}
+                    if normalized_format is not None:
+                        filters["format"] = normalized_format
+                    contents_by_paper[pid] = get_paper_contents(session=s, **filters)
+
+                pc_rows = _order_paper_contents(
+                    contents_by_paper[pid],
+                    getattr(cand.llm_entry, "extraction_method", None),
+                )
+
+                if not pc_rows:
+                    tag, quote, img_bytes = resolve_evidence_for_field(
+                        None, cand.llm_entry.evidence_span, cand.field_name
+                    )
+                    resolution_note = (
+                        f"No PaperContent found in DB for paper_id={pid} "
+                        f"(format={normalized_format or 'any'})."
+                    )
+                else:
+                    parse_errors: list[str] = []
+                    tried_formats: list[str] = []
+                    for pc in pc_rows:
+                        tree, err_msg = _get_or_parse_tree(pc)
+                        if err_msg is not None:
+                            parse_errors.append(err_msg)
+                            continue
+                        tried_formats.append(pc.format or "unknown")
+                        cand_tag, cand_quote, cand_img = resolve_evidence_for_field(
+                            tree, cand.llm_entry.evidence_span, cand.field_name
+                        )
+                        if tag is None and cand_tag is not None:
+                            tag = cand_tag
+                        if cand_quote or cand_img:
+                            tag, quote, img_bytes = cand_tag, cand_quote, cand_img
+                            break
+
+                    if not quote and not img_bytes:
+                        if not tried_formats and parse_errors:
+                            tag, _, _ = resolve_evidence_for_field(
+                                None, cand.llm_entry.evidence_span, cand.field_name
+                            )
+                            resolution_note = (
+                                f"Failed to parse source document for paper_id={pid}: "
+                                f"{'; '.join(parse_errors)}"
+                            )
+                        elif not tag:
+                            resolution_note = "LLM entry has no evidence_span tags."
+                        else:
+                            resolution_note = (
+                                f"Could not resolve evidence tag '{tag}' in parsed source document "
+                                f"(tried formats: {', '.join(tried_formats)})."
+                            )
+
             verdict, confidence, reason = adjudicate_candidate(
                 cand,
                 evidence_tag=tag,
@@ -553,13 +772,14 @@ def audit_run_against_golden(
                 image_bytes=img_bytes,
                 field_adjudicator=field_adjudicator,
                 unmatched_adjudicator=unmatched_adjudicator,
+                resolution_note=resolution_note,
                 max_retries=max_retries,
                 retry_delay=retry_delay,
             )
 
             audit_row = GoldenDisagreementAudit(
                 pmid=cand.pmid,
-                paper_id=cand.paper_id,
+                paper_id=pid,
                 manual_entry_id=cand.manual_entry.id if cand.manual_entry else None,
                 llm_entry_id=cand.llm_entry.id,
                 sequence=cand.sequence,
