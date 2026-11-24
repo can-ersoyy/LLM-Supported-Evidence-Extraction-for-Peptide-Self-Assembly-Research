@@ -38,6 +38,14 @@ dependencies = [
     "urllib3==2.7.0",
 ]
 
+[project.optional-dependencies]
+ui = [
+    "fastapi>=0.115.0",
+    "python-multipart>=0.0.9",
+    "streamlit>=1.40.0",
+    "uvicorn>=0.30.0",
+]
+
 [build-system]
 requires = ["uv_build>=0.12.3,<0.13.0"]
 build-backend = "uv_build"
