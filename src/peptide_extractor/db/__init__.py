@@ -35,6 +35,11 @@ from peptide_extractor.db.extraction_evaluation import (
     EvaluationCategory,
     ExtractionEvaluation,
 )
+from peptide_extractor.db.golden_disagreement_audit import (
+    AuditType,
+    DisagreementVerdict,
+    GoldenDisagreementAudit,
+)
 
 __all__ = [
     "PaperMetadata",
@@ -43,6 +48,9 @@ __all__ = [
     "PeptideEntry",
     "ExtractionEvaluation",
     "EvaluationCategory",
+    "GoldenDisagreementAudit",
+    "AuditType",
+    "DisagreementVerdict",
     "DatasetSubset",
     "PaperStatus",
     "ExtractionMode",
