@@ -1123,45 +1123,40 @@ if __name__ == "__main__":
     # golden_papers_ids = [r.paper_id for r in get_records(PeptideEntry, run_identifier=0)]
 
     # Compare on 71/75 golden dataset papers
-    all_golden_papers = get_paper_metadatas(source_databases="SAPDB; PeptideMiner")
-    assert len(all_golden_papers) == 75
-    subset = [
-        p.id
-        for p in all_golden_papers
-        if get_paper_content_by_paper_id(p.id) is not None
-    ]
-    assert len(subset) == 71
-    print("works")
-    exit(0)
+   
     # method: direct pdf
-    fails, identifier = run_peptide_extraction(
-        provider="google",
-        model_name="gemini-3.5-flash-lite",
-        delay_seconds=4,
-        tables_as_images=True,
-        factored_extraction=True,
-        pass_pdf_directly=True,
-        # table_provider="ollama",
-        # table_model_name="gemma4:26b",
-        table_provider="google",
-        table_model_name="gemini-3.5-flash-lite",
-        content_format="pdf",
-        id=subset,
-    )
-    print(f"Fails: {fails}, Run identifier: {identifier}")
+    #fails, identifier = run_peptide_extraction(
+    #    provider="google",
+    #    model_name="gemini-3.5-flash-lite",
+    #    delay_seconds=4,
+    #    tables_as_images=True,
+    #    factored_extraction=True,
+    #    pass_pdf_directly=True,
+    #    # table_provider="ollama",
+    #    # table_model_name="gemma4:26b",
+    #    table_provider="google",
+    #    table_model_name="gemini-3.5-flash-lite",
+    #    content_format="pdf",
+    #    id=subset,
+    #)
+    #print(f"Fails: {fails}, Run identifier: {identifier}")
+
+    from peptide_extractor.golden_benchmark import DEV_BENCHMARK_PMIDS, benchmark_run_against_golden
 
     # method: 2-pass + table as image
     fails, identifier = run_peptide_extraction(
         provider="google",
         model_name="gemini-3.5-flash-lite",
         delay_seconds=4,
+        agentic=True,
         tables_as_images=True,
-        factored_extraction=True,
         # table_provider="ollama",
         # table_model_name="gemma4:26b",
         table_provider="google",
         table_model_name="gemini-3.5-flash-lite",
-        content_format="pdf",
-        id=subset,
+        max_refinement_rounds=2,
+        pmid=DEV_BENCHMARK_PMIDS
     )
     print(f"Fails: {fails}, Run identifier: {identifier}")
+
+    print(benchmark_run_against_golden(llm_run_identifier=identifier).format_report())

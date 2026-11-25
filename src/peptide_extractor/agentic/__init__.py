@@ -8,9 +8,11 @@ from peptide_extractor.agentic.agents import (
     TableExtractorAgent,
 )
 from peptide_extractor.agentic.chemistry_sandbox import (
+    canonicalize_solution,
     convert_concentration_to_mg_ml,
     estimate_peptide_mw,
     extract_paper_detection_methods,
+    normalize_terminal_cap,
     sanitize_and_validate_entries,
     split_sequence_and_caps,
 )
@@ -50,9 +52,11 @@ __all__ = [
     "TableExtractorAgent",
     "ValidationIssue",
     "apply_refiner_patch",
+    "canonicalize_solution",
     "convert_concentration_to_mg_ml",
     "estimate_peptide_mw",
     "extract_paper_detection_methods",
+    "normalize_terminal_cap",
     "run_agentic_extraction",
     "sanitize_and_validate_entries",
     "split_sequence_and_caps",

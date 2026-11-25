@@ -108,7 +108,11 @@ class SharedExperimentalConditions(BaseModel):
     ph: Optional[float] = None
     peptide_concentration: Optional[float] = Field(
         default=None,
-        description="Normalized concentration in mg/ml.",
+        description="Concentration numeric value (prefer mg/ml; if mM/uM/M/wt%, set peptide_concentration_unit).",
+    )
+    peptide_concentration_unit: Optional[str] = Field(
+        default=None,
+        description="Unit for peptide_concentration (e.g. 'mg/ml', 'wt%', 'mM', 'uM', 'M').",
     )
     solution: Optional[str] = None
     solvent: Optional[str] = None
@@ -143,6 +147,7 @@ class CompactTableCondition(BaseModel):
     volume_ratio: Optional[list[int]] = None
     type: Optional[PeptideAssemblyType] = None
     peptide_concentration: Optional[float] = None
+    peptide_concentration_unit: Optional[str] = None
     temperature: Optional[float] = None
     ph: Optional[float] = None
     incubation_period: Optional[int] = None
@@ -280,6 +285,10 @@ def merge_table_result_with_shared(
                 ph=_resolve("ph", cell_val=cell.ph),
                 peptide_concentration=_resolve(
                     "peptide_concentration", cell_val=cell.peptide_concentration
+                ),
+                peptide_concentration_unit=_resolve(
+                    "peptide_concentration_unit",
+                    cell_val=cell.peptide_concentration_unit,
                 ),
                 solution=_resolve("solution", cell_val=cell.solution),
                 solvent=_resolve("solvent", cell_val=cell.solvent),

@@ -326,6 +326,136 @@ _DETECTION_SCAN_PATTERNS: list[tuple[re.Pattern[str], str]] = [
 
 _MIXTURE_SEP_RE = re.compile(r"[/+;,:]|\band\b|\bwith\b|\bin\b", re.IGNORECASE)
 
+_N_TERM_CANONICAL: dict[str, str] = {
+    "free": "Free",
+    "nh2": "Free",
+    "h2n": "Free",
+    "h": "Free",
+    "-h": "Free",
+    "unmodified": "Free",
+    "none": "Free",
+    "ac": "Acetylation",
+    "acetyl": "Acetylation",
+    "acetylation": "Acetylation",
+    "fmoc": "Fmoc",
+    "boc": "Boc",
+    "t-boc": "Boc",
+    "tboc": "Boc",
+    "cbz": "Cbz",
+    "z": "Cbz",
+    "nap": "Nap",
+    "2-nap": "Nap",
+}
+
+_C_TERM_CANONICAL: dict[str, str] = {
+    "free": "Free",
+    "cooh": "Free",
+    "oh": "Free",
+    "-oh": "Free",
+    "unmodified": "Free",
+    "none": "Free",
+    "nh2": "Amidation",
+    "conh2": "Amidation",
+    "amide": "Amidation",
+    "amidation": "Amidation",
+    "ome": "Methyl ester",
+    "och3": "Methyl ester",
+    "methyl ester": "Methyl ester",
+    "methoxylation": "Methyl ester",
+    "oet": "Ethyl ester",
+    "oc2h5": "Ethyl ester",
+    "ethyl ester": "Ethyl ester",
+    "obn": "Benzylation",
+    "och2ph": "Benzylation",
+    "obzl": "Benzylation",
+    "benzyl ester": "Benzylation",
+    "benzylation": "Benzylation",
+}
+
+_SOLUTION_COMPONENT_ALIASES: list[tuple[re.Pattern[str], str]] = [
+    (
+        re.compile(
+            r"^(?:1,1,1,3,3,3-)?hexafluoro-?(?:2-)?(?:propanol|isopropanol)$|^hfip$|^hfp$",
+            re.IGNORECASE,
+        ),
+        "HFP",
+    ),
+    (
+        re.compile(
+            r"^dimethyl\s*sulfoxide$|^dimethylsulfoxide$|^dmso$", re.IGNORECASE
+        ),
+        "DMSO",
+    ),
+    (
+        re.compile(
+            r"^dimethyl\s*formamide$|^dimethylformamide$|^dmf$", re.IGNORECASE
+        ),
+        "DMF",
+    ),
+    (
+        re.compile(r"^phosphate[- ]buffered saline$|^pbs(?:\s*1x)?$", re.IGNORECASE),
+        "PBS",
+    ),
+    (
+        re.compile(
+            r"^(?:deionized|distilled|double[- ]distilled|milli-?q)\s+water$|^h2o$",
+            re.IGNORECASE,
+        ),
+        "H2O",
+    ),
+    (re.compile(r"^dichloromethane$|^dcm$|^ch2cl2$", re.IGNORECASE), "Dichloromethane"),
+    (re.compile(r"^ethyl\s*acetate$|^etoac$", re.IGNORECASE), "Ethyl acetate"),
+    (re.compile(r"^chlorobenzene$|^cl-?c6h5$", re.IGNORECASE), "Chlorobenzene"),
+    (
+        re.compile(r"^acetonitrile$|^mecn$|^ch3cn$", re.IGNORECASE),
+        "Acetonitrile",
+    ),
+    (re.compile(r"^methanol$|^meoh$", re.IGNORECASE), "Methanol"),
+    (re.compile(r"^ethanol$|^etoh$", re.IGNORECASE), "Ethanol"),
+    (re.compile(r"^chloroform$|^chcl3$", re.IGNORECASE), "Chloroform"),
+    (re.compile(r"^tetrahydrofuran$|^thf$", re.IGNORECASE), "THF"),
+]
+
+
+def normalize_terminal_cap(value: str | None, is_n_term: bool) -> str | None:
+    """Canonicalize N- or C-terminal modification strings to SAPdb/PeptideMiner standards."""
+    if value is None:
+        return None
+    cleaned = value.strip()
+    if not cleaned:
+        return None
+    table = _N_TERM_CANONICAL if is_n_term else _C_TERM_CANONICAL
+    return table.get(cleaned.lower(), cleaned)
+
+
+def canonicalize_solution(value: str | None) -> str | None:
+    """Canonicalize solvent/solution abbreviations and formulas (e.g. HFIP -> HFP, CH2Cl2 -> Dichloromethane)."""
+    if value is None:
+        return None
+    cleaned = value.strip()
+    if not cleaned:
+        return None
+
+    parts = [p.strip() for p in cleaned.split("/") if p.strip()]
+    if len(parts) > 1:
+        norm_parts: list[str] = []
+        for part in parts:
+            if part.lower() == "water":
+                norm_parts.append("H2O")
+                continue
+            replaced = part
+            for pat, canon in _SOLUTION_COMPONENT_ALIASES:
+                if pat.match(part):
+                    replaced = canon
+                    break
+            norm_parts.append(replaced)
+        return "/".join(norm_parts)
+
+    for pat, canon in _SOLUTION_COMPONENT_ALIASES:
+        if pat.match(cleaned):
+            return canon
+    return cleaned
+
 
 def extract_paper_detection_methods(source_text: str) -> list[str]:
     """Deterministically scan paper text for canonical characterization techniques."""
@@ -350,6 +480,7 @@ def sanitize_and_validate_entries(
     entries: Sequence[PeptideLLMEntry],
     aliases: Sequence[PeptideAlias] | None = None,
     source_text: str | None = None,
+    default_room_temperature: bool = False,
 ) -> tuple[list[PeptideLLMEntry], DeterministicValidationReport]:
     """Run deterministic chemistry normalization, alias resolution, validation, and dedup."""
     alias_lookup: dict[str, PeptideAlias] = {}
@@ -422,13 +553,28 @@ def sanitize_and_validate_entries(
                 )
             )
 
-        # 2b. Unify solvent -> solution when TableExtractor populated solvent but left solution null
+        # 2b. Unify solvent -> solution & canonicalize solution/terminal names
         sol_val = (data.get("solution") or "").strip()
         solv_val = (data.get("solvent") or "").strip()
         if not sol_val and solv_val:
             data["solution"] = solv_val
             sol_val = solv_val
             auto_fixes += 1
+
+        if sol_val:
+            canon_sol = canonicalize_solution(sol_val)
+            if canon_sol and canon_sol != sol_val:
+                data["solution"] = canon_sol
+                sol_val = canon_sol
+                auto_fixes += 1
+
+        for term_field, is_n in (("n_terminal", True), ("c_terminal", False)):
+            t_val = data.get(term_field)
+            if t_val is not None:
+                canon_t = normalize_terminal_cap(t_val, is_n_term=is_n)
+                if canon_t != t_val:
+                    data[term_field] = canon_t
+                    auto_fixes += 1
 
         # 2c. Default volume_ratio = [1] for neat single-component solvents
         if sol_val and not data.get("volume_ratio") and _is_single_neat_solvent(sol_val):
@@ -447,7 +593,60 @@ def sanitize_and_validate_entries(
             )
             auto_fixes += 1
 
-        # 2e. Supplement detection_method with deterministically detected paper-wide techniques
+        # 2e. Convert molar / wt% concentrations to mg/ml via estimated peptide MW
+        conc_val = data.get("peptide_concentration")
+        conc_unit = (data.get("peptide_concentration_unit") or "").strip()
+        if conc_val is not None and conc_unit:
+            norm_unit = conc_unit.lower().replace("μ", "u").replace("µ", "u")
+            if norm_unit not in {"mg/ml", "mg ml-1", "mg/cm3", "g/l"}:
+                lin_val = data.get("linear_cyclic")
+                lin_str = lin_val.value if hasattr(lin_val, "value") else lin_val
+                converted = convert_concentration_to_mg_ml(
+                    float(conc_val),
+                    conc_unit,
+                    data.get("sequence", ""),
+                    n_terminal=data.get("n_terminal"),
+                    c_terminal=data.get("c_terminal"),
+                    linear_cyclic=lin_str,
+                )
+                if converted is not None:
+                    data["peptide_concentration"] = converted
+                    data["peptide_concentration_unit"] = "mg/ml"
+                    auto_fixes += 1
+                    issues.append(
+                        ValidationIssue(
+                            entry_index=idx,
+                            field="peptide_concentration",
+                            severity="info",
+                            message=f"Converted {conc_val} {conc_unit} -> {converted} mg/ml using estimated peptide MW.",
+                            auto_fixed=True,
+                        )
+                    )
+                else:
+                    issues.append(
+                        ValidationIssue(
+                            entry_index=idx,
+                            field="peptide_concentration",
+                            severity="warning",
+                            message=f"Could not convert concentration {conc_val} {conc_unit} to mg/ml.",
+                        )
+                    )
+
+        # 2f. Apply SAPdb/PeptideMiner default room temperature (25.0 C) when omitted
+        if default_room_temperature and data.get("temperature") is None:
+            data["temperature"] = 25.0
+            auto_fixes += 1
+            issues.append(
+                ValidationIssue(
+                    entry_index=idx,
+                    field="temperature",
+                    severity="info",
+                    message="Applied default room temperature (25.0 C) per SAPdb/PeptideMiner convention.",
+                    auto_fixed=True,
+                )
+            )
+
+        # 2g. Supplement detection_method with deterministically detected paper-wide techniques
         if paper_methods:
             existing_methods = list(data.get("detection_method") or [])
             existing_lower = {m.strip().lower() for m in existing_methods if m and m.strip()}
