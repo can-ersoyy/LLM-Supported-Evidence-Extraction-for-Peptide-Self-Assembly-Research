@@ -178,7 +178,10 @@ class ExtractionOrchestrator:
         aliases = registry.peptides if registry is not None else None
         if self.config.enable_chemistry_sandbox:
             all_entries, val_report = sanitize_and_validate_entries(
-                all_entries, aliases=aliases, source_text=source_text
+                all_entries,
+                aliases=aliases,
+                source_text=source_text,
+                default_room_temperature=self.config.default_room_temperature,
             )
         else:
             val_report = DeterministicValidationReport(
@@ -245,7 +248,10 @@ class ExtractionOrchestrator:
 
                 if self.config.enable_chemistry_sandbox:
                     all_entries, val_report = sanitize_and_validate_entries(
-                        all_entries, aliases=aliases, source_text=source_text
+                        all_entries,
+                        aliases=aliases,
+                        source_text=source_text,
+                        default_room_temperature=self.config.default_room_temperature,
                     )
                     trace.validation_reports.append(val_report)
 

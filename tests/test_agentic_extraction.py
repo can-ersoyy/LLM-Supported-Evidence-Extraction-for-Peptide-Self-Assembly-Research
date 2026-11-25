@@ -16,9 +16,11 @@ from peptide_extractor.agentic import (
     ReviewerFeedback,
     ReviewIssue,
     apply_refiner_patch,
+    canonicalize_solution,
     convert_concentration_to_mg_ml,
     estimate_peptide_mw,
     extract_paper_detection_methods,
+    normalize_terminal_cap,
     sanitize_and_validate_entries,
     split_sequence_and_caps,
 )
@@ -546,3 +548,51 @@ def test_run_peptide_extraction_wrapper_with_agentic_mode():
         assert saved[0].n_terminal == "Fmoc"
         assert saved[0].c_terminal == "Free"
         assert saved[0].type == "hydrogel"
+
+
+def test_sandbox_converts_molar_concentration_canonicalizes_solvents_terminals_and_rt():
+    raw = [
+        PeptideLLMEntry(
+            sequence="FF",
+            n_terminal="Ac",
+            c_terminal="NH2",
+            type=PeptideAssemblyType.HYDROGEL,
+            solution="HFIP/water",
+            peptide_concentration=10.0,
+            peptide_concentration_unit="mM",
+        ),
+        PeptideLLMEntry(
+            sequence="SVG",
+            n_terminal="boc",
+            c_terminal="cooh",
+            type=PeptideAssemblyType.ORGANOGEL,
+            solution="CH2Cl2",
+            temperature=37.0,
+            peptide_concentration=0.5,
+            peptide_concentration_unit="wt%",
+        ),
+    ]
+    cleaned, report = sanitize_and_validate_entries(raw, default_room_temperature=True)
+    assert len(cleaned) == 2
+
+    e0, e1 = cleaned[0], cleaned[1]
+    assert e0.n_terminal == "Acetylation"
+    assert e0.c_terminal == "Amidation"
+    assert e0.solution == "HFP/H2O"
+    assert e0.temperature == 25.0  # default RT applied
+    assert e0.peptide_concentration_unit == "mg/ml"
+    mw_ac_ff_nh2 = estimate_peptide_mw("FF", n_terminal="Acetylation", c_terminal="Amidation")
+    assert mw_ac_ff_nh2 is not None
+    assert abs(e0.peptide_concentration - (10.0 * mw_ac_ff_nh2 / 1000.0)) < 0.01
+
+    assert e1.n_terminal == "Boc"
+    assert e1.c_terminal == "Free"
+    assert e1.solution == "Dichloromethane"
+    assert e1.temperature == 37.0  # explicit temp preserved
+    assert e1.peptide_concentration == 5.0  # 0.5 wt% -> 5.0 mg/ml
+    assert report.auto_fixes_applied >= 4
+
+    assert canonicalize_solution("EtOAc") == "Ethyl acetate"
+    assert canonicalize_solution("Cl-C6H5") == "Chlorobenzene"
+    assert normalize_terminal_cap("H2N", is_n_term=True) == "Free"
+    assert normalize_terminal_cap("OMe", is_n_term=False) == "Methyl ester"

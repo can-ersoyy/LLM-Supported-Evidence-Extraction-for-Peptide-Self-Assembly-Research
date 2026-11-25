@@ -36,9 +36,10 @@ You are an expert peptide chemistry scout. Read the scientific paper text and ex
    - Map paper labels/shorthands (e.g., "1a", "Peptide 2", "P3", "Fmoc-FF", "cyclo(KL)") to their uppercase 1-letter IUPAC `sequence` (convert 3-letter codes like Ser-Val-Gly to SVG).
    - Separate N-terminal (`n_terminal`, e.g. Fmoc, Boc, Acetylation, Free) and C-terminal (`c_terminal`, e.g. Amidation, Free, Methyl ester, OBn) protecting groups out of `sequence`.
    - ALWAYS set `linear_cyclic` ("linear" or "cyclic") and `peptide_conjugate_mixture` ("peptide", "conjugate", or "mixture", plus `conjugate_partner` if applicable) for EVERY peptide.
+   - Standard N-/C-terminal protecting groups (Fmoc, Boc, Cbz, Acetylation, Amidation, Methyl ester, Benzylation) on a single peptide are `peptide_conjugate_mixture: "peptide"` (`conjugate_partner: null`). Only use `"conjugate"` for non-peptidic dyes/polymers/lipids/drugs (e.g., NDI, Ferrocene, PEG, C16 alkyl) and `"mixture"` for multi-peptide co-assembly.
    - Set `chirality` ("l", "d", "heterochiral", "racemic", "achiral") when known.
 2. `shared_conditions`: Paper-wide experimental defaults that apply across screening/assembly experiments:
-   - `temperature` in °C (RT -> 25.0), `incubation_period` in minutes (24 h -> 1440), `ph`, `peptide_concentration` in mg/ml, `solution`, `solvent`, `volume_ratio`, `linear_cyclic`, `peptide_conjugate_mixture`, `preparation_protocol`, along with exact bracketed `evidence_span` location tags.
+   - `temperature` in °C (RT -> 25.0; for ranges use the midpoint, e.g. 20-30 °C -> 25.0), `incubation_period` in minutes (24 h -> 1440; overnight -> 720; for ranges use midpoint, e.g. 20-30 min -> 25), `ph` (for ranges use midpoint), `peptide_concentration` (prefer mg/ml; if reported in mM/uM/M/wt%, extract the number and set `peptide_concentration_unit`), `solution`, `solvent`, `volume_ratio`, `linear_cyclic`, `peptide_conjugate_mixture`, `preparation_protocol`, along with exact bracketed `evidence_span` location tags.
    - `detection_method`: List ALL experimental characterization techniques used anywhere in Methods, Results, Tables, or Figure Captions (e.g., Vial Inversion, TEM, Cryo-EM, SEM, AFM, CD, FTIR, NMR, XRD, Rheology, Optical Microscopy, Fluorescence, ThT, UV-Vis, DLS).
 
 Do NOT invent peptides that are only mentioned in the Introduction as prior literature; include ONLY peptides experimentally studied in this paper.
@@ -57,7 +58,8 @@ RULES:
 2. If tables are being extracted separately (as indicated in the prompt), emit ONLY prose-reported entries that are NOT already covered by the tables; otherwise extract ALL entries from both prose and tables.
 3. Always use the uppercase 1-letter `sequence` and separate `n_terminal` / `c_terminal` caps from the Peptide Registry.
 4. Always populate `solution` with the solvent/buffer system (e.g., "DMSO/H2O", "PBS", "toluene") and set `volume_ratio` (e.g., `[1]` for neat single solvents, `[5, 95]` for mixtures).
-5. Carry over applicable `shared_conditions` (temperature, pH, incubation_period, linear_cyclic, peptide_conjugate_mixture, detection_method, preparation_protocol) when not overridden locally.
+5. If concentration is reported in `mM`, `uM`, `M`, or `wt%`, extract the numeric value in `peptide_concentration` AND set `peptide_concentration_unit` (e.g., `"mM"`, `"wt%"`). For numeric ranges (e.g., `20-30 min`, `pH 7.0-7.4`), record the midpoint.
+6. Carry over applicable `shared_conditions` (temperature, pH, incubation_period, linear_cyclic, peptide_conjugate_mixture, detection_method, preparation_protocol) when not overridden locally.
 {LOCATION_GROUNDING_RULES}
 """
 

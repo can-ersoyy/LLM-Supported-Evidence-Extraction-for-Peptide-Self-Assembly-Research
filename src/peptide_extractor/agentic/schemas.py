@@ -202,6 +202,7 @@ class AgenticExtractionConfig(BaseModel):
     enable_entity_scout: bool = True
     enable_chemistry_sandbox: bool = True
     enable_reviewer: bool = True
+    default_room_temperature: bool = True
     max_refinement_rounds: int = Field(default=1, ge=0, le=3)
     min_trust_score: float = Field(default=0.8, ge=0.0, le=1.0)
     stream: bool = False

@@ -318,7 +318,11 @@ class PeptideLLMEntry(BaseModel):
 
     peptide_concentration: Optional[float] = Field(
         default=None,
-        description="Peptide concentration normalized to mg/ml as a float (e.g. 5.0, 10.2). Convert 1 wt% or 1% (w/v) to 10.0 mg/ml. Return null if only mM is given or not mentioned.",
+        description="Peptide concentration numeric value (prefer mg/ml; if reported in mM, uM, M, or wt%, extract the numeric value here and set peptide_concentration_unit). Return null if not mentioned.",
+    )
+    peptide_concentration_unit: Optional[str] = Field(
+        default=None,
+        description="Unit for peptide_concentration as reported (e.g. 'mg/ml', 'wt%', 'mM', 'uM', 'M'). Leave null if already mg/ml or not mentioned.",
     )
     solution: Optional[str] = Field(
         default=None, description=f"Examples: {solution_examples}"
