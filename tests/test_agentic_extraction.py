@@ -596,3 +596,278 @@ def test_sandbox_converts_molar_concentration_canonicalizes_solvents_terminals_a
     assert canonicalize_solution("Cl-C6H5") == "Chlorobenzene"
     assert normalize_terminal_cap("H2N", is_n_term=True) == "Free"
     assert normalize_terminal_cap("OMe", is_n_term=False) == "Methyl ester"
+
+
+# ---------------------------------------------------------------------------
+# 5. PDF Figure Cropping & FigureExtractorAgent Tests
+# ---------------------------------------------------------------------------
+
+
+def test_split_blocks_for_visual_extraction_separates_tables_and_figures():
+    from peptide_extractor.extraction import _split_blocks_for_visual_extraction
+
+    blocks = [
+        {
+            "type": "text",
+            "text": (
+                "[sec-1] Results\n"
+                "[sec-1/table-0] Table 1. Gelation screening.\n"
+                "\t>>> [TABLE IMAGE ATTACHED: sec-1/table-0] <<<\n"
+            ),
+        },
+        {"type": "image_url", "image_url": {"url": "data:image/png;base64,TABLE0"}},
+        {
+            "type": "text",
+            "text": (
+                "[sec-1/fig-0] Figure 1. Phase diagram of Boc-FF in ethanol/water.\n"
+                "\t>>> [FIGURE IMAGE ATTACHED: sec-1/fig-0] <<<\n"
+            ),
+        },
+        {"type": "image_url", "image_url": {"url": "data:image/png;base64,FIG0"}},
+        {
+            "type": "text",
+            "text": "=== APPENDIX FIGURE IMAGE: [sec-2/fig-1] ===\nCaption: Scheme 1. Structures.\n",
+        },
+        {"type": "image_url", "image_url": {"url": "data:image/png;base64,FIG1"}},
+    ]
+
+    prose, table_items, figure_items = _split_blocks_for_visual_extraction(blocks)
+    assert "Results" in prose
+    assert len(table_items) == 1
+    assert table_items[0][0] == "sec-1/table-0"
+    assert "Table 1" in table_items[0][1]
+
+    assert len(figure_items) == 2
+    assert figure_items[0][0] == "sec-1/fig-0"
+    assert "Phase diagram" in figure_items[0][1]
+    assert figure_items[1][0] == "sec-2/fig-1"
+    assert "Scheme 1" in figure_items[1][1]
+
+
+def test_crop_figures_from_pdf_expands_caption_only_grobid_box():
+    import fitz
+
+    from peptide_extractor.parsers import ImageNode, RootNode
+    from peptide_extractor.table_renderer import crop_figures_from_pdf
+
+    # Build a synthetic 1-page PDF with a vector plot box above a thin caption
+    doc = fitz.open()
+    page = doc.new_page(width=600, height=800)
+    # Vector plot graphic from y=100..260
+    page.draw_rect(fitz.Rect(80, 100, 520, 260), color=(0, 0, 1), fill=(0.9, 0.9, 1))
+    # Thin caption below at y=280..300 (height=20 < 90)
+    page.insert_text((80, 295), "Figure 1. Phase diagram of Boc-FF.", fontsize=10)
+    pdf_bytes = doc.tobytes()
+    doc.close()
+
+    root = RootNode("", "", None)
+    fig = ImageNode(
+        id="fig-0",
+        content="Figure 1. Phase diagram of Boc-FF.",
+        parent_id="",
+        caption="Figure 1. Phase diagram of Boc-FF.",
+        coords="1,80,280,440,20",  # caption-only GROBID box!
+    )
+    root.children.append(fig)
+
+    count = crop_figures_from_pdf(root, pdf_bytes, dpi=72)
+    assert count == 1
+    assert fig.image_bytes is not None
+
+    from io import BytesIO
+    from PIL import Image
+
+    cropped = Image.open(BytesIO(fig.image_bytes))
+    # Expanded box must cover the vector graphic above (y=100..300 -> height >= 190 px at 72 dpi)
+    assert cropped.height >= 190
+
+
+def test_orchestrator_runs_figure_extractor_and_attaches_schemes_to_scout():
+    blocks = [
+        {
+            "type": "text",
+            "text": (
+                "[sec-0/fig-0] Scheme 1. Chemical structures of peptide amphiphiles 1-2.\n"
+                "\t>>> [FIGURE IMAGE ATTACHED: sec-0/fig-0] <<<\n"
+            ),
+        },
+        {"type": "image_url", "image_url": {"url": "data:image/png;base64,SCHEME"}},
+        {
+            "type": "text",
+            "text": (
+                "[sec-1/table-0] Table 1. Summary.\n"
+                "\t>>> [TABLE IMAGE ATTACHED: sec-1/table-0] <<<\n"
+            ),
+        },
+        {"type": "image_url", "image_url": {"url": "data:image/png;base64,TABLE"}},
+        {
+            "type": "text",
+            "text": (
+                "[sec-1/fig-1] Figure 1. Phase diagram of Boc-FF in ethanol/water.\n"
+                "\t>>> [FIGURE IMAGE ATTACHED: sec-1/fig-1] <<<\n"
+            ),
+        },
+        {"type": "image_url", "image_url": {"url": "data:image/png;base64,PHASE"}},
+    ]
+
+    registry = EntityRegistryResult(
+        peptides=[
+            PeptideAlias(
+                label="Boc-FF",
+                sequence="FF",
+                n_terminal="Boc",
+                c_terminal="Free",
+            )
+        ],
+        shared_conditions=SharedExperimentalConditions(temperature=25.0),
+    )
+
+    scout_mock = MagicMock()
+    scout_mock.run.return_value = registry
+
+    prose_mock = MagicMock()
+    prose_mock.run.return_value = PeptideExtractionResult(entries=[])
+
+    table_mock = MagicMock()
+    table_mock.run.return_value = TableExtractionResult(
+        rows=[
+            CompactTableRow(
+                sequence="FF",
+                n_terminal="Boc",
+                c_terminal="Free",
+                conditions=[
+                    CompactTableCondition(
+                        type=PeptideAssemblyType.TUBE,
+                        solution="Ethanol/H2O",
+                        volume_ratio=[10, 90],
+                        peptide_concentration=2.0,
+                    )
+                ],
+            )
+        ]
+    )
+
+    figure_mock = MagicMock()
+    # Scheme figure returns empty rows; phase-diagram figure returns 2 points (1 sphere + 1 none)
+    figure_mock.run.side_effect = [
+        TableExtractionResult(rows=[]),
+        TableExtractionResult(
+            rows=[
+                CompactTableRow(
+                    sequence="FF",
+                    n_terminal="Boc",
+                    c_terminal="Free",
+                    conditions=[
+                        CompactTableCondition(
+                            type=PeptideAssemblyType.NANOSPHERE,
+                            solution="Ethanol/H2O",
+                            volume_ratio=[50, 50],
+                            peptide_concentration=4.0,
+                        ),
+                        CompactTableCondition(
+                            type=PeptideAssemblyType.NONE,
+                            solution="Ethanol/H2O",
+                            volume_ratio=[80, 20],
+                            peptide_concentration=0.5,
+                        ),
+                    ],
+                )
+            ]
+        ),
+    ]
+
+    cfg = AgenticExtractionConfig(enable_reviewer=False)
+    with (
+        patch("peptide_extractor.agentic.orchestrator.EntityScoutAgent", return_value=scout_mock),
+        patch("peptide_extractor.agentic.orchestrator.ProseExtractorAgent", return_value=prose_mock),
+        patch("peptide_extractor.agentic.orchestrator.TableExtractorAgent", return_value=table_mock),
+        patch("peptide_extractor.agentic.orchestrator.FigureExtractorAgent", return_value=figure_mock),
+    ):
+        trace = ExtractionOrchestrator(cfg).run_with_trace(blocks, filename="paper_44.pdf")
+
+    # Scheme 1 was attached to EntityScoutAgent
+    scout_kwargs = scout_mock.run.call_args.kwargs
+    assert scout_kwargs["scheme_images"] is not None
+    assert len(scout_kwargs["scheme_images"]) == 1
+    assert scout_kwargs["scheme_images"][0][0] == "sec-0/fig-0"
+
+    # TableExtractorAgent ran ONLY on the table, FigureExtractorAgent ran on BOTH figures
+    assert table_mock.run.call_count == 1
+    assert figure_mock.run.call_count == 2
+    assert trace.figures_processed == 2
+
+    # Final entries include 1 table row + 2 figure phase-diagram rows
+    assert trace.final_entry_count == 3
+    fig_entries = [
+        e for e in trace.result.entries if e.evidence_span and e.evidence_span.sequence == "[sec-1/fig-1]"
+    ]
+    assert len(fig_entries) == 2
+    assert {e.type for e in fig_entries} == {
+        PeptideAssemblyType.NANOSPHERE,
+        PeptideAssemblyType.NONE,
+    }
+
+
+def test_merge_table_does_not_bleed_shared_solvent_when_cell_overrides_solution():
+    from peptide_extractor.extraction import merge_table_result_with_shared
+
+    shared = SharedExperimentalConditions(solvent="toluene", temperature=25.0)
+    table_res = TableExtractionResult(
+        table_defaults=SharedExperimentalConditions(peptide_concentration=100.0),
+        rows=[
+            CompactTableRow(
+                sequence="AAA",
+                conditions=[
+                    CompactTableCondition(
+                        type=PeptideAssemblyType.NONE,
+                        solution="Chloroform",
+                    )
+                ],
+            )
+        ],
+    )
+    merged = merge_table_result_with_shared(table_res, shared, "table-0")
+    assert len(merged) == 1
+    assert merged[0].solution == "Chloroform"
+    assert merged[0].solvent is None
+    assert merged[0].peptide_concentration == 100.0
+
+
+def test_dehydrophenylalanine_and_t_butyloxycarbonyl_normalization():
+    seq, n_cap, c_cap, _, _ = split_sequence_and_caps("H-Glu-ΔPhe-OH")
+    assert seq == "EF"
+    assert n_cap == "Free"
+    assert c_cap == "Free"
+    assert normalize_terminal_cap("t-butyloxycarbonyl", is_n_term=True) == "Boc"
+
+
+def test_crop_figures_from_pdf_caption_fallback_when_coords_missing():
+    import fitz
+    from io import BytesIO
+    from PIL import Image
+
+    from peptide_extractor.parsers import ImageNode, RootNode
+    from peptide_extractor.table_renderer import crop_figures_from_pdf
+
+    doc = fitz.open()
+    page = doc.new_page(width=600, height=800)
+    page.draw_rect(fitz.Rect(60, 80, 540, 420), color=(0, 0, 1), fill=(0.9, 0.9, 1))
+    page.insert_text((60, 450), "Figure 1 | Phase diagram of Boc-FF in ethanol/water.", fontsize=10)
+    pdf_bytes = doc.tobytes()
+    doc.close()
+
+    root = RootNode("", "", None)
+    fig = ImageNode(
+        id="fig-0",
+        content="Figure 1 | Phase diagram of Boc-FF in ethanol/water.",
+        parent_id="",
+        caption="Figure 1 | Phase diagram of Boc-FF in ethanol/water.",
+        coords=None,  # GROBID omitted coords completely
+    )
+    root.children.append(fig)
+
+    count = crop_figures_from_pdf(root, pdf_bytes, dpi=72)
+    assert count == 1
+    assert fig.image_bytes is not None
+    cropped = Image.open(BytesIO(fig.image_bytes))
+    assert cropped.height >= 350

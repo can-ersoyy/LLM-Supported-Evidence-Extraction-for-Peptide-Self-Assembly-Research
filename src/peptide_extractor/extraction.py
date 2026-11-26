@@ -172,21 +172,38 @@ class TableExtractionResult(BaseModel):
 
 
 _TABLE_ATTACHED_RE = re.compile(
-    r">>>\s*\[(?:TABLE IMAGE ATTACHED|SEE APPENDIX TABLE IMAGE|FIGURE IMAGE ATTACHED|SEE APPENDIX FIGURE IMAGE):\s*([^\]]+)\]\s*<<<"
+    r">>>\s*\[(TABLE IMAGE ATTACHED|SEE APPENDIX TABLE IMAGE|FIGURE IMAGE ATTACHED|SEE APPENDIX FIGURE IMAGE):\s*([^\]]+)\]\s*<<<"
 )
 _APPENDIX_HEADER_RE = re.compile(
-    r"===\s*APPENDIX (?:TABLE|FIGURE) IMAGE:\s*\[([^\]]+)\]\s*==="
+    r"===\s*APPENDIX (TABLE|FIGURE) IMAGE:\s*\[([^\]]+)\]\s*==="
 )
 _EVIDENCE_FIELDS = set(EvidenceSpan.model_fields.keys())
 
 
-def _split_blocks_for_factored_extraction(
+def _is_figure_kind(kind_label: Optional[str], visual_id: Optional[str]) -> bool:
+    if kind_label and "FIGURE" in kind_label.upper():
+        return True
+    if visual_id and ("fig-" in visual_id.lower() or visual_id.lower().startswith("fig")):
+        return True
+    return False
+
+
+def _split_blocks_for_visual_extraction(
     blocks: list[dict[str, Any]],
-) -> tuple[str, list[tuple[str, str, dict[str, Any]]]]:
-    """Split multimodal blocks into (prose_text, [(table_id, caption_text, image_block), ...])."""
+) -> tuple[
+    str,
+    list[tuple[str, str, dict[str, Any]]],
+    list[tuple[str, str, dict[str, Any]]],
+]:
+    """Split multimodal blocks into (prose_text, table_items, figure_items).
+
+    Each visual item is a tuple of `(location_id, caption_text, image_block)`.
+    """
     prose_parts: list[str] = []
     table_items: list[tuple[str, str, dict[str, Any]]] = []
-    pending_table_meta: dict[str, str] = {}
+    figure_items: list[tuple[str, str, dict[str, Any]]] = []
+    # Maps location_id -> (kind, caption_text) where kind is "table" or "figure"
+    pending_meta: dict[str, tuple[str, str]] = {}
 
     for idx, block in enumerate(blocks):
         btype = block.get("type")
@@ -194,42 +211,62 @@ def _split_blocks_for_factored_extraction(
             text = block.get("text", "")
             appendix_match = _APPENDIX_HEADER_RE.search(text)
             if appendix_match:
-                tid = appendix_match.group(1).strip()
-                pending_table_meta[tid] = text.strip()
+                kind_label = appendix_match.group(1).strip()
+                vid = appendix_match.group(2).strip()
+                kind = "figure" if _is_figure_kind(kind_label, vid) else "table"
+                pending_meta[vid] = (kind, text.strip())
                 continue
 
             prose_parts.append(text)
             for m in _TABLE_ATTACHED_RE.finditer(text):
-                tid = m.group(1).strip()
-                # Capture the table caption/footnotes lines right above the marker
+                kind_label = m.group(1).strip()
+                vid = m.group(2).strip()
+                kind = "figure" if _is_figure_kind(kind_label, vid) else "table"
+                # Capture the caption/footnotes lines right above the marker
                 lines = text[: m.start()].splitlines()
                 caption_lines = [
-                    ln.strip() for ln in lines[-4:] if tid in ln or "Footnotes:" in ln
+                    ln.strip() for ln in lines[-4:] if vid in ln or "Footnotes:" in ln
                 ]
-                pending_table_meta[tid] = (
-                    "\n".join(caption_lines) if caption_lines else f"[{tid}]"
-                )
+                caption = "\n".join(caption_lines) if caption_lines else f"[{vid}]"
+                pending_meta[vid] = (kind, caption)
         elif btype == "image_url":
-            # Pair with the most recent pending table metadata (appendix or interleaved)
-            tid = None
+            vid: Optional[str] = None
+            kind = "table"
             caption = ""
             if idx > 0 and blocks[idx - 1].get("type") == "text":
                 prev_text = blocks[idx - 1].get("text", "")
                 m_app = _APPENDIX_HEADER_RE.search(prev_text)
                 m_att = _TABLE_ATTACHED_RE.search(prev_text)
                 if m_app:
-                    tid = m_app.group(1).strip()
+                    vid = m_app.group(2).strip()
+                    kind = "figure" if _is_figure_kind(m_app.group(1), vid) else "table"
                 elif m_att:
-                    tid = m_att.group(1).strip()
-            if tid is None and pending_table_meta:
-                tid = next(iter(pending_table_meta))
-            if tid is not None:
-                caption = pending_table_meta.pop(tid, f"[{tid}]")
+                    vid = m_att.group(2).strip()
+                    kind = "figure" if _is_figure_kind(m_att.group(1), vid) else "table"
+            if vid is None and pending_meta:
+                vid = next(iter(pending_meta))
+            if vid is not None and vid in pending_meta:
+                kind, caption = pending_meta.pop(vid)
+            elif vid is not None:
+                caption = f"[{vid}]"
             else:
-                tid = f"table-{len(table_items)}"
-            table_items.append((tid, caption, block))
+                vid = f"table-{len(table_items)}"
+                caption = f"[{vid}]"
 
-    return "\n".join(prose_parts), table_items
+            if kind == "figure":
+                figure_items.append((vid, caption, block))
+            else:
+                table_items.append((vid, caption, block))
+
+    return "\n".join(prose_parts), table_items, figure_items
+
+
+def _split_blocks_for_factored_extraction(
+    blocks: list[dict[str, Any]],
+) -> tuple[str, list[tuple[str, str, dict[str, Any]]]]:
+    """Backwards-compatible wrapper returning (prose_text, all_visual_items)."""
+    prose_text, table_items, figure_items = _split_blocks_for_visual_extraction(blocks)
+    return prose_text, table_items + figure_items
 
 
 def _format_shared_conditions_summary(shared: SharedExperimentalConditions) -> str:
@@ -291,7 +328,11 @@ def merge_table_result_with_shared(
                     cell_val=cell.peptide_concentration_unit,
                 ),
                 solution=_resolve("solution", cell_val=cell.solution),
-                solvent=_resolve("solvent", cell_val=cell.solvent),
+                solvent=(
+                    _resolve("solvent", cell_val=cell.solvent)
+                    if cell.solution is None or cell.solvent is not None
+                    else None
+                ),
                 volume_ratio=_resolve("volume_ratio", cell_val=cell.volume_ratio),
                 incubation_period=_resolve(
                     "incubation_period", cell_val=cell.incubation_period
@@ -331,8 +372,10 @@ def run_factored_extraction(
             retry_delay=retry_delay,
         )
 
-    prose_text, table_items = _split_blocks_for_factored_extraction(paper_content)
-    if not table_items:
+    prose_text, table_items, figure_items = _split_blocks_for_visual_extraction(
+        paper_content
+    )
+    if not table_items and not figure_items:
         return run_extraction(
             paper_content,
             provider=provider,
@@ -399,6 +442,52 @@ def run_factored_extraction(
             logger.error(f"Failed to extract table [{table_id}] for {filename}: {e}")
             raise
         all_entries.extend(merge_table_result_with_shared(table_res, shared, table_id))
+
+    # Pass 2B: Extract any cropped figure images (phase diagrams, sweeps, vial grids)
+    if figure_items:
+        figure_controller = LLMController(
+            provider=table_provider or provider,
+            model_name=table_model_name or model_name,
+            structured_output=TableExtractionResult,
+            system_prompt=(
+                "You are an expert scientific curator extracting experimental peptide "
+                "self-assembly data from a single scientific figure (e.g., 2D phase diagram, "
+                "pH/concentration/temperature/solvent-ratio sweep, or vial-inversion grid). "
+                "Extract every distinct tested (peptide, condition) point visible in the figure, "
+                "including non-assembling ('none') regions/markers. If the figure is purely a "
+                "micrograph (TEM/SEM/AFM), spectrum (CD/FTIR/NMR/XRD), or schematic with no new "
+                "condition-level assembly data points, return rows: []."
+            ),
+        )
+        for fig_id, caption_text, image_block in figure_items:
+            fig_prompt_blocks = [
+                {
+                    "type": "text",
+                    "text": (
+                        f"Paper-wide shared conditions (merged automatically; only override if this figure differs):\n"
+                        f"{shared_summary}\n\n"
+                        f"Figure location ID: [{fig_id}]\n"
+                        f"{caption_text}\n"
+                        f"Extract all experimental assembly/non-assembly condition points shown in this figure. "
+                        f"Return an empty rows list if the figure contains no new condition data."
+                    ),
+                },
+                image_block,
+            ]
+            try:
+                fig_res: TableExtractionResult = retry_on_external_error(
+                    figure_controller.extract_peptides,
+                    fig_prompt_blocks,
+                    stream=True,
+                    filename=filename,
+                    max_retries=max_retries,
+                    retry_delay=retry_delay,
+                    context=f"extraction figure [{fig_id}] {filename}",
+                )
+            except Exception as e:
+                logger.error(f"Failed to extract figure [{fig_id}] for {filename}: {e}")
+                raise
+            all_entries.extend(merge_table_result_with_shared(fig_res, shared, fig_id))
 
     return PeptideExtractionResult(entries=all_entries)
 

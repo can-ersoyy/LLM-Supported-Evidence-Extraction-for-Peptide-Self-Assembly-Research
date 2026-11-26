@@ -34,12 +34,13 @@ ENTITY_SCOUT_SYSTEM_PROMPT = f"""
 You are an expert peptide chemistry scout. Read the scientific paper text and extract TWO concise registries:
 1. `peptides`: EVERY experimentally studied peptide or compound alias in the paper.
    - Map paper labels/shorthands (e.g., "1a", "Peptide 2", "P3", "Fmoc-FF", "cyclo(KL)") to their uppercase 1-letter IUPAC `sequence` (convert 3-letter codes like Ser-Val-Gly to SVG).
+   - For backbone-modified or dehydro/D-enantiomer derivatives of canonical amino acids (e.g., `ΔPhe` / `α,β-dehydrophenylalanine` / `D-Phe` -> `F`, `D-Ala` -> `A`), map them to their parent canonical 1-letter residue code (`F`, `A`, etc.) rather than `X`.
    - Separate N-terminal (`n_terminal`, e.g. Fmoc, Boc, Acetylation, Free) and C-terminal (`c_terminal`, e.g. Amidation, Free, Methyl ester, OBn) protecting groups out of `sequence`.
    - ALWAYS set `linear_cyclic` ("linear" or "cyclic") and `peptide_conjugate_mixture` ("peptide", "conjugate", or "mixture", plus `conjugate_partner` if applicable) for EVERY peptide.
    - Standard N-/C-terminal protecting groups (Fmoc, Boc, Cbz, Acetylation, Amidation, Methyl ester, Benzylation) on a single peptide are `peptide_conjugate_mixture: "peptide"` (`conjugate_partner: null`). Only use `"conjugate"` for non-peptidic dyes/polymers/lipids/drugs (e.g., NDI, Ferrocene, PEG, C16 alkyl) and `"mixture"` for multi-peptide co-assembly.
    - Set `chirality` ("l", "d", "heterochiral", "racemic", "achiral") when known.
-2. `shared_conditions`: Paper-wide experimental defaults that apply across screening/assembly experiments:
-   - `temperature` in °C (RT -> 25.0; for ranges use the midpoint, e.g. 20-30 °C -> 25.0), `incubation_period` in minutes (24 h -> 1440; overnight -> 720; for ranges use midpoint, e.g. 20-30 min -> 25), `ph` (for ranges use midpoint), `peptide_concentration` (prefer mg/ml; if reported in mM/uM/M/wt%, extract the number and set `peptide_concentration_unit`), `solution`, `solvent`, `volume_ratio`, `linear_cyclic`, `peptide_conjugate_mixture`, `preparation_protocol`, along with exact bracketed `evidence_span` location tags.
+2. `shared_conditions`: Paper-wide experimental defaults that apply across ALL screening/assembly experiments:
+   - `temperature` in °C (RT -> 25.0; for ranges use the midpoint, e.g. 20-30 °C -> 25.0), `incubation_period` in minutes (24 h -> 1440; overnight -> 720; for ranges use midpoint, e.g. 20-30 min -> 25), `ph` (for ranges use midpoint), `peptide_concentration` (ONLY set if a single fixed concentration was used across ALL experiments — do NOT put a single peptide's minimum gelation concentration / MGC here; if reported in mM/uM/M/wt%/% w/v, extract the number AND set `peptide_concentration_unit`), `solution`, `solvent` (ONLY set if ALL experiments used the exact same solvent), `volume_ratio`, `linear_cyclic`, `peptide_conjugate_mixture`, `preparation_protocol`, along with exact bracketed `evidence_span` location tags.
    - `detection_method`: List ALL experimental characterization techniques used anywhere in Methods, Results, Tables, or Figure Captions (e.g., Vial Inversion, TEM, Cryo-EM, SEM, AFM, CD, FTIR, NMR, XRD, Rheology, Optical Microscopy, Fluorescence, ThT, UV-Vis, DLS).
 
 Do NOT invent peptides that are only mentioned in the Introduction as prior literature; include ONLY peptides experimentally studied in this paper.
@@ -57,7 +58,7 @@ RULES:
 1. Extract EVERY experimental `(peptide, condition)` combination reported in the prose/text—including negative/non-assembling controls (`type: "none"`).
 2. If tables are being extracted separately (as indicated in the prompt), emit ONLY prose-reported entries that are NOT already covered by the tables; otherwise extract ALL entries from both prose and tables.
 3. Always use the uppercase 1-letter `sequence` and separate `n_terminal` / `c_terminal` caps from the Peptide Registry.
-4. Always populate `solution` with the solvent/buffer system (e.g., "DMSO/H2O", "PBS", "toluene") and set `volume_ratio` (e.g., `[1]` for neat single solvents, `[5, 95]` for mixtures).
+4. Always populate `solution` with the solvent/buffer system (e.g., "DMSO/H2O", "PBS", "toluene") and set `volume_ratio` (e.g., `[1]` for neat single solvents, `[5, 95]` for mixtures). NEVER treat encapsulated guest/cargo molecules (e.g., vitamin B12, riboflavin, hemin, insulin, dyes/drugs) as solvents or spawn separate rows for cargo encapsulation.
 5. If concentration is reported in `mM`, `uM`, `M`, or `wt%`, extract the numeric value in `peptide_concentration` AND set `peptide_concentration_unit` (e.g., `"mM"`, `"wt%"`). For numeric ranges (e.g., `20-30 min`, `pH 7.0-7.4`), record the midpoint.
 6. Carry over applicable `shared_conditions` (temperature, pH, incubation_period, linear_cyclic, peptide_conjugate_mixture, detection_method, preparation_protocol) when not overridden locally.
 {LOCATION_GROUNDING_RULES}
@@ -77,7 +78,36 @@ CRITICAL RULES:
 4. SOLVENT & RATIO FIELDS (CRITICAL):
    - ALWAYS put the tested solvent/buffer name (from column headers or rows) into `solution` (e.g., `solution: "toluene"`, `solution: "water"`, `solution: "DMSO/PBS"`).
    - For neat single solvents, set `volume_ratio: [1]`. For solvent mixtures, set `volume_ratio` (e.g., `[5, 95]`).
-5. Do NOT repeat unchanged paper-wide defaults (`temperature`, `incubation_period`, `preparation_protocol`, `detection_method`) unless the table or cell overrides them.
+5. CONCENTRATION & TABLE DEFAULTS (CRITICAL):
+   - Always check the table caption, column headers, and footnotes for the table-wide screening concentration (e.g., "tested up to 100 mg/ml", "at 10% (w/v)", "2 mM") and set `table_defaults.peptide_concentration` + `table_defaults.peptide_concentration_unit` (e.g., `"mg/ml"`, `"wt%"`, `"mM"`) so every screening cell (including non-gelling `i`/`p`/`h`/`S`/`I` cells) inherits the correct table concentration rather than a single-peptide MGC from prose.
+   - Whenever a concentration is given in `% (w/v)` or `wt%` (e.g., `0.5%`, `10%`), ALWAYS set `peptide_concentration_unit: "wt%"` (1 wt% = 10 mg/ml).
+6. Do NOT repeat unchanged paper-wide defaults (`temperature`, `incubation_period`, `preparation_protocol`, `detection_method`) unless the table or cell overrides them.
+"""
+
+SCOPED_FIGURE_EXTRACTOR_SYSTEM_PROMPT = """
+You are an expert scientific curator extracting experimental peptide self-assembly data from a single scientific figure image into a compact row-grouped schema (`TableExtractionResult`).
+
+WHAT TO EXTRACT (HIGH-VALUE FIGURES):
+1. **2D Phase Diagrams & State-Space Grids** (e.g., concentration vs. solvent ratio, pH vs. concentration, temperature vs. volume ratio):
+   - Read both axis labels, units, and tick marks carefully.
+   - Read the legend/color/symbol key (e.g., isotropic solution / clear / soluble / no gel -> `type: "none"`; spheres -> `type: "nanosphere"`; tubes -> `type: "tube"`; fibers/fibrils -> `type: "fiber"`; ribbons -> `type: "ribbon"`; hydrogel -> `type: "hydrogel"`; organogel -> `type: "organogel"`; vesicles -> `type: "vesicle"`).
+   - Emit EVERY distinct tested data point / grid cell shown on the phase diagram—including non-assembling (`type: "none"`) points!
+2. **Parameter Sweeps & Vial-Inversion Photo Grids** (e.g., pH sweep showing gel vs. sol across pH 4–12, temperature sweep, concentration series, or solvent-ratio series):
+   - Emit one condition per explicitly tested axis point or labeled vial/panel.
+3. **Multi-Panel Composite Figures**:
+   - Inspect ALL panels (a, b, c, ...). If panel (a) is a phase diagram or gelation map and panels (b–h) are TEM/SEM micrographs, extract the data points from panel (a) and use the micrograph panels to confirm exact morphology (`fiber`, `tube`, `nanosphere`, `ribbon`, `vesicle`).
+
+WHEN TO RETURN EMPTY (`rows: []`):
+- If the figure is ONLY a micrograph (TEM, Cryo-EM, SEM, AFM, optical microscopy), a spectrum/diffractogram (CD, FTIR, NMR, XRD, UV-Vis, fluorescence), a rheological curve (G'/G''), a gel-to-sol melting temperature (T_gel) vs. concentration curve, a kinetic/release/degradation/time-course plot, a molecular dynamics snapshot, a conceptual cartoon, or a chemical synthesis scheme with NO multi-state phase diagram or new condition-level `(peptide, condition -> assembly outcome)` grid, return `rows: []`.
+- NEVER digitize points along continuous characterization curves (like T_gel vs. concentration or storage modulus vs. strain/frequency) into dozens of separate rows!
+- NEVER fabricate or interpolate values that are not explicitly plotted or labeled in the figure.
+- NEVER treat encapsulated drug/dye cargo molecules (e.g., vitamin B12, riboflavin, hemin, insulin) as solvents.
+
+FORMATTING RULES:
+- Use the provided `Peptide Registry` to map compound numbers/aliases to uppercase 1-letter `sequence`, `n_terminal`, and `c_terminal`.
+- Always populate `solution` (e.g., `"Ethanol/H2O"`, `"DMSO/H2O"`, `"H2O"`) and `volume_ratio` (e.g., `[1]` for neat solvents, `[50, 50]` for 50:50 mixtures, `[10, 90]` for 10% v/v co-solvent in water).
+- If concentration is plotted in `mM`, `uM`, `M`, or `wt%` (`% w/v`), set both `peptide_concentration` and `peptide_concentration_unit`.
+- Do NOT repeat unchanged paper-wide defaults (`temperature`, `incubation_period`, `preparation_protocol`, `detection_method`) unless the figure overrides them.
 """
 
 REVIEWER_SYSTEM_PROMPT = """
@@ -237,10 +267,27 @@ class EntityScoutAgent:
         self,
         paper_input: str | bytes | Path,
         filename: str = "paper.pdf",
+        scheme_images: Sequence[tuple[str, str, dict[str, Any]]] | None = None,
     ) -> EntityRegistryResult:
+        payload: str | bytes | Path | list[dict[str, Any]] = paper_input
+        if isinstance(paper_input, str) and scheme_images:
+            blocks: list[dict[str, Any]] = [{"type": "text", "text": paper_input}]
+            for fig_id, caption_text, image_block in scheme_images:
+                blocks.append(
+                    {
+                        "type": "text",
+                        "text": (
+                            f"\nChemical Structure / Scheme Figure [{fig_id}] "
+                            f"(use this image to verify exact peptide sequences, compound numbers, "
+                            f"and N-/C-terminal caps):\n{caption_text}"
+                        ),
+                    }
+                )
+                blocks.append(image_block)
+            payload = blocks
         return retry_on_external_error(
             self.controller.extract_peptides,
-            paper_input,
+            payload,
             stream=self.config.stream,
             filename=filename,
             max_retries=self.config.max_retries,
@@ -371,6 +418,71 @@ class TableExtractorAgent:
             max_retries=self.config.max_retries,
             retry_delay=self.config.retry_delay,
             context=f"agentic table [{table_id}] {filename}",
+        )
+
+
+class FigureExtractorAgent:
+    """Stage 2C agent: extracts phase diagrams, parameter sweeps, and gelation grids from figure images."""
+
+    def __init__(self, config: AgenticExtractionConfig):
+        self.config = config
+        self.controller = LLMController(
+            provider=config.figure_provider or config.table_provider or config.provider,
+            model_name=config.figure_model_name or config.table_model_name or config.model_name,
+            structured_output=TableExtractionResult,
+            system_prompt=SCOPED_FIGURE_EXTRACTOR_SYSTEM_PROMPT,
+            base_url=config.base_url,
+            stream=config.stream,
+        )
+
+    def run(
+        self,
+        figure_id: str,
+        caption_text: str,
+        image_block: dict[str, Any],
+        registry: EntityRegistryResult | None = None,
+        figure_context: str = "",
+        filename: str = "paper.pdf",
+    ) -> TableExtractionResult:
+        reg_summary = (
+            format_entity_registry_summary(registry.peptides) if registry else "None provided."
+        )
+        shared_summary = (
+            _format_shared_conditions_summary(registry.shared_conditions)
+            if registry
+            else "None specified."
+        )
+        context_block = (
+            f"\nSurrounding Figure Discussion / Legend from Paper:\n{figure_context}\n"
+            if figure_context.strip()
+            else ""
+        )
+        blocks = [
+            {
+                "type": "text",
+                "text": (
+                    f"Peptide Registry (resolve aliases/caps from here):\n{reg_summary}\n\n"
+                    f"Paper-wide shared conditions (merged automatically; only override if this figure differs):\n"
+                    f"{shared_summary}\n\n"
+                    f"Figure location ID: [{figure_id}]\n"
+                    f"{caption_text}\n"
+                    f"{context_block}"
+                    "Inspect the attached figure image. If it contains a phase diagram, "
+                    "parameter sweep (pH, concentration, temperature, solvent ratio), or "
+                    "vial-inversion/gelation grid, extract EVERY explicitly tested data point "
+                    "(including non-assembling 'none' points). Otherwise return an empty rows list."
+                ),
+            },
+            image_block,
+        ]
+        return retry_on_external_error(
+            self.controller.extract_peptides,
+            blocks,
+            stream=self.config.stream,
+            filename=filename,
+            max_retries=self.config.max_retries,
+            retry_delay=self.config.retry_delay,
+            context=f"agentic figure [{figure_id}] {filename}",
         )
 
 

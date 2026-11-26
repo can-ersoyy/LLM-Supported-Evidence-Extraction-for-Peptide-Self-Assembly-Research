@@ -2,6 +2,7 @@
 
 from peptide_extractor.agentic.agents import (
     EntityScoutAgent,
+    FigureExtractorAgent,
     ProseExtractorAgent,
     RefinerAgent,
     ReviewerAgent,
@@ -42,6 +43,7 @@ __all__ = [
     "EntityScoutAgent",
     "ExtractionOrchestrator",
     "FieldUpdate",
+    "FigureExtractorAgent",
     "PeptideAlias",
     "ProseExtractorAgent",
     "RefinerAgent",

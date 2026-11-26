@@ -192,6 +192,8 @@ class AgenticExtractionConfig(BaseModel):
     scout_model_name: str | None = None
     table_provider: str | None = None
     table_model_name: str | None = None
+    figure_provider: str | None = None
+    figure_model_name: str | None = None
     reviewer_provider: str | None = None
     reviewer_model_name: str | None = None
     reviewer_base_url: str | None = None
@@ -200,6 +202,8 @@ class AgenticExtractionConfig(BaseModel):
 
     # Orchestration controls
     enable_entity_scout: bool = True
+    enable_figure_extraction: bool = True
+    attach_schemes_to_scout: bool = True
     enable_chemistry_sandbox: bool = True
     enable_reviewer: bool = True
     default_room_temperature: bool = True
@@ -216,6 +220,7 @@ class AgenticExtractionTrace(BaseModel):
     entity_registry: EntityRegistryResult | None = None
     initial_entry_count: int = 0
     final_entry_count: int = 0
+    figures_processed: int = 0
     refinement_rounds_executed: int = 0
     validation_reports: list[DeterministicValidationReport] = Field(default_factory=list)
     review_history: list[ReviewerFeedback] = Field(default_factory=list)

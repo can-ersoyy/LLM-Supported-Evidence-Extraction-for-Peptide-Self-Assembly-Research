@@ -1,3 +1,4 @@
+from peptide_extractor.golden_auditor import audit_run_against_golden
 from peptide_extractor.golden_benchmark import benchmark_run_against_golden
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Type, Union
@@ -1164,3 +1165,36 @@ if __name__ == "__main__":
     #    id=subset,
     # )
     # print(f"Fails: {fails}, Run identifier: {identifier}")
+
+    from peptide_extractor.golden_benchmark import (
+        DEV_BENCHMARK_PMIDS,
+        benchmark_run_against_golden,
+    )
+
+    #
+    fails, identifier = run_peptide_extraction(
+        provider="google",
+        model_name="gemini-3.5-flash-lite",
+        delay_seconds=4,
+        # factored_extraction=True,
+        agentic=True,
+        tables_as_images=True,
+        images_as_images=True,
+        table_provider="google",
+        table_model_name="gemini-3.5-flash-lite",
+        max_refinement_rounds=2,
+        pmid=DEV_BENCHMARK_PMIDS,
+    )
+    print(f"Fails: {fails}, Run identifier: {identifier}")
+    print(
+        benchmark_run_against_golden(
+            llm_run_identifier=identifier, pmids=DEV_BENCHMARK_PMIDS
+        ).format_report()
+    )
+
+    # audits, report_md = audit_run_against_golden(
+    #    llm_run_identifier=1795688610,
+    #    pmids=DEV_BENCHMARK_PMIDS,
+    #    export_markdown_path="docs/audit_report_v3.md",
+    #    export_csv_path="docs/audit_report_v3.csv",
+    # )

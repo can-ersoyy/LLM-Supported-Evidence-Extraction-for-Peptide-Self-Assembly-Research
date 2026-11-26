@@ -4,10 +4,12 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from pathlib import Path
+import re
 from typing import Any
 
 from peptide_extractor.agentic.agents import (
     EntityScoutAgent,
+    FigureExtractorAgent,
     ProseExtractorAgent,
     RefinerAgent,
     ReviewerAgent,
@@ -24,10 +26,20 @@ from peptide_extractor.agentic.schemas import (
 from peptide_extractor.db.peptide_entry import PeptideExtractionResult, PeptideLLMEntry
 from peptide_extractor.extraction import (
     SharedExperimentalConditions,
-    _split_blocks_for_factored_extraction,
+    _split_blocks_for_visual_extraction,
     merge_table_result_with_shared,
 )
 from peptide_extractor.logging_utils import logger
+
+_SCHEME_CAPTION_RE = re.compile(
+    r"\b(?:scheme|chemical\s+structure|molecular\s+structure|synthesis\s+of|structures?\s+of\s+(?:the\s+)?(?:peptide|compound|gelator|amphiphile|dipeptide|tripeptide))",
+    re.IGNORECASE,
+)
+
+
+def _is_scheme_figure(caption_text: str) -> bool:
+    """Return True if a figure caption looks like a chemical structure or synthesis scheme."""
+    return bool(caption_text and _SCHEME_CAPTION_RE.search(caption_text))
 
 
 def _extract_table_context(
@@ -102,11 +114,17 @@ class ExtractionOrchestrator:
 
     def _decompose_input(
         self, paper_content: str | bytes | Path | list[dict[str, Any]]
-    ) -> tuple[str | bytes | Path, list[tuple[str, str, dict[str, Any]]]]:
+    ) -> tuple[
+        str | bytes | Path,
+        list[tuple[str, str, dict[str, Any]]],
+        list[tuple[str, str, dict[str, Any]]],
+    ]:
         if isinstance(paper_content, list):
-            prose_text, table_items = _split_blocks_for_factored_extraction(paper_content)
-            return prose_text, table_items
-        return paper_content, []
+            prose_text, table_items, figure_items = _split_blocks_for_visual_extraction(
+                paper_content
+            )
+            return prose_text, table_items, figure_items
+        return paper_content, [], []
 
     def run_with_trace(
         self,
@@ -115,18 +133,31 @@ class ExtractionOrchestrator:
     ) -> AgenticExtractionTrace:
         """Execute the full multi-agent workflow and return an auditable trace + final entries."""
         trace = AgenticExtractionTrace()
-        prose_or_raw, table_items = self._decompose_input(paper_content)
+        prose_or_raw, table_items, figure_items = self._decompose_input(paper_content)
         is_binary_pdf = isinstance(prose_or_raw, (bytes, Path))
         source_text = prose_or_raw if isinstance(prose_or_raw, str) else ""
+
+        scheme_images = [
+            item
+            for item in figure_items
+            if self.config.attach_schemes_to_scout and _is_scheme_figure(item[1])
+        ]
 
         # ------------------------------------------------------------------
         # Stage 1: Entity & Alias Scout (+ paper-wide shared conditions)
         # ------------------------------------------------------------------
         registry: EntityRegistryResult | None = None
         if self.config.enable_entity_scout:
-            logger.info(f"[Orchestrator] Stage 1: Running EntityScoutAgent for {filename}")
+            logger.info(
+                f"[Orchestrator] Stage 1: Running EntityScoutAgent for {filename} "
+                f"(schemes={len(scheme_images)})"
+            )
             scout = EntityScoutAgent(self.config)
-            registry = scout.run(prose_or_raw, filename=filename)
+            registry = scout.run(
+                prose_or_raw,
+                filename=filename,
+                scheme_images=scheme_images or None,
+            )
             trace.entity_registry = registry
             logger.info(
                 f"[Orchestrator] Scout identified {len(registry.peptides)} peptide alias(es)."
@@ -139,10 +170,12 @@ class ExtractionOrchestrator:
         )
 
         # ------------------------------------------------------------------
-        # Stage 2: Scoped Extraction (Prose + Per-Table Image Workers)
+        # Stage 2: Scoped Extraction (Prose + Per-Table + Per-Figure Workers)
         # ------------------------------------------------------------------
+        active_figures = figure_items if self.config.enable_figure_extraction else []
         logger.info(
-            f"[Orchestrator] Stage 2: Running extraction (tables={len(table_items)}) for {filename}"
+            f"[Orchestrator] Stage 2: Running extraction "
+            f"(tables={len(table_items)}, figures={len(active_figures)}) for {filename}"
         )
         all_entries: list[PeptideLLMEntry] = []
 
@@ -169,6 +202,23 @@ class ExtractionOrchestrator:
                 )
                 merged = merge_table_result_with_shared(table_res, shared_defaults, table_id)
                 all_entries.extend(merged)
+
+        if active_figures:
+            figure_agent = FigureExtractorAgent(self.config)
+            for fig_id, caption_text, image_block in active_figures:
+                fig_ctx = _extract_table_context(source_text, fig_id, caption_text)
+                fig_res = figure_agent.run(
+                    figure_id=fig_id,
+                    caption_text=caption_text,
+                    image_block=image_block,
+                    registry=registry,
+                    figure_context=fig_ctx,
+                    filename=filename,
+                )
+                trace.figures_processed += 1
+                if fig_res.rows:
+                    merged = merge_table_result_with_shared(fig_res, shared_defaults, fig_id)
+                    all_entries.extend(merged)
 
         trace.initial_entry_count = len(all_entries)
 

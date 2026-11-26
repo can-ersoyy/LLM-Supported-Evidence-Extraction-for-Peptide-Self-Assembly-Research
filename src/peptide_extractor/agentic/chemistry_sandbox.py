@@ -49,6 +49,11 @@ THREE_TO_ONE_AA: dict[str, str] = {
     "trp": "W",
     "tyr": "Y",
     "val": "V",
+    "Δphe": "F",
+    "δphe": "F",
+    "dphe": "F",
+    "deltaphe": "F",
+    "dehydrophenylalanine": "F",
 }
 
 # Average residue masses (Da, minus H2O) for deterministic molar -> mg/ml conversion
@@ -341,6 +346,10 @@ _N_TERM_CANONICAL: dict[str, str] = {
     "boc": "Boc",
     "t-boc": "Boc",
     "tboc": "Boc",
+    "t-butyloxycarbonyl": "Boc",
+    "tert-butyloxycarbonyl": "Boc",
+    "t-butyloxycarbonyl": "Boc",
+    "tert-butyloxycarbonyl": "Boc",
     "cbz": "Cbz",
     "z": "Cbz",
     "nap": "Nap",

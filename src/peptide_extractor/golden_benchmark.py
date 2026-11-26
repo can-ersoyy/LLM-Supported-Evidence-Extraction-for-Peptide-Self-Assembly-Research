@@ -196,12 +196,18 @@ def condition_similarity(manual: PeptideEntry, llm: PeptideEntry) -> float:
     if manual.type is not None and llm.type is not None:
         _add(manual.type.strip().lower() == llm.type.strip().lower(), 2.0)
 
-    m_sol = extract_solvent_tokens(manual.solution, manual.solvent)
-    l_sol = extract_solvent_tokens(llm.solution, llm.solvent)
-    if m_sol and l_sol:
-        jaccard = len(m_sol & l_sol) / len(m_sol | l_sol)
+    m_sol_only = extract_solvent_tokens(manual.solution)
+    l_sol_only = extract_solvent_tokens(llm.solution)
+    m_sol_all = extract_solvent_tokens(manual.solution, manual.solvent)
+    l_sol_all = extract_solvent_tokens(llm.solution, llm.solvent)
+    jaccards: list[float] = []
+    if m_sol_only and l_sol_only:
+        jaccards.append(len(m_sol_only & l_sol_only) / len(m_sol_only | l_sol_only))
+    if m_sol_all and l_sol_all:
+        jaccards.append(len(m_sol_all & l_sol_all) / len(m_sol_all | l_sol_all))
+    if jaccards:
         weight += 2.0
-        score += 2.0 * jaccard
+        score += 2.0 * max(jaccards)
 
     m_vr = normalize_volume_ratio(manual.volume_ratio)
     l_vr = normalize_volume_ratio(llm.volume_ratio)
@@ -369,9 +375,15 @@ def _values_match_normalized(
         flipped = "/" in mvr and "/".join(reversed(mvr.split("/"))) == lvr
         return exact, (mvr == lvr or flipped)
     if field_name == "solution":
-        ms = extract_solvent_tokens(m.solution, m.solvent)
-        ls = extract_solvent_tokens(l.solution, l.solvent)
-        return exact, bool(ms and ls and ms == ls)
+        if exact:
+            return True, True
+        ms_sol = extract_solvent_tokens(m.solution)
+        ls_sol = extract_solvent_tokens(l.solution)
+        if ms_sol and ls_sol and ms_sol == ls_sol:
+            return exact, True
+        ms_all = extract_solvent_tokens(m.solution, m.solvent)
+        ls_all = extract_solvent_tokens(l.solution, l.solvent)
+        return exact, bool(ms_all and ls_all and ms_all == ls_all)
     if field_name == "detection_method":
         md = extract_detection_tokens(mv)
         ld = extract_detection_tokens(lv)

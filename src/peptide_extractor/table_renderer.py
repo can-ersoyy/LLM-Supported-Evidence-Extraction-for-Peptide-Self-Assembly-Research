@@ -166,21 +166,137 @@ def crop_tables_from_pdf(
     return cropped_count
 
 
+def _box_contains_significant_graphic(
+    page: Any,
+    x0: float,
+    y0: float,
+    x1: float,
+    y1: float,
+    min_graphic_area_ratio: float = 0.15,
+) -> bool:
+    """Return True if [x0, y0, x1, y1] already contains substantial raster/vector graphics."""
+    box_area = max(1.0, (x1 - x0) * (y1 - y0))
+    covered_area = 0.0
+    try:
+        for img_info in page.get_images(full=True):
+            for rect in page.get_image_rects(img_info[0]):
+                ix0 = max(x0, rect.x0)
+                iy0 = max(y0, rect.y0)
+                ix1 = min(x1, rect.x1)
+                iy1 = min(y1, rect.y1)
+                if ix1 > ix0 and iy1 > iy0:
+                    covered_area += (ix1 - ix0) * (iy1 - iy0)
+                    if covered_area / box_area >= min_graphic_area_ratio:
+                        return True
+    except Exception:
+        pass
+    return False
+
+
+def _expand_caption_only_figure_rect(
+    page: Any,
+    x0: float,
+    y0: float,
+    x1: float,
+    y1: float,
+    page_rect: Any,
+    padding: float,
+    min_graphic_height: float = 90.0,
+) -> tuple[float, float, float, float]:
+    """Expand a caption-only GROBID figure box to include the graphic rendered above it.
+
+    GROBID frequently emits coordinates only for the figure caption (<figDesc>) rather
+    than the embedded plot, phase diagram, or chemical scheme rendered above it—even when
+    a long multi-line caption is >100pt tall (e.g. Nature Communications Figure 1).
+    Expand upward whenever the box is either short (< `min_graphic_height`) OR contains
+    no significant raster graphic while graphics/drawings exist directly above it.
+    """
+    box_height = y1 - y0
+    has_graphic_inside = _box_contains_significant_graphic(page, x0, y0, x1, y1)
+    if box_height >= min_graphic_height and has_graphic_inside:
+        return x0, y0, x1, y1
+
+    # Look for embedded raster images or vector drawings positioned above the caption
+    # (allow up to 85% of page height above y0 so full-page figures like Nature Fig 1 are captured).
+    page_height = page_rect.y1 - page_rect.y0
+    max_upward_span = page_height * 0.85
+    candidate_rects: list[tuple[float, float, float, float]] = []
+
+    try:
+        for img_info in page.get_images(full=True):
+            xref = img_info[0]
+            for rect in page.get_image_rects(xref):
+                if rect.is_empty or (rect.height < 8.0 and rect.width < 8.0):
+                    continue
+                if rect.y0 < y0 and rect.y1 <= y1 + 20.0 and (y0 - rect.y0) <= max_upward_span:
+                    candidate_rects.append((rect.x0, rect.y0, rect.x1, rect.y1))
+    except Exception:
+        pass
+
+    if not candidate_rects:
+        try:
+            for drawing in page.get_drawings():
+                rect = drawing.get("rect")
+                if rect is None or rect.is_empty:
+                    continue
+                if rect.height < 10.0 and rect.width < 10.0:
+                    continue
+                if rect.y0 < y0 and rect.y1 <= y1 + 10.0 and (y0 - rect.y0) <= max_upward_span:
+                    candidate_rects.append((rect.x0, rect.y0, rect.x1, rect.y1))
+        except Exception:
+            pass
+
+    if candidate_rects:
+        new_x0 = max(page_rect.x0, min(x0, *(r[0] for r in candidate_rects)) - padding)
+        new_y0 = max(page_rect.y0, min(y0, *(r[1] for r in candidate_rects)) - padding)
+        new_x1 = min(page_rect.x1, max(x1, *(r[2] for r in candidate_rects)) + padding)
+        new_y1 = min(page_rect.y1, max(y1, *(r[3] for r in candidate_rects)) + padding)
+        return new_x0, new_y0, new_x1, new_y1
+
+    if box_height < min_graphic_height:
+        # Last-resort fallback for thin caption boxes when no raster/vector objects are exposed
+        fallback_y0 = max(page_rect.y0, y0 - page_height * 0.35)
+        return page_rect.x0, fallback_y0, page_rect.x1, y1
+
+    return x0, y0, x1, y1
+
+
+def _locate_caption_boxes_in_pdf(
+    doc: Any, caption: str
+) -> dict[int, list[tuple[float, float, float, float]]]:
+    """Fallback when GROBID omits coords on an ImageNode: search for the caption prefix in the PDF."""
+    if not caption or not caption.strip():
+        return {}
+    # Use the leading ~40 characters (e.g. 'Figure 1 | Morphological characterization')
+    cleaned = " ".join(caption.split())
+    queries = [cleaned[:45], cleaned[:25]]
+    for q in queries:
+        if len(q) < 8:
+            continue
+        for idx in range(len(doc)):
+            hits = doc[idx].search_for(q)
+            if hits:
+                return {idx + 1: [(r.x0, r.y0, r.x1, r.y1) for r in hits]}
+    return {}
+
+
 def crop_figures_from_pdf(
     root_node: RootNode,
     pdf_input: bytes | str | Path,
     dpi: int = 200,
     padding: float = 8.0,
 ) -> int:
-    """Crop original figure/image regions directly from a PDF using GROBID coords.
+    """Crop original figure/image regions directly from a PDF using GROBID coords (with caption fallback).
 
     Populates `image_node.image_bytes` in-place for every ImageNode that has
-    valid `coords`. Returns the number of figures cropped.
+    valid `coords` or a caption locatable in the PDF. Returns the number of figures cropped.
     """
     from peptide_extractor.parsers import ImageNode
 
     image_nodes: list[ImageNode] = [
-        img for img in _iter_nodes_of_type(root_node, ImageNode) if getattr(img, "coords", None)
+        img
+        for img in _iter_nodes_of_type(root_node, ImageNode)
+        if getattr(img, "coords", None) or getattr(img, "caption", None)
     ]
     if not image_nodes:
         return 0
@@ -198,13 +314,12 @@ def crop_figures_from_pdf(
     try:
         for image_node in image_nodes:
             boxes = parse_grobid_coords(image_node.coords or "")
-            if not boxes:
-                continue
-
             by_page: dict[int, list[tuple[float, float, float, float]]] = {}
             for page_num, x, y, w, h in boxes:
                 if 1 <= page_num <= len(doc):
                     by_page.setdefault(page_num, []).append((x, y, x + w, y + h))
+            if not by_page:
+                by_page = _locate_caption_boxes_in_pdf(doc, image_node.caption or "")
             if not by_page:
                 continue
 
@@ -217,6 +332,9 @@ def crop_figures_from_pdf(
                 y0 = max(page_rect.y0, min(r[1] for r in rects) - padding)
                 x1 = min(page_rect.x1, max(r[2] for r in rects) + padding)
                 y1 = min(page_rect.y1, max(r[3] for r in rects) + padding)
+                x0, y0, x1, y1 = _expand_caption_only_figure_rect(
+                    page, x0, y0, x1, y1, page_rect, padding
+                )
                 if x1 <= x0 or y1 <= y0:
                     continue
                 clip = fitz.Rect(x0, y0, x1, y1)
