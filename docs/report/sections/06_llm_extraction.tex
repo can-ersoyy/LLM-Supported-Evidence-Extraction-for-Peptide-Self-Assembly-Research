@@ -1,0 +1,57 @@
+\section{LLM-Based Structured Extraction}
+\label{sec:extraction}
+
+\subsection{Multi-Provider Structured Output Layer}
+All LLM interactions are routed through \texttt{LLMController} (\texttt{llm.py}) at \texttt{temperature=0.0} using LangChain's \texttt{.with\_structured\_output()} interface. The controller supports three interchangeable backends:
+\begin{itemize}
+    \item \textbf{Google GenAI} (\texttt{ChatGoogleGenerativeAI}, \texttt{json\_mode}): Primary cloud backend for multimodal PDF, image, and bulk screening workloads.
+    \item \textbf{Ollama} (\texttt{ChatOllama}, \texttt{json\_schema}, \texttt{num\_ctx=32000}): Local open-weights inference (e.g., Llama~3.2~3B, DeepSeek~R1~8B) for zero-cost screening and grounding verification.
+    \item \textbf{OpenRouter} (\texttt{ChatOpenRouter}, \texttt{json\_mode}): Unified gateway for evaluating alternative commercial and open models.
+\end{itemize}
+
+\subsection{Four Extraction Pathways}
+Depending on the full-text format (\texttt{xml} vs.\ \texttt{pdf}) and pipeline configuration, \texttt{run\_peptide\_extraction()} selects one of four extraction pathways (\Cref{fig:extraction_routing}):
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[
+    node distance=0.8cm and 1.2cm,
+    decision/.style={diamond, aspect=2.1, draw=orange!60!black, fill=orange!6, text width=2.8cm, align=center, font=\footnotesize, inner sep=2pt},
+    mode/.style={rectangle, rounded corners=3pt, draw=blue!50!black, fill=blue!5, text width=3.4cm, align=center, font=\footnotesize, minimum height=0.95cm, inner sep=4pt},
+    arrow/.style={-{Stealth[scale=0.8]}, thick, draw=gray!75!black}
+]
+    \node[decision] (c1) {\texttt{format=='pdf'} and \texttt{pass\_pdf\_directly}?};
+    \node[mode, right=1.6cm of c1] (mA) {\textbf{Mode A: Direct Raw PDF}\\Base64 PDF + \texttt{PDF\_EXTRACTION\_PROMPT}};
+
+    \node[decision, below=1.0cm of c1] (c2) {\texttt{tables\_as\_images} or \texttt{images\_as\_images}?};
+    \node[mode, right=1.6cm of c2] (mC) {\textbf{Mode C: Text-Only}\\ \texttt{to\_llm\_string} + \texttt{PROMPT\_V6}};
+
+    \node[decision, below=1.0cm of c2] (c3) {\texttt{factored\_extraction} and tables exist?};
+    \node[mode, right=1.6cm of c3] (mB2) {\textbf{Mode B2: Single-Pass Multimodal}\\Full \texttt{to\_llm\_blocks} + \texttt{PROMPT\_V6}};
+    \node[mode, below=0.9cm of c3] (mB1) {\textbf{Mode B1: Two-Pass Factored}\\Pass 1: Shared + Prose $\rightarrow$ Pass 2: Per-Table Image + Deterministic Merge};
+
+    \draw[arrow] (c1) -- node[above, font=\scriptsize] {Yes} (mA);
+    \draw[arrow] (c1) -- node[left, font=\scriptsize] {No} (c2);
+    \draw[arrow] (c2) -- node[left, font=\scriptsize] {Yes} (c3);
+    \draw[arrow] (c2) -- node[above, font=\scriptsize] {No} (mC);
+    \draw[arrow] (c3) -- node[above, font=\scriptsize] {No} (mB2);
+    \draw[arrow] (c3) -- node[left, font=\scriptsize] {Yes} (mB1);
+\end{tikzpicture}
+\caption{Decision tree routing papers across the four LLM extraction pathways.}
+\label{fig:extraction_routing}
+\end{figure}
+
+\begin{enumerate}
+    \item \textbf{Mode A --- Direct Raw PDF (\texttt{pass\_pdf\_directly=True}):} Passes the raw base64-encoded PDF directly to a multimodal model alongside \texttt{PDF\_EXTRACTION\_SYSTEM\_PROMPT}. This avoids any GROBID parsing loss and yields high matrix unrolling recall, though without bracketed \texttt{Node} IDs for automated citation grounding.
+    \item \textbf{Mode B1 --- Two-Pass Factored Extraction (default when visual blocks are enabled):} Designed to prevent LLMs from truncating large screening tables or omitting paper-wide defaults:
+    \begin{itemize}
+        \item \emph{Pass 1 (Paper-Wide Shared Conditions \& Prose):} Receives \texttt{prose\_text} (narrative text plus table/figure anchors) and extracts \texttt{SharedExperimentalConditions} (e.g., global temperature, buffer, detection methods, preparation protocol, and their \texttt{evidence\_span} tags) plus \texttt{prose\_entries} not covered by tables.
+        \item \emph{Pass 2 (Per-Table Image Extraction):} Issues one independent multimodal call per cropped table image, conditioned on the Pass~1 shared summary and table caption, returning compact \texttt{TableExtractionResult} rows and tested condition cells.
+        \item \emph{Deterministic Merge:} \texttt{merge\_table\_result\_with\_shared()} unrolls every $(\text{row}, \text{cell})$ pair into a full \texttt{PeptideLLMEntry} using strict precedence: $\text{cell} \rightarrow \text{row} \rightarrow \text{table\_defaults} \rightarrow \text{shared\_conditions}$, automatically populating \texttt{EvidenceSpan} with \texttt{[table\_id]} or the inherited Pass~1 prose tag.
+    \end{itemize}
+    \item \textbf{Mode B2 --- Single-Pass Multimodal:} Passes the complete \texttt{to\_llm\_blocks()} payload (interleaved or appendix) in a single call using \texttt{EXTRACTION\_SYSTEM\_PROMPT\_V6}.
+    \item \textbf{Mode C --- Text-Only Citation-Grounded:} Passes \texttt{to\_llm\_string()} from JATS~XML or GROBID TEI~XML with \texttt{EXTRACTION\_SYSTEM\_PROMPT\_V6}.
+\end{enumerate}
+
+\subsection{Post-Extraction Normalization}
+\texttt{peptide\_llm\_entry\_to\_peptide\_entry()} converts each \texttt{PeptideLLMEntry} into a database \texttt{PeptideEntry}: it enforces uppercase 1-letter IUPAC sequences, computes \texttt{length}, formats \texttt{volume\_ratio} lists (e.g., \texttt{[5, 95]} $\rightarrow$ \texttt{"5/95"}), joins \texttt{detection\_method} lists, serializes \texttt{evidence\_span} to JSON, and records \texttt{ExtractionMode.LLM} with the active \texttt{run\_identifier}.

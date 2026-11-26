@@ -1,0 +1,49 @@
+\section{Background and Data Schema}
+\label{sec:background}
+
+\subsection{Existing Peptide Self-Assembly Databases}
+Several domain databases catalog experimentally characterized self-assembling or amyloidogenic peptides, each with distinct scope and curation methodology:
+\begin{itemize}
+    \item \textbf{SAPdb}~\cite{sapdb2020}: Collates 1,049 entries from 301 research articles on self-assembling di- and tri-peptides forming discrete nanostructures (nanotubes, nanofibers, hydrogels, nanospheres, nanovesicles), capturing terminal modifications, solvent, concentration, pH, temperature, incubation time, and morphology.
+    \item \textbf{WALTZ-DB~2.0}~\cite{waltzdb2020}: Focuses on amyloid-forming hexapeptides across curated subsets (e.g., FUS, TDP-43, SOD-1, Sup35, functional amyloids, and literature-mined hexapeptides).
+    \item \textbf{CPAD~2.0}~\cite{cpad2020}: Aggregates experimental data on aggregating proteins and peptides, incorporating entries from WALTZ-DB and AmyPro alongside aggregation kinetics.
+    \item \textbf{Cross-Beta~DB}~\cite{crossbetadb2024}: Catalogs 272 experimentally determined 3D cross-$\beta$ amyloid fibril structures selected from the Protein Data Bank (PDB).
+    \item \textbf{AmyPro, AmyloGraph, and AmyloBase}: Specialized resources covering amyloidogenic regions, aggregation modulators, and kinetic curves.
+\end{itemize}
+While these resources provide valuable ground truth, they are siloed, use inconsistent field definitions (e.g., mixed concentration units, unstandardized terminal cap labels, or placeholder strings such as \texttt{NP}), and omit most 4--20mer non-amyloid nanostructure literature.
+
+\subsection{Golden Benchmark Construction}
+To benchmark automated extraction, we consolidated entries from SAPdb, PeptideMiner, CPAD~2.0, and Cross-Beta~DB into a unified golden dataset (\texttt{golden\_dataset\_final.csv}) and ingested manually curated ground-truth records into the pipeline database under \texttt{ExtractionMode.MANUAL} (\texttt{run\_identifier=0}). For SAPdb and PeptideMiner golden papers, 71 of 75 target publications were successfully acquired (13 already present in the database via open-access full text and 58 manually downloaded PDFs uploaded to Azure Blob Storage). Within this corpus, a 10-paper development slice (\texttt{DEV\_BENCHMARK\_PMIDS}) containing 56 unique peptide sequences and 530 experimental condition rows (253 assembling, 277 non-assembling) serves as a rapid-iteration benchmark covering challenging multi-table matrices, cyclic peptides, peptide mixtures, and varied terminal notations.
+
+\subsection{Standardized \texttt{PeptideEntry} Schema}
+Each extracted or manually curated record is stored as a \texttt{PeptideEntry} row in SQLite via SQLModel. \Cref{tab:peptide_schema} summarizes the core fields, types, and conventions. Missing or unstated experimental parameters are stored as \texttt{NULL} rather than legacy placeholders.
+
+\begin{table}[htbp]
+\centering
+\caption{Core fields of the standardized \texttt{PeptideEntry} schema.}
+\label{tab:peptide_schema}
+\small
+\begin{tabular}{@{}llp{7.8cm}@{}}
+\toprule
+\textbf{Field} & \textbf{Type} & \textbf{Description and Canonical Conventions} \\
+\midrule
+\texttt{sequence} & String & Uppercase single-letter IUPAC amino acid sequence (e.g., \texttt{FF}, \texttt{KLVFF}, \texttt{VQIVYK}). \\
+\texttt{length} & Integer & Residue count computed from \texttt{sequence} (target: 4--20mer; benchmark includes 2--43). \\
+\texttt{type} & Enum & Morphological outcome: \texttt{hydrogel}, \texttt{fiber}, \texttt{tube}, \texttt{nanosphere}, \texttt{ribbon}, \texttt{vesicle}, \texttt{particle}, \texttt{organogel}, \texttt{amyloid}, or \texttt{none}. \\
+\texttt{n\_terminal} / \texttt{c\_terminal} & String & Terminal modifications (e.g., \texttt{Fmoc}, \texttt{Acetylation}, \texttt{Amidation}, \texttt{Free}). \\
+\texttt{linear\_cyclic} & String & Backbone topology: \texttt{linear} or \texttt{cyclic}. \\
+\texttt{chirality} & String & Stereochemistry: \texttt{L}, \texttt{D}, \texttt{heterochiral}, \texttt{racemic}, or \texttt{achiral}. \\
+\texttt{peptide\_conjugate\_mixture} & String & System class: \texttt{peptide}, \texttt{conjugate}, or \texttt{mixture}, plus optional \texttt{conjugate\_partner}. \\
+\texttt{temperature} & Float & Reaction temperature in $^\circ$C (room temperature normalized to $25.0\,^\circ\text{C}$). \\
+\texttt{ph} & Float & Solution pH. \\
+\texttt{peptide\_concentration} & Float & Concentration normalized to $\text{mg/ml}$ (e.g., $1\,\text{wt\%} \rightarrow 10.0\,\text{mg/ml}$). \\
+\texttt{solution} / \texttt{solvent} & String & Primary dispersion medium/buffer and organic co-solvent (e.g., \texttt{PBS}, \texttt{DMSO}). \\
+\texttt{volume\_ratio} & String & Mixing ratio ($v/v$), formatted as \texttt{"5/95"} or \texttt{"1"} for neat systems. \\
+\texttt{incubation\_period} & Integer & Incubation duration normalized to minutes. \\
+\texttt{detection\_method} & String & Comma-separated characterization techniques (e.g., \texttt{TEM}, \texttt{Cryo-EM}, \texttt{ThT}, \texttt{CD}). \\
+\texttt{preparation\_protocol} & Text & Verbatim sample preparation and dissolution protocol from the paper. \\
+\texttt{evidence\_span} & JSON & Maps 12 extracted fields to bracketed node location tags (e.g., \texttt{[sec-1/table-0]}). \\
+\texttt{paper\_id} & Integer & Foreign key linking to \texttt{paper\_metadata.id}. \\
+\bottomrule
+\end{tabular}
+\end{table}

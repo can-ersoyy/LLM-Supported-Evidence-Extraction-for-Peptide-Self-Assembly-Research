@@ -1,0 +1,13 @@
+\section{Conclusion and Future Work}
+\label{sec:conclusion}
+
+We have designed and implemented \texttt{peptide\_extractor}, an end-to-end automated curation pipeline for 4--20mer peptide self-assembly literature. By combining high-recall local abstract screening (saving $42.7\%$ of full-text processing across $\sim$50k papers), a unified JATS/TEI/PDF \texttt{Node} tree with PyMuPDF table cropping, and two-pass factored multimodal extraction, the system bridges the gap between unstructured scientific publications and auditable, schema-constrained relational records.
+
+\subsection{Future Directions}
+Several concrete avenues remain for improving extraction fidelity and coverage:
+\begin{itemize}
+    \item \textbf{Full 71-Paper Golden Evaluation:} Scale the Run~5/Run~6 multimodal and two-pass configurations from the 10-paper development slice to all 71 acquired SAPdb/PeptideMiner golden publications, and extend benchmarking to CPAD~2.0 and Cross-Beta~DB subsets.
+    \item \textbf{Terminal and Method Harmonization:} Refine prompt instructions and canonicalization rules for \texttt{c\_terminal} notations (e.g., implicit free acid vs.\ \texttt{-NH2} amidation) and align \texttt{detection\_method} aggregation between golden entries and LLM outputs.
+    \item \textbf{Hybrid Grounded Table-Image + Appendix Layout:} Evaluate \texttt{layout="appendix"} in \texttt{to\_llm\_blocks()} and enrich Pass~2 table prompts with cross-referenced footnote resolution so both high row recall and full \texttt{EvidenceSpan} auditability are preserved simultaneously.
+    \item \textbf{Europe PMC Integration:} Complete \texttt{EuropePMCProvider} to expand open-access JATS~XML coverage and reduce reliance on PDF-to-TEI conversion.
+\end{itemize}
