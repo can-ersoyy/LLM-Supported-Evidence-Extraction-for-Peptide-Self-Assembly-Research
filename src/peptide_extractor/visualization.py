@@ -523,6 +523,7 @@ def _build_peptideminer_reports_from_df(
     df: pd.DataFrame,
     *,
     include_paper_baselines: bool = True,
+    paper_baselines: Optional[Sequence[str]] = None,
     run_labels: Optional[Dict[Any, str]] = None,
 ) -> Dict[str, Any]:
     """Compute PeptideMinerBenchmarkReport per LLM run (+ optional paper baselines)."""
@@ -542,7 +543,10 @@ def _build_peptideminer_reports_from_df(
 
     reports: Dict[str, Any] = {}
     if include_paper_baselines:
+        allowed = set(paper_baselines) if paper_baselines is not None else None
         for base_label, base_entries in load_peptideminer_paper_baselines().items():
+            if allowed is not None and base_label not in allowed:
+                continue
             rep = compare_runs_peptideminer(manual, base_entries)
             if rep.llm_rows_evaluated > 0:
                 reports[base_label] = rep
@@ -579,10 +583,11 @@ def plot_peptideminer_categorical_accuracy(
     df: pd.DataFrame,
     *,
     include_paper_baselines: bool = True,
+    paper_baselines: Optional[Sequence[str]] = None,
     use_normalized: bool = True,
     run_labels: Optional[Dict[Any, str]] = None,
     reports: Optional[Dict[str, Any]] = None,
-    figsize: Tuple[float, float] = (11, 5),
+    figsize: Tuple[float, float] = (12, 5.5),
     title: Optional[str] = None,
 ) -> Figure:
     """Plot grouped bar chart of categorical feature extraction accuracy (PeptideMiner Fig. 4c).
@@ -595,6 +600,7 @@ def plot_peptideminer_categorical_accuracy(
         else _build_peptideminer_reports_from_df(
             df,
             include_paper_baselines=include_paper_baselines,
+            paper_baselines=paper_baselines,
             run_labels=run_labels,
         )
     )
@@ -636,7 +642,7 @@ def plot_peptideminer_categorical_accuracy(
             if use_normalized
             else "Categorical Feature Extraction Exact Accuracy (PeptideMiner Protocol)"
         ),
-        pad=32,
+        pad=42 if len(resolved_reports) > 3 else 32,
     )
     ax.tick_params(axis="x", rotation=25)
     ax.grid(axis="y", linestyle="--", alpha=0.3)
@@ -646,7 +652,7 @@ def plot_peptideminer_categorical_accuracy(
         title=None,
         loc="lower center",
         bbox_to_anchor=(0.5, 1.01),
-        ncol=min(3, len(resolved_reports)),
+        ncol=2 if len(resolved_reports) > 3 else min(3, len(resolved_reports)),
         frameon=True,
         fontsize=8,
     )
@@ -659,10 +665,11 @@ def plot_peptideminer_numerical_mae(
     df: pd.DataFrame,
     *,
     include_paper_baselines: bool = True,
+    paper_baselines: Optional[Sequence[str]] = None,
     normalized: bool = True,
     run_labels: Optional[Dict[Any, str]] = None,
     reports: Optional[Dict[str, Any]] = None,
-    figsize: Tuple[float, float] = (10, 5),
+    figsize: Tuple[float, float] = (11, 5),
     title: Optional[str] = None,
 ) -> Figure:
     """Plot violin distribution of numerical extraction MAE (PeptideMiner Fig. 4d).
@@ -675,6 +682,7 @@ def plot_peptideminer_numerical_mae(
         else _build_peptideminer_reports_from_df(
             df,
             include_paper_baselines=include_paper_baselines,
+            paper_baselines=paper_baselines,
             run_labels=run_labels,
         )
     )
@@ -715,11 +723,19 @@ def plot_peptideminer_numerical_mae(
             "Numerical Feature Extraction Normalized MAE (PeptideMiner Protocol)"
             if normalized
             else "Numerical Feature Extraction Raw Error (PeptideMiner Protocol)"
-        )
+        ),
+        pad=42 if len(resolved_reports) > 3 else 32,
     )
     ax.tick_params(axis="x", rotation=15)
     ax.grid(axis="y", linestyle="--", alpha=0.3)
-    ax.legend(title="Model / Run", loc="upper right", fontsize=8)
+    ax.legend(
+        title=None,
+        loc="lower center",
+        bbox_to_anchor=(0.5, 1.01),
+        ncol=2 if len(resolved_reports) > 3 else min(3, len(resolved_reports)),
+        frameon=True,
+        fontsize=8,
+    )
     sns.despine(ax=ax)
     fig.tight_layout()
     return fig

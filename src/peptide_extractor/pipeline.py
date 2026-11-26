@@ -1263,6 +1263,7 @@ if __name__ == "__main__":
         model="peptide_entry",
         plot_kwargs={
             "include_paper_baselines": True,
+            "paper_baselines": ["PeptideMiner Fine-tuned (GPT-3.5)"],
             "run_labels": benchmark_runs,
         },
         run_identifier=[0, *benchmark_runs.keys()],
