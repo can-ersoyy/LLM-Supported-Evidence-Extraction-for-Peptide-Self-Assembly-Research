@@ -20,8 +20,12 @@
 - **[LLM Workflows, Prompts & Extraction Modes](docs/project_notes/llm_methods.md)**:
   - [Provider & Structured Output Layer](docs/project_notes/llm_methods.md#1-provider--structured-output-layer-llmpy)
   - [Stage 1: Abstract Relevance Screening](docs/project_notes/llm_methods.md#2-stage-1-abstract-relevance-screening-relevancepy)
-  - [Stage 2: Peptide Extraction (Direct PDF, Factored Two-Pass, Single-Pass Multimodal, Text-Only)](docs/project_notes/llm_methods.md#3-stage-2-peptide-extraction-extractionpy--pipelinepy)
-  - [Stage 3: Evaluation & Golden Benchmarking](docs/project_notes/llm_methods.md#4-stage-3-evaluation--benchmarking)
+  - [Stage 2: Peptide Extraction (Multi-Agent, Direct PDF, Factored Two-Pass, Multimodal, Text-Only)](docs/project_notes/llm_methods.md#3-stage-2-peptide-extraction-extractionpy-agentic--pipelinepy)
+  - [Stage 3: Evaluation, Golden & PeptideMiner Benchmarking](docs/project_notes/llm_methods.md#4-stage-3-evaluation--benchmarking)
+- **[Multi-Agent Peptide Extraction](docs/project_notes/agentic_extraction.md)**:
+  - [Orchestration Flow & Six Agent Roles (Scout, Prose, Table, Figure, Reviewer, Refiner)](docs/project_notes/agentic_extraction.md#2-orchestration-flow)
+  - [Deterministic Chemistry Sandbox](docs/project_notes/agentic_extraction.md#4-deterministic-chemistry-sandbox-chemistry_sandboxpy)
+  - [Opt-In Protocol Modes (`standard`, `hybrid_protocol`, `peptideminer_protocol`)](docs/project_notes/agentic_extraction.md#5-opt-in-extraction-protocol-modes)
 - **[Literature Providers, Storage & Visualization](docs/project_notes/providers_and_data.md)**:
   - [Literature Providers & Full-Text Fetching](docs/project_notes/providers_and_data.md#1-literature-providers-providerspy)
   - [Azure Blob Storage & Caching](docs/project_notes/providers_and_data.md#2-azure-blob-storage--local-caching-azure_storagepy)

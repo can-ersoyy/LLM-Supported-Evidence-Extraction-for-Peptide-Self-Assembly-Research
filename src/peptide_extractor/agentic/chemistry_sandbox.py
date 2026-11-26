@@ -485,11 +485,65 @@ def _is_single_neat_solvent(solution: str) -> bool:
     return not bool(_MIXTURE_SEP_RE.search(cleaned))
 
 
+def estimate_ph_from_solution(
+    solution: str | None,
+    solvent: str | None = None,
+) -> float | None:
+    """Estimate default pH from solvent/buffer when omitted (PeptideMiner Principle 4)."""
+    combined = " ".join(part for part in (solution, solvent) if part).strip().lower()
+    if not combined:
+        return None
+    if re.search(r"\bpbs\b|phosphate[- ]buffered\s+saline|\btris\b|\bhepes\b", combined):
+        return 7.4
+    if re.search(r"\b(?:naoh|koh|nh4oh|ammonium\s+hydroxide)\b", combined):
+        return 11.0
+    if re.search(r"\b(?:hcl|tfa|trifluoroacetic\s+acid)\b", combined):
+        return 2.0
+    if re.search(r"\b(?:acetic\s+acid|gdl|glucono)\b", combined):
+        return 4.0
+    if re.search(r"\b(?:methanol|meoh)\b", combined) and re.search(
+        r"\b(?:water|h2o|aqueous)\b", combined
+    ):
+        # Explicitly cited in Yang et al. (arXiv:2411.05421v1, p. 9, Ref. 65)
+        return 8.3
+    return 7.0
+
+
+_PROTECTING_GROUP_TOKENS: frozenset[str] = frozenset(
+    {
+        "fmoc",
+        "boc",
+        "t-boc",
+        "cbz",
+        "z",
+        "ac",
+        "acetyl",
+        "acetylation",
+        "amidation",
+        "amide",
+        "nh2",
+        "conh2",
+        "methyl ester",
+        "ome",
+        "ethyl ester",
+        "oet",
+        "benzylation",
+        "benzyl ester",
+        "obn",
+        "free",
+        "none",
+        "unmodified",
+    }
+)
+
+
 def sanitize_and_validate_entries(
     entries: Sequence[PeptideLLMEntry],
     aliases: Sequence[PeptideAlias] | None = None,
     source_text: str | None = None,
     default_room_temperature: bool = False,
+    estimate_solvent_ph: bool = False,
+    strict_terminal_and_conjugate_hygiene: bool = False,
 ) -> tuple[list[PeptideLLMEntry], DeterministicValidationReport]:
     """Run deterministic chemistry normalization, alias resolution, validation, and dedup."""
     alias_lookup: dict[str, PeptideAlias] = {}
@@ -591,6 +645,32 @@ def sanitize_and_validate_entries(
             auto_fixes += 1
 
         # 2d. Default structural fields when omitted on table rows
+        if strict_terminal_and_conjugate_hygiene:
+            if data.get("n_terminal") is None:
+                data["n_terminal"] = "Free"
+                auto_fixes += 1
+            if data.get("c_terminal") is None:
+                data["c_terminal"] = "Free"
+                auto_fixes += 1
+            cp_val = data.get("conjugate_partner")
+            if isinstance(cp_val, str) and cp_val.strip().lower() in _PROTECTING_GROUP_TOKENS:
+                data["conjugate_partner"] = None
+                if data.get("peptide_conjugate_mixture") == PeptideConjugateMixture.CONJUGATE:
+                    data["peptide_conjugate_mixture"] = PeptideConjugateMixture.PEPTIDE
+                auto_fixes += 1
+                issues.append(
+                    ValidationIssue(
+                        entry_index=idx,
+                        field="conjugate_partner",
+                        severity="info",
+                        message=(
+                            f"Cleared protecting group '{cp_val}' from conjugate_partner "
+                            "(hybrid hygiene)."
+                        ),
+                        auto_fixed=True,
+                    )
+                )
+
         if data.get("linear_cyclic") is None:
             data["linear_cyclic"] = PeptideLinearity.LINEAR
             auto_fixes += 1
@@ -600,6 +680,13 @@ def sanitize_and_validate_entries(
                 if data.get("conjugate_partner")
                 else PeptideConjugateMixture.PEPTIDE
             )
+            auto_fixes += 1
+        if (
+            strict_terminal_and_conjugate_hygiene
+            and data.get("peptide_conjugate_mixture") == PeptideConjugateMixture.PEPTIDE
+            and data.get("conjugate_partner") is not None
+        ):
+            data["conjugate_partner"] = None
             auto_fixes += 1
 
         # 2e. Convert molar / wt% concentrations to mg/ml via estimated peptide MW
@@ -654,6 +741,25 @@ def sanitize_and_validate_entries(
                     auto_fixed=True,
                 )
             )
+
+        # 2f-ii. Opt-in PeptideMiner Principle (4): estimate pH from solvent/buffer when omitted
+        if estimate_solvent_ph and data.get("ph") is None:
+            est_ph = estimate_ph_from_solution(data.get("solution"), data.get("solvent"))
+            if est_ph is not None:
+                data["ph"] = est_ph
+                auto_fixes += 1
+                issues.append(
+                    ValidationIssue(
+                        entry_index=idx,
+                        field="ph",
+                        severity="info",
+                        message=(
+                            f"Estimated pH={est_ph} from solution '{data.get('solution')}' "
+                            "per PeptideMiner Principle (4)."
+                        ),
+                        auto_fixed=True,
+                    )
+                )
 
         # 2g. Supplement detection_method with deterministically detected paper-wide techniques
         if paper_methods:

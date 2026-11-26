@@ -132,7 +132,8 @@ Designed to prevent LLMs from truncating or dropping rows in large screening tab
 
 #### Mode D: Multi-Agent Orchestrated Extraction (`agentic=True`)
 - **Entrypoint**: `run_agentic_extraction()` / `ExtractionOrchestrator` in `src/peptide_extractor/agentic/`.
-- **Workflow**: `EntityScoutAgent` (alias registry + shared defaults) → `ProseExtractorAgent` & per-table `TableExtractorAgent` → deterministic `chemistry_sandbox.py` (alias resolution, cap/cyclic splitting, `solvent → solution`, neat `volume_ratio=[1]`, structural defaults, `detection_method` scan, deduplication) → bounded `ReviewerAgent` ↔ patch-based `RefinerAgent` loop.
+- **Workflow**: `EntityScoutAgent` (alias registry + shared defaults + attached chemical-structure scheme figures) → `ProseExtractorAgent`, per-table `TableExtractorAgent`, & per-figure `FigureExtractorAgent` (phase diagrams / parameter sweeps / gelation grids) → deterministic `chemistry_sandbox.py` (alias resolution, cap/cyclic splitting, `solvent → solution`, neat `volume_ratio=[1]`, MW `mg/ml` conversion, `25.0 °C` RT fallback, structural defaults, `detection_method` scan, deduplication) → bounded `ReviewerAgent` ↔ patch-based `RefinerAgent` loop.
+- **Protocol Modes**: Supports **Standard Grounded** (default), **Hybrid Grounded** (`hybrid_protocol=True` — canonical non-null `type`, `"Free"` termini, protecting-group vs `conjugate_partner` hygiene), and **PeptideMiner Paper Protocol** (`peptideminer_protocol=True` — Yang et al. p. 9 range/critical-value sampling + solvent pH estimation).
 - **Full Documentation**: See [agentic_extraction.md](agentic_extraction.md) for detailed agent roles, schemas, sandbox rules, and heterogeneous model configuration.
 
 ### 3.3 `PeptideLLMEntry` & `EvidenceSpan` Schema (`db/peptide_entry.py`)
@@ -163,10 +164,18 @@ Each extracted `PeptideLLMEntry` contains:
    - **Verbatim fields (`preparation_protocol`)**: Verified directly via exact substring match or `rapidfuzz.fuzz.partial_ratio >= 90.0`.
    - **Detection methods (`detection_method`)**: Split by `,`; grounded if `>= 80%` of listed methods match in `fulltext` (exact or fuzzy `>= 90.0`).
 
-### 4.2 Golden Dataset Benchmarking (`golden_benchmark.py`)
+### 4.2 Golden Dataset & PeptideMiner Benchmarking (`golden_benchmark.py` & `golden_auditor.py`)
 
-`benchmark_run_against_golden(llm_run_identifier, ...)` compares an LLM run against `ExtractionMode.MANUAL` (`run_identifier=0`) entries across the golden dataset (including the 10-paper `DEV_BENCHMARK_PMIDS` slice):
+`golden_benchmark.py` provides two complementary evaluation protocols against `ExtractionMode.MANUAL` (`run_identifier=0`) entries across either the 10-paper `DEV_BENCHMARK_PMIDS` slice, the 23-paper `PEPTIDEMINER_TEST_PMIDS` held-out test set (mapped 1:1 from `lamm-mit/PeptideMiner/data/testset.jsonl`), or all 75 papers:
 
-1. **Normalization**: Canonicalizes `n_terminal` (`Ac` -> `acetylation`), `c_terminal` (`NH2` -> `amidation`), `volume_ratio` (`5/95` vs `5:95`), solvent tokens (`HFIP`/`HFP` -> `hfp`, `phosphate-buffered saline` -> `pbs`), detection method tokens (`TEM`, `Cryo-EM`, `ThT`, etc.), and numeric tolerances (`temperature` ±1.5 °C, `ph` ±0.2, `peptide_concentration` ±10% relative, `incubation_period` ±10%).
-2. **Entry Matching**: Groups manual and LLM entries by `(pmid, sequence)` and performs greedy bipartite matching using `condition_similarity(manual, llm)` across shared fields.
-3. **Reporting (`GoldenBenchmarkReport`)**: Outputs paper coverage, entry-level **Precision / Recall / F1**, and per-field match accuracy (`FieldMatchStats`).
+1. **Strict 1-to-1 Recall/Precision Benchmark (`benchmark_run_against_golden`, `diagnose_run_per_pmid`)**:
+   - **Normalization**: Canonicalizes `n_terminal` (`Ac` → `acetylation`, PeptideMiner `'Napthalene'` typo & naphthyl/naphthol derivatives → `naphthalene`, `Fc` → `ferrocene`), `c_terminal` (`NH2` → `amidation`, `Methoxy`/`OMe` → `methyl ester`, `OCH2Ph`/`OBn` → `benzylation`), `conjugate_partner` (`Napthalene`/naphthols → `naphthalene`, `NDI`), `type` (`nanofibers` → `fiber`, `liquid solution` → `none`, etc.), `volume_ratio` (`5/95` vs `95/5`, `100` → `1`), solvent tokens (`HFIP`/`HFP`, `PB`, `PBS`, `TFE`, `EtOAc`, `isopropanol`, etc.), detection methods, and numeric tolerances (`ph` ±0.25, `temperature` ±2.0 °C, `peptide_concentration`/`incubation_period` ±max(0.05, 5%)).
+   - **Entry Matching**: Groups manual and LLM entries by `(pmid, sequence)`, enforces strict `none` vs assembling separation, and performs greedy 1-to-1 bipartite matching requiring `condition_similarity >= min_similarity` (`0.1`).
+   - **Reporting (`GoldenBenchmarkReport`)**: Outputs sequence **Recall / Precision / F1**, assembling & `none` condition recall, condition precision, and per-field exact/normalized accuracy.
+
+2. **PeptideMiner Paper Protocol (`compare_runs_peptideminer`, `benchmark_run_peptideminer_vs_paper`)**:
+   - Mirrors Yang et al. (`arXiv:2411.05421v1`, Methods p. 10, Fig. 4c & 4d): prediction-driven best-match pairing (`sequence` + `phase`, falling back to closest remaining entities), null-aligned categorical accuracy across 7 overlapping fields, and raw + `[0, 1]` min-max normalized MAE across `ph`, `temperature`, `concentration`, and numeric `solvent_ratio`.
+   - Loads saved `Pretrained (GPT-3.5)` (60 entries) and `Fine-tuned (GPT-3.5)` (175 entries) baseline predictions from `data/literature/peptideminer/paper_baselines.json` (`load_peptideminer_paper_baselines()`) for direct 3-way console tables and Fig. 4c/4d-style diagrams (`peptideminer_categorical_accuracy`, `peptideminer_numerical_mae` in `visualization.py`).
+
+3. **Evidence-Grounded Disagreement Auditor (`golden_auditor.py`)**:
+   - Resolves LLM `evidence_span` location tags back to verbatim sentences or cropped table images and invokes an independent adjudicator LLM/VLM to classify discrepancies (`llm_correct_golden_wrong`, `golden_correct_llm_wrong`, `equivalent_normalization`, `valid_uncurated_in_golden`, `hallucinated_or_out_of_scope`, `ambiguous_needs_human`).

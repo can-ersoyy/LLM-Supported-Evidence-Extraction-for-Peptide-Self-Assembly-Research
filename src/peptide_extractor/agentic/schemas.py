@@ -207,6 +207,25 @@ class AgenticExtractionConfig(BaseModel):
     enable_chemistry_sandbox: bool = True
     enable_reviewer: bool = True
     default_room_temperature: bool = True
+    estimate_solvent_ph: bool = False
+    peptideminer_protocol: bool = Field(
+        default=False,
+        description=(
+            "Opt-in alternative mode matching Yang et al. (arXiv:2411.05421v1, p. 9): "
+            "6-point uniform sampling over ranges, 0.8x/0.9x & 1.1x/1.2x bracketing "
+            "around critical phase-transition values, solvent-based pH estimation, "
+            "and 25.0 C room-temperature fallback."
+        ),
+    )
+    hybrid_protocol: bool = Field(
+        default=False,
+        description=(
+            "Opt-in best-of-both-worlds mode: keeps strictly evidence-grounded extraction "
+            "(no synthetic range/critical-value sampling and no solvent pH guessing) while "
+            "enforcing canonical non-null phase types, 'Free' terminal defaults, MW mg/ml "
+            "standardization, 25.0 C RT fallback, and strict protecting-group vs conjugate_partner hygiene."
+        ),
+    )
     max_refinement_rounds: int = Field(default=1, ge=0, le=3)
     min_trust_score: float = Field(default=0.8, ge=0.0, le=1.0)
     stream: bool = False

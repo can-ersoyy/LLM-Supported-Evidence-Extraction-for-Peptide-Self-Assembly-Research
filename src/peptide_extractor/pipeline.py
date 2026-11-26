@@ -669,6 +669,8 @@ def run_peptide_extraction(
     reviewer_provider: Optional[str] = None,
     reviewer_model_name: Optional[str] = None,
     max_refinement_rounds: int = 1,
+    peptideminer_protocol: bool = False,
+    hybrid_protocol: bool = False,
     agentic_config: Optional[Any] = None,
     max_retries: int = 0,
     retry_delay: float = 2.0,
@@ -699,6 +701,8 @@ def run_peptide_extraction(
             "reviewer_provider": reviewer_provider,
             "reviewer_model_name": reviewer_model_name,
             "max_refinement_rounds": max_refinement_rounds,
+            "peptideminer_protocol": peptideminer_protocol,
+            "hybrid_protocol": hybrid_protocol,
             "agentic_config": agentic_config,
         }
 
@@ -1166,35 +1170,105 @@ if __name__ == "__main__":
     # )
     # print(f"Fails: {fails}, Run identifier: {identifier}")
 
-    from peptide_extractor.golden_benchmark import (
-        DEV_BENCHMARK_PMIDS,
-        benchmark_run_against_golden,
-    )
-
-    #
-    fails, identifier = run_peptide_extraction(
-        provider="google",
-        model_name="gemini-3.5-flash-lite",
-        delay_seconds=4,
-        # factored_extraction=True,
-        agentic=True,
-        tables_as_images=True,
-        images_as_images=True,
-        table_provider="google",
-        table_model_name="gemini-3.5-flash-lite",
-        max_refinement_rounds=2,
-        pmid=DEV_BENCHMARK_PMIDS,
-    )
-    print(f"Fails: {fails}, Run identifier: {identifier}")
-    print(
-        benchmark_run_against_golden(
-            llm_run_identifier=identifier, pmids=DEV_BENCHMARK_PMIDS
-        ).format_report()
-    )
-
+    #from peptide_extractor.golden_benchmark import (
+    #    DEV_BENCHMARK_PMIDS,
+    #    benchmark_run_against_golden,
+    #)
+#
+    ##
+    #fails, identifier = run_peptide_extraction(
+    #    provider="google",
+    #    model_name="gemini-3.5-flash-lite",
+    #    delay_seconds=4,
+    #    # factored_extraction=True,
+    #    agentic=True,
+    #    tables_as_images=True,
+    #    images_as_images=True,
+    #    table_provider="google",
+    #    table_model_name="gemini-3.5-flash-lite",
+    #    max_refinement_rounds=2,
+    #    pmid=DEV_BENCHMARK_PMIDS,
+    #)
+    #print(f"Fails: {fails}, Run identifier: {identifier}")
+    #print(
+    #    benchmark_run_against_golden(
+    #        llm_run_identifier=identifier, pmids=DEV_BENCHMARK_PMIDS
+    #    ).format_report()
+    #)
+#
     # audits, report_md = audit_run_against_golden(
     #    llm_run_identifier=1795688610,
     #    pmids=DEV_BENCHMARK_PMIDS,
     #    export_markdown_path="docs/audit_report_v3.md",
     #    export_csv_path="docs/audit_report_v3.csv",
     # )
+
+    from peptide_extractor.golden_benchmark import (
+        PEPTIDEMINER_TEST_PMIDS,
+        benchmark_run_against_golden,
+        benchmark_run_peptideminer_vs_paper,
+    )
+
+    #res = ingest_manual_pdfs(
+    #    pdf_dir="manual_pdfs",
+    #    skip_existing_content=True,
+    #    cache_locally=True,
+    #)
+    #print(res)
+
+    # Uncomment below to run a fresh extraction; otherwise re-benchmark existing runs directly:
+    # fails, identifier = run_peptide_extraction(
+    #     provider="google",
+    #     model_name="gemini-3.5-flash-lite",
+    #     delay_seconds=4,
+    #     agentic=True,
+    #     hybrid_protocol=True,
+    #     # peptideminer_protocol=True,
+    #     tables_as_images=True,
+    #     images_as_images=True,
+    #     table_provider="google",
+    #     table_model_name="gemini-3.5-flash-lite",
+    #     max_refinement_rounds=2,
+    #     pmid=PEPTIDEMINER_TEST_PMIDS,
+    # )
+    # print(f"Fails: {fails}, Run identifier: {identifier}")
+
+    # Re-benchmark existing runs (Standard=1795720826, PM-Proto=1795723983, Hybrid=1795725257)
+    benchmark_runs = {
+        1795720826: "Ours Standard",
+        1795723983: "Ours PM-Proto",
+        1795725257: "Ours Hybrid",
+    }
+    for run_id, run_label in benchmark_runs.items():
+        print(f"\n=== Golden Benchmark (1-to-1 Recall/Precision): {run_label} ({run_id}) ===")
+        print(
+            benchmark_run_against_golden(
+                llm_run_identifier=run_id,
+                pmids=PEPTIDEMINER_TEST_PMIDS,
+            ).format_report()
+        )
+        print(f"\n=== PeptideMiner Paper Benchmark: {run_label} ({run_id}) vs Paper ===")
+        _, pm_comparison_table = benchmark_run_peptideminer_vs_paper(
+            llm_run_identifier=run_id,
+            pmids=PEPTIDEMINER_TEST_PMIDS,
+            llm_label=run_label,
+        )
+        print(pm_comparison_table)
+
+    viz_results, viz_id = run_visualization(
+        operations=[
+            "peptideminer_categorical_accuracy",
+            "peptideminer_numerical_mae",
+        ],
+        model="peptide_entry",
+        plot_kwargs={
+            "include_paper_baselines": True,
+            "run_labels": benchmark_runs,
+        },
+        run_identifier=[0, *benchmark_runs.keys()],
+        pmid=list(PEPTIDEMINER_TEST_PMIDS),
+    )
+    print(
+        f"\nSaved PeptideMiner benchmark diagrams (viz_id={viz_id}): "
+        f"{[str(r.output_path) for r in viz_results.values()]}"
+    )

@@ -871,3 +871,101 @@ def test_crop_figures_from_pdf_caption_fallback_when_coords_missing():
     assert fig.image_bytes is not None
     cropped = Image.open(BytesIO(fig.image_bytes))
     assert cropped.height >= 350
+
+
+def test_peptideminer_protocol_opt_in_prompt_and_ph_estimation():
+    from peptide_extractor.agentic.agents import (
+        PEPTIDEMINER_PROTOCOL_PROMPT_ADDENDUM,
+        PROSE_EXTRACTOR_SYSTEM_PROMPT,
+        _with_peptideminer_addendum,
+    )
+    from peptide_extractor.agentic.chemistry_sandbox import (
+        estimate_ph_from_solution,
+        sanitize_and_validate_entries,
+    )
+
+    # 1. Default config leaves prompts untouched
+    default_cfg = AgenticExtractionConfig()
+    assert default_cfg.peptideminer_protocol is False
+    assert (
+        _with_peptideminer_addendum(PROSE_EXTRACTOR_SYSTEM_PROMPT, default_cfg)
+        == PROSE_EXTRACTOR_SYSTEM_PROMPT
+    )
+
+    # 2. Opt-in config appends PeptideMiner protocol addendum
+    pm_cfg = AgenticExtractionConfig(peptideminer_protocol=True)
+    pm_prompt = _with_peptideminer_addendum(PROSE_EXTRACTOR_SYSTEM_PROMPT, pm_cfg)
+    assert pm_prompt.endswith(PEPTIDEMINER_PROTOCOL_PROMPT_ADDENDUM)
+    assert "UNIFORM RANGE SAMPLING" in pm_prompt
+    assert "1.1x, 1.2x" in pm_prompt
+
+    # 3. Solvent-based pH estimation (Principle 4)
+    assert estimate_ph_from_solution("DMSO/PBS") == 7.4
+    assert estimate_ph_from_solution("Methanol/H2O") == 8.3
+    assert estimate_ph_from_solution("H2O") == 7.0
+    assert estimate_ph_from_solution("acetic acid") == 4.0
+    assert estimate_ph_from_solution("NaOH/H2O") == 11.0
+    assert estimate_ph_from_solution(None) is None
+
+    # 4. Sandbox respects opt-in estimate_solvent_ph without affecting default behavior
+    raw = [
+        PeptideLLMEntry(
+            sequence="FF",
+            type=PeptideAssemblyType.HYDROGEL,
+            solution="Methanol/H2O",
+            ph=None,
+            temperature=None,
+        )
+    ]
+    cleaned_default, _ = sanitize_and_validate_entries(
+        raw, default_room_temperature=False, estimate_solvent_ph=False
+    )
+    assert cleaned_default[0].ph is None
+    assert cleaned_default[0].temperature is None
+
+    cleaned_pm, _ = sanitize_and_validate_entries(
+        raw, default_room_temperature=True, estimate_solvent_ph=True
+    )
+    assert cleaned_pm[0].ph == 8.3
+    assert cleaned_pm[0].temperature == 25.0
+
+
+def test_hybrid_protocol_prompt_and_deterministic_hygiene():
+    from peptide_extractor.agentic.agents import (
+        HYBRID_PROTOCOL_PROMPT_ADDENDUM,
+        PROSE_EXTRACTOR_SYSTEM_PROMPT,
+        _with_peptideminer_addendum,
+    )
+    from peptide_extractor.agentic.chemistry_sandbox import sanitize_and_validate_entries
+
+    cfg = AgenticExtractionConfig(hybrid_protocol=True)
+    prompt = _with_peptideminer_addendum(PROSE_EXTRACTOR_SYSTEM_PROMPT, cfg)
+    assert prompt.endswith(HYBRID_PROTOCOL_PROMPT_ADDENDUM)
+    assert "Do NOT synthetically sample ranges" in prompt
+    assert "leave `ph: null`" in prompt
+
+    raw = [
+        PeptideLLMEntry(
+            sequence="FF",
+            type=PeptideAssemblyType.HYDROGEL,
+            n_terminal=None,
+            c_terminal=None,
+            peptide_conjugate_mixture=PeptideConjugateMixture.CONJUGATE,
+            conjugate_partner="Fmoc",
+            solution="H2O",
+            ph=None,
+            temperature=None,
+        )
+    ]
+    cleaned, _ = sanitize_and_validate_entries(
+        raw,
+        default_room_temperature=True,
+        estimate_solvent_ph=False,
+        strict_terminal_and_conjugate_hygiene=True,
+    )
+    assert cleaned[0].n_terminal == "Free"
+    assert cleaned[0].c_terminal == "Free"
+    assert cleaned[0].conjugate_partner is None
+    assert cleaned[0].peptide_conjugate_mixture == PeptideConjugateMixture.PEPTIDE
+    assert cleaned[0].ph is None
+    assert cleaned[0].temperature == 25.0

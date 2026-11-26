@@ -50,6 +50,8 @@ class VisualizationOperation(str, Enum):
     EXTRACTIONS_PER_PAPER = "extractions_per_paper"
     PEPTIDE_MORPHOLOGY_DISTRIBUTION = "peptide_morphology_distribution"
     PEPTIDE_RUN_COMPARISON = "peptide_run_comparison"
+    PEPTIDEMINER_CATEGORICAL_ACCURACY = "peptideminer_categorical_accuracy"
+    PEPTIDEMINER_NUMERICAL_MAE = "peptideminer_numerical_mae"
 
     # ExtractionEvaluation operations
     EVALUATION_BOXPLOT = "evaluation_boxplot"
@@ -461,6 +463,269 @@ def plot_peptide_run_comparison(
 
 
 # ---------------------------------------------------------------------------
+# Individual plotting functions: PeptideMiner Paper Benchmark (Fig. 4c & 4d)
+# ---------------------------------------------------------------------------
+
+
+def _clean_df_val(val: Any) -> Any:
+    if val is None or (isinstance(val, float) and np.isnan(val)):
+        return None
+    if pd.isna(val):
+        return None
+    return val
+
+
+def _df_to_peptide_entries(df: pd.DataFrame) -> List[PeptideEntry]:
+    """Reconstruct lightweight PeptideEntry objects from a DataFrame."""
+    from peptide_extractor.db.peptide_entry import ExtractionMode
+
+    entries: List[PeptideEntry] = []
+    for row in df.to_dict(orient="records"):
+        mode_raw = _clean_df_val(row.get("extraction_mode"))
+        mode = (
+            ExtractionMode(str(mode_raw).lower())
+            if mode_raw is not None
+            else ExtractionMode.MANUAL
+        )
+        seq = str(_clean_df_val(row.get("sequence")) or "")
+        raw_len = _clean_df_val(row.get("length"))
+        raw_run = _clean_df_val(row.get("run_identifier"))
+        entries.append(
+            PeptideEntry(
+                pmid=str(_clean_df_val(row.get("pmid")) or ""),
+                sequence=seq,
+                length=int(raw_len) if raw_len is not None else len(seq),
+                type=_clean_df_val(row.get("type")),
+                n_terminal=_clean_df_val(row.get("n_terminal")),
+                c_terminal=_clean_df_val(row.get("c_terminal")),
+                temperature=_clean_df_val(row.get("temperature")),
+                ph=_clean_df_val(row.get("ph")),
+                peptide_concentration=_clean_df_val(row.get("peptide_concentration")),
+                solution=_clean_df_val(row.get("solution")),
+                solvent=_clean_df_val(row.get("solvent")),
+                volume_ratio=_clean_df_val(row.get("volume_ratio")),
+                incubation_period=_clean_df_val(row.get("incubation_period")),
+                peptide_conjugate_mixture=_clean_df_val(
+                    row.get("peptide_conjugate_mixture")
+                ),
+                conjugate_partner=_clean_df_val(row.get("conjugate_partner")),
+                linear_cyclic=_clean_df_val(row.get("linear_cyclic")),
+                detection_method=_clean_df_val(row.get("detection_method")),
+                extraction_mode=mode,
+                model=_clean_df_val(row.get("model")),
+                run_identifier=int(raw_run) if raw_run is not None else None,
+            )
+        )
+    return entries
+
+
+def _build_peptideminer_reports_from_df(
+    df: pd.DataFrame,
+    *,
+    include_paper_baselines: bool = True,
+    run_labels: Optional[Dict[Any, str]] = None,
+) -> Dict[str, Any]:
+    """Compute PeptideMinerBenchmarkReport per LLM run (+ optional paper baselines)."""
+    from peptide_extractor.db.peptide_entry import ExtractionMode
+    from peptide_extractor.golden_benchmark import (
+        compare_runs_peptideminer,
+        load_peptideminer_paper_baselines,
+    )
+
+    entries = _df_to_peptide_entries(df)
+    manual = [e for e in entries if e.extraction_mode == ExtractionMode.MANUAL]
+    if not manual:
+        raise ValueError(
+            "No manual golden-dataset PeptideEntry rows (extraction_mode='manual') "
+            "found in DataFrame. Include run_identifier=0 in your query."
+        )
+
+    reports: Dict[str, Any] = {}
+    if include_paper_baselines:
+        for base_label, base_entries in load_peptideminer_paper_baselines().items():
+            rep = compare_runs_peptideminer(manual, base_entries)
+            if rep.llm_rows_evaluated > 0:
+                reports[base_label] = rep
+
+    llm_by_run: Dict[Any, List[PeptideEntry]] = {}
+    for e in entries:
+        if e.extraction_mode == ExtractionMode.LLM:
+            llm_by_run.setdefault(e.run_identifier, []).append(e)
+
+    labels_map = run_labels or {}
+    for run_id, run_entries in llm_by_run.items():
+        if run_id in labels_map:
+            label = labels_map[run_id]
+        else:
+            models = sorted({e.model for e in run_entries if e.model})
+            if models and run_id is not None:
+                label = f"{models[0]} (run {run_id})"
+            elif models:
+                label = models[0]
+            elif run_id is not None:
+                label = f"LLM (run {run_id})"
+            else:
+                label = "LLM"
+        reports[label] = compare_runs_peptideminer(manual, run_entries)
+
+    if not reports:
+        raise ValueError(
+            "No LLM runs or PeptideMiner paper baselines available to plot."
+        )
+    return reports
+
+
+def plot_peptideminer_categorical_accuracy(
+    df: pd.DataFrame,
+    *,
+    include_paper_baselines: bool = True,
+    use_normalized: bool = True,
+    run_labels: Optional[Dict[Any, str]] = None,
+    reports: Optional[Dict[str, Any]] = None,
+    figsize: Tuple[float, float] = (11, 5),
+    title: Optional[str] = None,
+) -> Figure:
+    """Plot grouped bar chart of categorical feature extraction accuracy (PeptideMiner Fig. 4c).
+
+    Operation: ``VisualizationOperation.PEPTIDEMINER_CATEGORICAL_ACCURACY`` (model: ``PeptideEntry``).
+    """
+    resolved_reports = (
+        reports
+        if reports is not None
+        else _build_peptideminer_reports_from_df(
+            df,
+            include_paper_baselines=include_paper_baselines,
+            run_labels=run_labels,
+        )
+    )
+
+    rows = []
+    for model_label, rep in resolved_reports.items():
+        avg_acc = (
+            rep.average_categorical_normalized_accuracy
+            if use_normalized
+            else rep.average_categorical_exact_accuracy
+        )
+        legend_label = f"{model_label} (avg {avg_acc * 100:.1f}%)"
+        for field_name, st in rep.categorical_stats.items():
+            acc = (st.normalized_accuracy if use_normalized else st.exact_accuracy) * 100.0
+            rows.append(
+                {
+                    "Category": field_name,
+                    "Accuracy (%)": acc,
+                    "Model": legend_label,
+                }
+            )
+
+    plot_df = pd.DataFrame(rows)
+    fig, ax = plt.subplots(figsize=figsize)
+    sns.barplot(
+        data=plot_df,
+        x="Category",
+        y="Accuracy (%)",
+        hue="Model",
+        ax=ax,
+    )
+    ax.set_ylim(0, 112)
+    ax.set_xlabel("Category")
+    ax.set_ylabel("Accuracy (%)")
+    ax.set_title(
+        title
+        or (
+            "Categorical Feature Extraction Accuracy (PeptideMiner Protocol)"
+            if use_normalized
+            else "Categorical Feature Extraction Exact Accuracy (PeptideMiner Protocol)"
+        ),
+        pad=32,
+    )
+    ax.tick_params(axis="x", rotation=25)
+    ax.grid(axis="y", linestyle="--", alpha=0.3)
+    for container in ax.containers:
+        ax.bar_label(container, fmt="%.0f", fontsize=8, padding=2)
+    ax.legend(
+        title=None,
+        loc="lower center",
+        bbox_to_anchor=(0.5, 1.01),
+        ncol=min(3, len(resolved_reports)),
+        frameon=True,
+        fontsize=8,
+    )
+    sns.despine(ax=ax)
+    fig.tight_layout()
+    return fig
+
+
+def plot_peptideminer_numerical_mae(
+    df: pd.DataFrame,
+    *,
+    include_paper_baselines: bool = True,
+    normalized: bool = True,
+    run_labels: Optional[Dict[Any, str]] = None,
+    reports: Optional[Dict[str, Any]] = None,
+    figsize: Tuple[float, float] = (10, 5),
+    title: Optional[str] = None,
+) -> Figure:
+    """Plot violin distribution of numerical extraction MAE (PeptideMiner Fig. 4d).
+
+    Operation: ``VisualizationOperation.PEPTIDEMINER_NUMERICAL_MAE`` (model: ``PeptideEntry``).
+    """
+    resolved_reports = (
+        reports
+        if reports is not None
+        else _build_peptideminer_reports_from_df(
+            df,
+            include_paper_baselines=include_paper_baselines,
+            run_labels=run_labels,
+        )
+    )
+
+    rows = []
+    for model_label, rep in resolved_reports.items():
+        for field_name, st in rep.numerical_stats.items():
+            errs = st.normalized_errors if normalized else st.raw_errors
+            for err in errs:
+                rows.append(
+                    {
+                        "Category": field_name,
+                        "MAE": err,
+                        "Model": model_label,
+                    }
+                )
+
+    if not rows:
+        raise ValueError("No non-null numerical errors available to plot.")
+
+    plot_df = pd.DataFrame(rows)
+    fig, ax = plt.subplots(figsize=figsize)
+    sns.violinplot(
+        data=plot_df,
+        x="Category",
+        y="MAE",
+        hue="Model",
+        cut=0,
+        inner="quartile",
+        density_norm="width",
+        ax=ax,
+    )
+    ax.set_xlabel("Category")
+    ax.set_ylabel("Normalized MAE [0-1]" if normalized else "Raw Absolute Error")
+    ax.set_title(
+        title
+        or (
+            "Numerical Feature Extraction Normalized MAE (PeptideMiner Protocol)"
+            if normalized
+            else "Numerical Feature Extraction Raw Error (PeptideMiner Protocol)"
+        )
+    )
+    ax.tick_params(axis="x", rotation=15)
+    ax.grid(axis="y", linestyle="--", alpha=0.3)
+    ax.legend(title="Model / Run", loc="upper right", fontsize=8)
+    sns.despine(ax=ax)
+    fig.tight_layout()
+    return fig
+
+
+# ---------------------------------------------------------------------------
 # Individual plotting functions: ExtractionEvaluation
 # ---------------------------------------------------------------------------
 
@@ -827,6 +1092,20 @@ VISUALIZATION_REGISTRY: Dict[VisualizationOperation, VisualizationSpec] = {
         handler=plot_peptide_run_comparison,
         default_filename="peptide_run_comparison",
         description="Side-by-side comparison of entries, unique papers, and completion across runs.",
+    ),
+    VisualizationOperation.PEPTIDEMINER_CATEGORICAL_ACCURACY: VisualizationSpec(
+        operation=VisualizationOperation.PEPTIDEMINER_CATEGORICAL_ACCURACY,
+        supported_models=(PeptideEntry,),
+        handler=plot_peptideminer_categorical_accuracy,
+        default_filename="peptideminer_categorical_accuracy",
+        description="Grouped bar chart of categorical extraction accuracy (PeptideMiner Fig. 4c style).",
+    ),
+    VisualizationOperation.PEPTIDEMINER_NUMERICAL_MAE: VisualizationSpec(
+        operation=VisualizationOperation.PEPTIDEMINER_NUMERICAL_MAE,
+        supported_models=(PeptideEntry,),
+        handler=plot_peptideminer_numerical_mae,
+        default_filename="peptideminer_numerical_mae",
+        description="Violin plot of numerical extraction MAE distributions (PeptideMiner Fig. 4d style).",
     ),
     VisualizationOperation.EVALUATION_BOXPLOT: VisualizationSpec(
         operation=VisualizationOperation.EVALUATION_BOXPLOT,

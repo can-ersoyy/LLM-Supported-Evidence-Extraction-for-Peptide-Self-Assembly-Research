@@ -106,7 +106,24 @@ def viz_session():
             model="gemma-4-31b-it",
             run_identifier=200,
         )
-        session.add_all([e1, e2, e3])
+        m1 = PeptideEntry(
+            id=4,
+            paper_id=1,
+            sequence="FF",
+            length=2,
+            type="tube",
+            n_terminal="Fmoc",
+            c_terminal="Free",
+            ph=7.0,
+            temperature=25.0,
+            peptide_concentration=5.0,
+            solution="H2O",
+            volume_ratio="1",
+            pmid="1001",
+            extraction_mode=ExtractionMode.MANUAL,
+            run_identifier=0,
+        )
+        session.add_all([e1, e2, e3, m1])
 
         ev1 = ExtractionEvaluation(
             id=1,
@@ -342,6 +359,26 @@ def test_cli_run_pipeline_visualization_step(viz_session, tmp_path, monkeypatch)
     res = runner.invoke(cli, ["run_pipeline", "-c", str(cfg_path), "--no-log-to-file"])
     assert res.exit_code == 0, res.output
     assert (out_dir / "peptide_column_completion.png").exists()
+
+
+def test_visualize_peptideminer_benchmark_plots(viz_session, tmp_path):
+    ops = [
+        VisualizationOperation.PEPTIDEMINER_CATEGORICAL_ACCURACY,
+        VisualizationOperation.PEPTIDEMINER_NUMERICAL_MAE,
+    ]
+    results = visualize(
+        operations=ops,
+        model=PeptideEntry,
+        session=viz_session,
+        output_dir=tmp_path,
+        save=True,
+        plot_kwargs={"include_paper_baselines": False},
+        run_identifier=[0, 100],
+    )
+    assert set(results.keys()) == set(ops)
+    for op, res in results.items():
+        assert isinstance(res.figure, Figure)
+        assert res.output_path is not None and res.output_path.exists()
 
 
 from contextlib import contextmanager

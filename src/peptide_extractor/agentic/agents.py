@@ -152,6 +152,39 @@ CRITICAL PATCH RULES:
 """
 
 
+PEPTIDEMINER_PROTOCOL_PROMPT_ADDENDUM = """
+
+PEPTIDEMINER EXTRACTION PROTOCOL OVERRIDE (Yang et al., arXiv:2411.05421v1, Methods p. 9):
+Apply these 5 data-expansion and standardization rules strictly instead of midpoint-only summarization:
+1. UNIFORM RANGE SAMPLING: For any experimental parameter reported as a continuous range (e.g., pH 5–10, concentration 1–6 mg/ml, temperature 20–70 °C) producing a phase, uniformly sample 6 entries spanning the range (inclusive of endpoints: low + i*(high - low)/5 for i = 0..5).
+2. CRITICAL PHASE-TRANSITION BRACKETING: For any critical value of phase transition (e.g., minimum gelation concentration MGC/CGC, critical aggregation concentration CAC, or critical gelation pH/temperature), emit 4 entries around the threshold: two values above (1.1x, 1.2x) for the assembled/transitioned phase and two values below (0.8x, 0.9x) for the non-assembled/other phase (`type: "none"` if soluble/no assembly).
+3. CONCENTRATION STANDARDIZATION: Always extract numeric concentrations with their reported unit so they are standardized to `mg/ml` using peptide molecular weight.
+4. SOLVENT-BASED pH ESTIMATION: If pH is not explicitly stated in the paper, estimate it from the solvent/buffer system (e.g., H2O -> 7.0, PBS -> 7.4, methanol/water -> 8.3, acidic acetic acid/GdL -> 4.0, basic NaOH -> 11.0).
+5. DEFAULT ROOM TEMPERATURE: If temperature is not stated, assume room temperature (`25.0` °C).
+6. ALWAYS assign a canonical `type` (`none`, `hydrogel`, `fiber`, `tube`, `nanosphere`, `particle`, `ribbon`, `vesicle`, `organogel`, `amyloid`) rather than leaving `type` null, and use `"Free"` for unmodified `n_terminal` / `c_terminal`.
+"""
+
+
+HYBRID_PROTOCOL_PROMPT_ADDENDUM = """
+
+HYBRID GROUNDED EXTRACTION RULES (Best-of-Both-Worlds Mode):
+1. STAY STRICTLY EVIDENCE-GROUNDED: Extract ONLY explicitly reported experimental conditions (including negative/non-assembling controls). Do NOT synthetically sample ranges into 6 points, do NOT fabricate 0.8x/0.9x/1.1x/1.2x points around critical values, and do NOT guess unmentioned pH values (leave `ph: null` if not stated).
+2. ALWAYS ASSIGN CANONICAL `type`: Whenever an assembly morphology or non-assembling outcome is reported, always populate `type` with one of [`none`, `hydrogel`, `fiber`, `tube`, `nanosphere`, `particle`, `ribbon`, `vesicle`, `organogel`, `amyloid`] — never leave `type` null when an outcome is known.
+3. EXPLICIT `"Free"` TERMINI: Use `"Free"` for unmodified `n_terminal` and `c_terminal` rather than leaving them null.
+4. STRICT `category` & `conjugate_partner` DISCIPLINE: Standard N-/C-terminal protecting groups (`Fmoc`, `Boc`, `Cbz`, `Acetylation`, `Amidation`, `Methyl ester`, `Benzylation`) belong ONLY in `n_terminal`/`c_terminal` with `peptide_conjugate_mixture: "peptide"` and `conjugate_partner: null`. Use `peptide_conjugate_mixture: "conjugate"` + `conjugate_partner` ONLY for non-peptidic dyes, polymers, lipids, drugs, or aromatic conjugates (e.g., `Naphthalene`, `NDI`, `Ferrocene`, `PEG`).
+5. CONCENTRATION + UNIT PRECISION: Always extract numeric concentrations together with their exact unit (`mg/ml`, `mM`, `uM`, `M`, `wt%`, `% w/v`) so they convert deterministically to `mg/ml` via peptide molecular weight.
+"""
+
+
+def _with_peptideminer_addendum(prompt: str, config: AgenticExtractionConfig) -> str:
+    """Append protocol-specific prompt rules only when an opt-in protocol is enabled."""
+    if config.peptideminer_protocol:
+        return prompt + PEPTIDEMINER_PROTOCOL_PROMPT_ADDENDUM
+    if config.hybrid_protocol:
+        return prompt + HYBRID_PROTOCOL_PROMPT_ADDENDUM
+    return prompt
+
+
 def format_entity_registry_summary(peptides: Sequence[PeptideAlias]) -> str:
     """Format PeptideRegistry into a compact prompt block for downstream workers."""
     if not peptides:
@@ -305,7 +338,7 @@ class ProseExtractorAgent:
             provider=config.provider,
             model_name=config.model_name,
             structured_output=PeptideExtractionResult,
-            system_prompt=PROSE_EXTRACTOR_SYSTEM_PROMPT,
+            system_prompt=_with_peptideminer_addendum(PROSE_EXTRACTOR_SYSTEM_PROMPT, config),
             base_url=config.base_url,
             stream=config.stream,
         )
@@ -367,7 +400,7 @@ class TableExtractorAgent:
             provider=config.table_provider or config.provider,
             model_name=config.table_model_name or config.model_name,
             structured_output=TableExtractionResult,
-            system_prompt=SCOPED_TABLE_EXTRACTOR_SYSTEM_PROMPT,
+            system_prompt=_with_peptideminer_addendum(SCOPED_TABLE_EXTRACTOR_SYSTEM_PROMPT, config),
             base_url=config.base_url,
             stream=config.stream,
         )
@@ -430,7 +463,7 @@ class FigureExtractorAgent:
             provider=config.figure_provider or config.table_provider or config.provider,
             model_name=config.figure_model_name or config.table_model_name or config.model_name,
             structured_output=TableExtractionResult,
-            system_prompt=SCOPED_FIGURE_EXTRACTOR_SYSTEM_PROMPT,
+            system_prompt=_with_peptideminer_addendum(SCOPED_FIGURE_EXTRACTOR_SYSTEM_PROMPT, config),
             base_url=config.base_url,
             stream=config.stream,
         )
@@ -495,7 +528,7 @@ class ReviewerAgent:
             provider=config.reviewer_provider or config.provider,
             model_name=config.reviewer_model_name or config.model_name,
             structured_output=ReviewerFeedback,
-            system_prompt=REVIEWER_SYSTEM_PROMPT,
+            system_prompt=_with_peptideminer_addendum(REVIEWER_SYSTEM_PROMPT, config),
             base_url=config.reviewer_base_url or config.base_url,
             stream=config.stream,
         )
@@ -544,7 +577,7 @@ class RefinerAgent:
             provider=config.refiner_provider or config.provider,
             model_name=config.refiner_model_name or config.model_name,
             structured_output=RefinerPatchResult,
-            system_prompt=REFINER_SYSTEM_PROMPT,
+            system_prompt=_with_peptideminer_addendum(REFINER_SYSTEM_PROMPT, config),
             base_url=config.base_url,
             stream=config.stream,
         )

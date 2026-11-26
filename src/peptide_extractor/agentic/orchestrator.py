@@ -231,7 +231,15 @@ class ExtractionOrchestrator:
                 all_entries,
                 aliases=aliases,
                 source_text=source_text,
-                default_room_temperature=self.config.default_room_temperature,
+                default_room_temperature=(
+                    self.config.default_room_temperature
+                    or self.config.peptideminer_protocol
+                ),
+                estimate_solvent_ph=(
+                    self.config.estimate_solvent_ph
+                    or self.config.peptideminer_protocol
+                ),
+                strict_terminal_and_conjugate_hygiene=self.config.hybrid_protocol,
             )
         else:
             val_report = DeterministicValidationReport(
@@ -301,7 +309,15 @@ class ExtractionOrchestrator:
                         all_entries,
                         aliases=aliases,
                         source_text=source_text,
-                        default_room_temperature=self.config.default_room_temperature,
+                        default_room_temperature=(
+                            self.config.default_room_temperature
+                            or self.config.peptideminer_protocol
+                        ),
+                        estimate_solvent_ph=(
+                            self.config.estimate_solvent_ph
+                            or self.config.peptideminer_protocol
+                        ),
+                        strict_terminal_and_conjugate_hygiene=self.config.hybrid_protocol,
                     )
                     trace.validation_reports.append(val_report)
 
@@ -328,6 +344,8 @@ def run_agentic_extraction(
     reviewer_provider: str | None = None,
     reviewer_model_name: str | None = None,
     max_refinement_rounds: int = 1,
+    peptideminer_protocol: bool = False,
+    hybrid_protocol: bool = False,
     config: AgenticExtractionConfig | None = None,
     max_retries: int = 0,
     retry_delay: float = 2.0,
@@ -341,6 +359,8 @@ def run_agentic_extraction(
         reviewer_provider=reviewer_provider,
         reviewer_model_name=reviewer_model_name,
         max_refinement_rounds=max_refinement_rounds,
+        peptideminer_protocol=peptideminer_protocol,
+        hybrid_protocol=hybrid_protocol,
         max_retries=max_retries,
         retry_delay=retry_delay,
     )

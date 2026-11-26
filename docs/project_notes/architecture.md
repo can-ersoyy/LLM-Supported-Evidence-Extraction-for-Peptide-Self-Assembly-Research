@@ -59,8 +59,9 @@ All database tables are defined as SQLModel classes under `src/peptide_extractor
 | `paper_metadata` | `PaperMetadata` | `db/paper_metadata.py` | Canonical paper record (`doi`, `pmid`, `pmcid`, `title`, `abstract`, `status`, `dataset_subset`, `source_databases`). |
 | `paper_relevance` | `PaperRelevance` | `db/paper_relevance.py` | Abstract screening verdicts (`is_relevant`, `confidence`, `detected_clues`, `explanation`, `provider`, `model_name`, `run_identifier`). |
 | `paper_content` | `PaperContent` | `db/paper_content.py` | Full-text pointer (`format`: `"xml"` or `"pdf"`, `blob_url`, `pdf_url`, `source`, `run_identifier`). |
-| `peptide_entry` | `PeptideEntry` | `db/peptide_entry.py` | Extracted or manually curated peptide self-assembly records with 17+ experimental fields and `evidence_span` JSON. |
+| `peptide_entry` | `PeptideEntry` | `db/peptide_entry.py` | Extracted or manually curated peptide self-assembly records with 17+ experimental fields, `extraction_method`, and `evidence_span` JSON. |
 | `extraction_evaluation` | `ExtractionEvaluation` | `db/extraction_evaluation.py` | Automated evaluation metrics (`completeness_rate`, `groundness_rate`, `faithfulness_rate`) linked to `peptide_entry.id`. |
+| `golden_disagreement_audit` | `GoldenDisagreementAudit` | `db/golden_disagreement_audit.py` | Evidence-grounded VLM/LLM adjudicator verdicts auditing disagreements between LLM runs and golden-dataset records. |
 
 ### 2.2 Paper Lifecycle (`PaperStatus` & `DatasetSubset`)
 
@@ -137,10 +138,11 @@ uv run src/peptide_extractor/cli.py visualize \
 | `llm.py` | `LLMController` & `get_chat_model` for Google GenAI, Ollama, and OpenRouter with structured outputs. |
 | `relevance.py` | Single and bulk abstract relevance screening (`screen_papers`, `bulk_screen_papers`). |
 | `extraction.py` | Single-pass, raw-PDF, two-pass factored, and agentic-routed extraction (`run_extraction`, `run_factored_extraction`). |
-| `agentic/` | Multi-agent extraction orchestrator (`ExtractionOrchestrator`, `EntityScoutAgent`, `ProseExtractorAgent`, `TableExtractorAgent`, `ReviewerAgent`, `RefinerAgent`, and `chemistry_sandbox.py`). See [agentic_extraction.md](agentic_extraction.md). |
+| `agentic/` | Multi-agent extraction orchestrator (`ExtractionOrchestrator`, `EntityScoutAgent`, `ProseExtractorAgent`, `TableExtractorAgent`, `FigureExtractorAgent`, `ReviewerAgent`, `RefinerAgent`, and `chemistry_sandbox.py`). See [agentic_extraction.md](agentic_extraction.md). |
 | `evaluation.py` | Reference-free completeness and grounding verification (`evaluate_extraction`). |
-| `golden_benchmark.py` | Normalized precision/recall/F1 comparison against golden dataset entries (`benchmark_run_against_golden`). |
-| `visualization.py` | Matplotlib/Seaborn plotting suite (`visualize`) across all pipeline tables. |
+| `golden_benchmark.py` | Strict 1-to-1 precision/recall/F1 benchmarking (`benchmark_run_against_golden`, `diagnose_run_per_pmid`) and PeptideMiner paper-protocol comparison (`benchmark_run_peptideminer_vs_paper` across the 23 `PEPTIDEMINER_TEST_PMIDS`). |
+| `golden_auditor.py` | Evidence-grounded disagreement auditor resolving `evidence_span` tags to verbatim quotes / table images and adjudicating LLM vs golden-dataset discrepancies. |
+| `visualization.py` | Matplotlib/Seaborn plotting suite (`visualize`) across all pipeline tables, including PeptideMiner Fig. 4c/4d-style accuracy bar charts (`peptideminer_categorical_accuracy`) and normalized MAE violin plots (`peptideminer_numerical_mae`). |
 | `azure_storage.py` | Azure Blob Storage upload/download with local filesystem caching. |
 | `schemas.py` | Pydantic schemas for relevance screening (`RelevanceResult`, `BulkRelevanceResults`). |
 | `utils.py` | DOI normalization, text cleaning, UTC timestamps, sequence utilities. |
