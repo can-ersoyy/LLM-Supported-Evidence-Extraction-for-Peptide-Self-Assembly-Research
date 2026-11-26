@@ -1216,28 +1216,27 @@ if __name__ == "__main__":
     #)
     #print(res)
 
-    # Uncomment below to run a fresh extraction; otherwise re-benchmark existing runs directly:
-    # fails, identifier = run_peptide_extraction(
-    #     provider="google",
-    #     model_name="gemini-3.5-flash-lite",
-    #     delay_seconds=4,
-    #     agentic=True,
-    #     hybrid_protocol=True,
-    #     # peptideminer_protocol=True,
-    #     tables_as_images=True,
-    #     images_as_images=True,
-    #     table_provider="google",
-    #     table_model_name="gemini-3.5-flash-lite",
-    #     max_refinement_rounds=2,
-    #     pmid=PEPTIDEMINER_TEST_PMIDS,
-    # )
-    # print(f"Fails: {fails}, Run identifier: {identifier}")
+    # Direct PDF only (non-agentic) extraction on the 23 PeptideMiner test papers:
+    fails, identifier = run_peptide_extraction(
+        provider="google",
+        model_name="gemini-3.5-flash-lite",
+        delay_seconds=4,
+        pass_pdf_directly=True,
+        agentic=False,
+        content_format="pdf",
+        max_retries=2,
+        retry_delay=5.0,
+        pmid=PEPTIDEMINER_TEST_PMIDS,
+    )
+    print(f"Fails: {fails}, Run identifier: {identifier}")
 
-    # Re-benchmark existing runs (Standard=1795720826, PM-Proto=1795723983, Hybrid=1795725257)
+    # Benchmark existing agentic runs (Standard=1795720826, PM-Proto=1795723983, Hybrid=1795725257)
+    # alongside the new Direct PDF run:
     benchmark_runs = {
         1795720826: "Ours Standard",
         1795723983: "Ours PM-Proto",
         1795725257: "Ours Hybrid",
+        identifier: "Ours Direct PDF",
     }
     for run_id, run_label in benchmark_runs.items():
         print(f"\n=== Golden Benchmark (1-to-1 Recall/Precision): {run_label} ({run_id}) ===")

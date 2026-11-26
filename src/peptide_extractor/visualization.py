@@ -635,6 +635,10 @@ def plot_peptideminer_categorical_accuracy(
     ax.set_ylim(0, 112)
     ax.set_xlabel("Category")
     ax.set_ylabel("Accuracy (%)")
+    n_models = len(resolved_reports)
+    legend_cols = 3 if n_models >= 5 else (2 if n_models > 3 else min(3, n_models))
+    legend_rows = (n_models + legend_cols - 1) // legend_cols
+    title_pad = 16 + legend_rows * 15
     ax.set_title(
         title
         or (
@@ -642,7 +646,7 @@ def plot_peptideminer_categorical_accuracy(
             if use_normalized
             else "Categorical Feature Extraction Exact Accuracy (PeptideMiner Protocol)"
         ),
-        pad=42 if len(resolved_reports) > 3 else 32,
+        pad=title_pad,
     )
     ax.tick_params(axis="x", rotation=25)
     ax.grid(axis="y", linestyle="--", alpha=0.3)
@@ -652,7 +656,7 @@ def plot_peptideminer_categorical_accuracy(
         title=None,
         loc="lower center",
         bbox_to_anchor=(0.5, 1.01),
-        ncol=2 if len(resolved_reports) > 3 else min(3, len(resolved_reports)),
+        ncol=legend_cols,
         frameon=True,
         fontsize=8,
     )
@@ -717,6 +721,10 @@ def plot_peptideminer_numerical_mae(
     )
     ax.set_xlabel("Category")
     ax.set_ylabel("Normalized MAE [0-1]" if normalized else "Raw Absolute Error")
+    n_models = len(resolved_reports)
+    legend_cols = 3 if n_models >= 5 else (2 if n_models > 3 else min(3, n_models))
+    legend_rows = (n_models + legend_cols - 1) // legend_cols
+    title_pad = 16 + legend_rows * 15
     ax.set_title(
         title
         or (
@@ -724,7 +732,7 @@ def plot_peptideminer_numerical_mae(
             if normalized
             else "Numerical Feature Extraction Raw Error (PeptideMiner Protocol)"
         ),
-        pad=42 if len(resolved_reports) > 3 else 32,
+        pad=title_pad,
     )
     ax.tick_params(axis="x", rotation=15)
     ax.grid(axis="y", linestyle="--", alpha=0.3)
@@ -732,7 +740,7 @@ def plot_peptideminer_numerical_mae(
         title=None,
         loc="lower center",
         bbox_to_anchor=(0.5, 1.01),
-        ncol=2 if len(resolved_reports) > 3 else min(3, len(resolved_reports)),
+        ncol=legend_cols,
         frameon=True,
         fontsize=8,
     )
